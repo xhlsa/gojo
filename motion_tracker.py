@@ -82,8 +82,9 @@ class SensorFusion:
 
                 # STATIONARY DETECTION - Filter GPS noise
                 # If distance is less than GPS accuracy AND speed is low, assume stationary
+                # Thresholds optimized from GPS diagnostic testing (gps_tester.py results)
                 movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
-                speed_threshold = 0.5  # m/s (~1.8 km/h)
+                speed_threshold = 0.1  # m/s (~0.36 km/h) - optimized from testing (max noise: 0.2 m/s)
 
                 is_stationary = (dist < movement_threshold and gps_velocity < speed_threshold)
 
