@@ -7,6 +7,7 @@ without the drift problems of accelerometer-only tracking
 
 import subprocess
 import json
+import gzip
 import time
 import math
 from datetime import datetime
@@ -280,14 +281,19 @@ class AccelerometerReader:
 class MotionTracker:
     """Main motion tracking application"""
 
-    def __init__(self, update_rate=1.0):
+    def __init__(self, update_rate=1.0, auto_save_interval=300):
         self.update_rate = update_rate  # seconds
+        self.auto_save_interval = auto_save_interval  # seconds (default 5 min)
         self.fusion = SensorFusion()
         self.gps = GPSReader()
         self.accel = AccelerometerReader()
 
         self.start_time = None
         self.samples = []
+        self.last_save_time = None
+        self.save_count = 0
+        self.gps_failure_count = 0
+        self.max_consecutive_failures = 10
 
         # Acquire wakelock
         try:
@@ -330,10 +336,12 @@ class MotionTracker:
             time.sleep(1)
 
         print("\nTracking... (Press Ctrl+C to stop)\n")
+        print(f"Auto-save enabled: every {self.auto_save_interval//60} minutes")
         print(f"{'Time':<8} | {'Speed (km/h)':<12} | {'Distance (m)':<12} | {'GPS Acc':<8}")
         print("-" * 70)
 
         last_gps_update = time.time()
+        self.last_save_time = time.time()
         sample_count = 0
 
         try:
@@ -344,6 +352,17 @@ class MotionTracker:
                 # Check duration
                 if duration_minutes and elapsed > duration_minutes * 60:
                     break
+
+                # AUTO-SAVE check (every N minutes)
+                if current_time - self.last_save_time >= self.auto_save_interval:
+                    print(f"\n⏰ Auto-saving data (save #{self.save_count + 1})...")
+                    try:
+                        self.save_data(auto_save=True)
+                        self.last_save_time = current_time
+                        self.save_count += 1
+                        print(f"✓ Auto-save complete ({len(self.samples)} samples)\n")
+                    except Exception as e:
+                        print(f"⚠ Auto-save failed: {e}, continuing...\n")
 
                 # Update GPS (every second or so)
                 if current_time - last_gps_update >= 1.0:
@@ -359,6 +378,7 @@ class MotionTracker:
                             )
 
                             last_gps_update = current_time
+                            self.gps_failure_count = 0  # Reset failure counter
 
                             # Display update
                             speed_kmh = velocity * 3.6
@@ -378,12 +398,21 @@ class MotionTracker:
 
                             sample_count += 1
                         else:
-                            # GPS failed to read, but continue tracking
-                            # Use last known velocity (will decay naturally through fusion)
-                            print(f"⚠ GPS data unavailable, continuing with last known position...")
+                            # GPS failed to read
+                            self.gps_failure_count += 1
+                            if self.gps_failure_count >= self.max_consecutive_failures:
+                                print(f"\n⚠ GPS failed {self.gps_failure_count} times consecutively!")
+                                print(f"⚠ Auto-saving current data and continuing...\n")
+                                try:
+                                    self.save_data(auto_save=True)
+                                    self.save_count += 1
+                                except:
+                                    pass
+                            print(f"⚠ GPS data unavailable (failure {self.gps_failure_count}/{self.max_consecutive_failures})...")
                             last_gps_update = current_time
                     except Exception as e:
-                        print(f"⚠ Error updating GPS: {e}, continuing...")
+                        self.gps_failure_count += 1
+                        print(f"⚠ Error updating GPS ({self.gps_failure_count}/{self.max_consecutive_failures}): {e}")
                         last_gps_update = current_time
 
                 # Read accelerometer (high frequency, but we're not using it much in this simple version)
@@ -393,6 +422,11 @@ class MotionTracker:
 
         except KeyboardInterrupt:
             print("\n\nStopped by user.")
+        except Exception as e:
+            print(f"\n\n⚠ ERROR: {e}")
+            print("Auto-saving data before exit...")
+            import traceback
+            traceback.print_exc()
 
         # Release wakelock
         try:
@@ -401,8 +435,10 @@ class MotionTracker:
         except:
             pass
 
+        # Final save
+        print("\nSaving final data...")
         self.print_summary()
-        self.save_data()
+        self.save_data(auto_save=False)
 
     def print_summary(self):
         """Print summary statistics"""
@@ -426,27 +462,43 @@ class MotionTracker:
         print(f"Samples collected: {len(self.samples)}")
         print("="*70)
 
-    def save_data(self):
-        """Save data to JSON file"""
-        filename = f"motion_track_{self.start_time.strftime('%Y%m%d_%H%M%S')}.json"
+    def save_data(self, auto_save=False):
+        """Save data to JSON file (compressed for auto-saves, uncompressed for final)"""
+        base_filename = f"motion_track_{self.start_time.strftime('%Y%m%d_%H%M%S')}"
 
         data = {
             'start_time': self.start_time.isoformat(),
             'end_time': datetime.now().isoformat(),
             'total_distance': self.fusion.distance,
-            'samples': self.samples
+            'samples': self.samples,
+            'auto_save_count': self.save_count if auto_save else 0
         }
 
-        with open(filename, 'w') as f:
-            json.dump(data, f, indent=2)
+        if auto_save:
+            # Auto-save: compressed, no formatting (saves space)
+            filename = f"{base_filename}.json.gz"
+            with gzip.open(filename, 'wt', encoding='utf-8') as f:
+                json.dump(data, f, separators=(',', ':'))  # No whitespace
+        else:
+            # Final save: uncompressed, formatted (human readable)
+            filename = f"{base_filename}.json"
+            with open(filename, 'w') as f:
+                json.dump(data, f, indent=2)
 
-        print(f"✓ Data saved to: {filename}")
+            print(f"✓ Data saved to: {filename}")
 
-        # Also save as GPX
-        gpx_filename = self.save_gpx()
-        if gpx_filename:
-            print(f"✓ GPX track saved to: {gpx_filename}")
-            print(f"  You can open this in Google Earth, Google Maps, or any GPS app!")
+            # Also save as GPX (only on final save, not auto-saves)
+            gpx_filename = self.save_gpx()
+            if gpx_filename:
+                print(f"✓ GPX track saved to: {gpx_filename}")
+                print(f"  You can open this in Google Earth, Google Maps, or any GPS app!")
+
+        # Memory management: keep only last 1000 samples in memory after auto-save
+        # (but all samples are saved to disk)
+        if auto_save and len(self.samples) > 1000:
+            old_count = len(self.samples)
+            self.samples = self.samples[-1000:]  # Keep last 1000
+            print(f"  (Memory cleanup: {old_count} -> {len(self.samples)} samples in RAM)")
 
     def save_gpx(self):
         """Export track to GPX format for mapping apps"""
