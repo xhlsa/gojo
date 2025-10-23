@@ -153,6 +153,36 @@ class SensorFusion:
         return self.velocity, self.distance
 
 
+class BatteryReader:
+    """Read battery status from Termux API"""
+
+    @staticmethod
+    def read():
+        """Read current battery status"""
+        try:
+            result = subprocess.run(
+                ['termux-battery-status'],
+                capture_output=True,
+                text=True,
+                timeout=2
+            )
+
+            if result.returncode == 0 and result.stdout:
+                data = json.loads(result.stdout)
+                return {
+                    'percentage': data.get('percentage'),
+                    'current': data.get('current'),  # μA (negative = discharging)
+                    'temperature': data.get('temperature'),  # °C
+                    'voltage': data.get('voltage'),  # mV
+                    'status': data.get('status'),  # CHARGING/DISCHARGING
+                    'charge_counter': data.get('charge_counter')  # μAh remaining
+                }
+        except Exception as e:
+            pass
+
+        return None
+
+
 class GPSReader:
     """Read GPS data from Termux API"""
 
@@ -284,12 +314,14 @@ class AccelerometerReader:
 class MotionTracker:
     """Main motion tracking application"""
 
-    def __init__(self, update_rate=1.0, auto_save_interval=120):
+    def __init__(self, update_rate=1.0, auto_save_interval=120, battery_sample_interval=10):
         self.update_rate = update_rate  # seconds
         self.auto_save_interval = auto_save_interval  # seconds (default 2 min)
+        self.battery_sample_interval = battery_sample_interval  # sample battery every N GPS samples
         self.fusion = SensorFusion()
         self.gps = GPSReader()
         self.accel = AccelerometerReader()
+        self.battery = BatteryReader()
 
         self.start_time = None
         self.samples = []
@@ -298,6 +330,8 @@ class MotionTracker:
         self.gps_failure_count = 0
         self.max_consecutive_failures = 10
         self.shutdown_requested = False
+        self.battery_start = None
+        self.battery_samples = []
 
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
@@ -331,6 +365,11 @@ class MotionTracker:
 
         if duration_minutes:
             print(f"Duration: {duration_minutes} minutes")
+
+        # Read initial battery status
+        self.battery_start = self.battery.read()
+        if self.battery_start:
+            print(f"Battery: {self.battery_start['percentage']}% ({self.battery_start['status']})")
 
         print("\nWaiting for GPS fix...")
 
@@ -406,13 +445,25 @@ class MotionTracker:
 
                             print(f"{time_str:<8} | {speed_kmh:>10.2f} | {distance:>10.1f} | {accuracy:>6.1f}m")
 
+                            # Sample battery periodically (every N samples to reduce overhead)
+                            battery_data = None
+                            if sample_count % self.battery_sample_interval == 0:
+                                battery_data = self.battery.read()
+                                if battery_data:
+                                    self.battery_samples.append({
+                                        'timestamp': datetime.now().isoformat(),
+                                        'elapsed': elapsed,
+                                        'battery': battery_data
+                                    })
+
                             # Log sample
                             self.samples.append({
                                 'timestamp': datetime.now().isoformat(),
                                 'elapsed': elapsed,
                                 'velocity': velocity,
                                 'distance': distance,
-                                'gps': gps_data
+                                'gps': gps_data,
+                                'battery': battery_data  # Will be None for most samples
                             })
 
                             sample_count += 1
@@ -479,6 +530,26 @@ class MotionTracker:
         print(f"Average speed: {avg_speed * 3.6:.2f} km/h")
         print(f"Max speed: {max_speed * 3.6:.2f} km/h")
         print(f"Samples collected: {len(self.samples)}")
+
+        # Battery statistics
+        if self.battery_start:
+            print(f"\nBattery:")
+            print(f"  Start: {self.battery_start['percentage']}% ({self.battery_start['status']})")
+
+            if self.battery_samples:
+                battery_end = self.battery_samples[-1]['battery']
+                battery_drain = self.battery_start['percentage'] - battery_end['percentage']
+                drain_rate = battery_drain / (total_time / 3600) if total_time > 0 else 0  # %/hour
+
+                print(f"  End: {battery_end['percentage']}%")
+                print(f"  Drain: {battery_drain:.1f}% ({drain_rate:.1f}%/hour)")
+
+                if battery_drain > 0 and drain_rate > 0:
+                    estimated_runtime = battery_end['percentage'] / drain_rate
+                    print(f"  Estimated runtime at current drain: {estimated_runtime:.1f} hours")
+            else:
+                print(f"  (Session too short for battery drain measurement)")
+
         print("="*70)
 
     def save_data(self, auto_save=False):
@@ -491,7 +562,9 @@ class MotionTracker:
             'end_time': datetime.now().isoformat(),
             'total_distance': self.fusion.distance,
             'samples': self.samples,
-            'auto_save_count': self.save_count if auto_save else 0
+            'auto_save_count': self.save_count if auto_save else 0,
+            'battery_start': self.battery_start,
+            'battery_samples': self.battery_samples
         }
 
         if auto_save:
