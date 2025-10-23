@@ -10,6 +10,8 @@ import json
 import gzip
 import time
 import math
+import signal
+import os
 from datetime import datetime
 from collections import deque
 from statistics import mean
@@ -282,9 +284,9 @@ class AccelerometerReader:
 class MotionTracker:
     """Main motion tracking application"""
 
-    def __init__(self, update_rate=1.0, auto_save_interval=300):
+    def __init__(self, update_rate=1.0, auto_save_interval=120):
         self.update_rate = update_rate  # seconds
-        self.auto_save_interval = auto_save_interval  # seconds (default 5 min)
+        self.auto_save_interval = auto_save_interval  # seconds (default 2 min)
         self.fusion = SensorFusion()
         self.gps = GPSReader()
         self.accel = AccelerometerReader()
@@ -295,6 +297,11 @@ class MotionTracker:
         self.save_count = 0
         self.gps_failure_count = 0
         self.max_consecutive_failures = 10
+        self.shutdown_requested = False
+
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGTERM, self._signal_handler)
+        signal.signal(signal.SIGINT, self._signal_handler)
 
         # Acquire wakelock
         try:
@@ -302,6 +309,12 @@ class MotionTracker:
             print("✓ Wakelock acquired")
         except:
             print("⚠ Could not acquire wakelock")
+
+    def _signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        signal_name = "SIGTERM" if signum == signal.SIGTERM else "SIGINT"
+        print(f"\n\n⚠ Received {signal_name}, saving data and shutting down...")
+        self.shutdown_requested = True
 
     def calibrate(self):
         """Calibrate sensors"""
@@ -347,6 +360,11 @@ class MotionTracker:
 
         try:
             while True:
+                # Check for shutdown signal
+                if self.shutdown_requested:
+                    print("Shutdown signal received, exiting tracking loop...")
+                    break
+
                 current_time = time.time()
                 elapsed = (datetime.now() - self.start_time).total_seconds()
 
@@ -464,7 +482,8 @@ class MotionTracker:
         print("="*70)
 
     def save_data(self, auto_save=False):
-        """Save data to JSON file (compressed for auto-saves, uncompressed for final)"""
+        """Save data to JSON file (compressed for auto-saves, uncompressed for final)
+        Uses atomic writes to prevent corruption if killed mid-save"""
         base_filename = f"motion_track_{self.start_time.strftime('%Y%m%d_%H%M%S')}"
 
         data = {
@@ -478,13 +497,25 @@ class MotionTracker:
         if auto_save:
             # Auto-save: compressed, no formatting (saves space)
             filename = f"{base_filename}.json.gz"
-            with gzip.open(filename, 'wt', encoding='utf-8') as f:
+            temp_filename = f"{filename}.tmp"
+
+            # Write to temp file first (atomic write)
+            with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
                 json.dump(data, f, separators=(',', ':'))  # No whitespace
+
+            # Atomically rename temp to final (prevents corruption)
+            os.rename(temp_filename, filename)
         else:
             # Final save: uncompressed, formatted (human readable)
             filename = f"{base_filename}.json"
-            with open(filename, 'w') as f:
+            temp_filename = f"{filename}.tmp"
+
+            # Write to temp file first (atomic write)
+            with open(temp_filename, 'w') as f:
                 json.dump(data, f, indent=2)
+
+            # Atomically rename temp to final
+            os.rename(temp_filename, filename)
 
             print(f"✓ Data saved to: {filename}")
 
