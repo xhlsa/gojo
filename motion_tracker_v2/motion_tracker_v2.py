@@ -201,9 +201,16 @@ class SensorDaemon:
     def start(self):
         """Start the sensor daemon process"""
         try:
+            # Map generic sensor names to actual device sensor names
+            sensor_map = {
+                'accelerometer': 'lsm6dso LSM6DSO Accelerometer Non-wakeup',
+                'gyroscope': 'lsm6dso LSM6DSO Gyroscope Non-wakeup'
+            }
+            sensor_name = sensor_map.get(self.sensor_type, self.sensor_type)
+
             # Start single long-lived termux-sensor process
             self.process = subprocess.Popen(
-                ['termux-sensor', '-s', self.sensor_type, '-d', str(self.delay_ms)],
+                ['termux-sensor', '-s', sensor_name, '-d', str(self.delay_ms)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -335,14 +342,28 @@ class GPSThread(threading.Thread):
 
     def run(self):
         """Continuously poll GPS"""
-        while not self.stop_event.is_set():
-            gps_data = self.read_gps()
+        try:
+            while not self.stop_event.is_set():
+                try:
+                    gps_data = self.read_gps()
 
-            if gps_data and gps_data.get('latitude'):
-                self.gps_queue.put(gps_data)
+                    if gps_data and gps_data.get('latitude'):
+                        self.gps_queue.put(gps_data)
 
-            # Wait before next poll (if not stopping)
-            self.stop_event.wait(self.update_interval)
+                    # Wait before next poll (if not stopping)
+                    self.stop_event.wait(self.update_interval)
+
+                except Exception as e:
+                    # Log error but continue running
+                    if not self.stop_event.is_set():
+                        print(f"\n⚠ GPS thread error (continuing): {e}")
+                    time.sleep(1)
+
+        except Exception as e:
+            # Fatal error - thread will die
+            print(f"\n⚠ GPS thread FATAL error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 class AccelerometerThread(threading.Thread):
@@ -466,34 +487,48 @@ class AccelerometerThread(threading.Thread):
 
     def run(self):
         """Continuously read from daemon and apply calibration"""
-        # Calibrate before starting
-        if not self.calibrated:
-            self.calibrate()
+        try:
+            # Calibrate before starting
+            if not self.calibrated:
+                self.calibrate()
 
-        while not self.stop_event.is_set():
-            # Read from daemon (non-blocking)
-            raw_data = self.sensor_daemon.get_data(timeout=0.1)
+            while not self.stop_event.is_set():
+                try:
+                    # Read from daemon (non-blocking)
+                    raw_data = self.sensor_daemon.get_data(timeout=0.1)
 
-            if raw_data:
-                # Check for dynamic re-calibration opportunity
-                if self.fusion:
-                    state = self.fusion.get_state()
-                    is_stationary = state.get('is_stationary', False)
+                    if raw_data:
+                        # Check for dynamic re-calibration opportunity
+                        if self.fusion:
+                            state = self.fusion.get_state()
+                            is_stationary = state.get('is_stationary', False)
 
-                    # Collect samples during stationary periods
-                    if is_stationary and len(self.recal_buffer) < 10:
-                        self.recal_buffer.append(raw_data)
+                            # Collect samples during stationary periods
+                            if is_stationary and len(self.recal_buffer) < 10:
+                                self.recal_buffer.append(raw_data)
 
-                    # Attempt re-calibration
-                    self.try_recalibrate(is_stationary)
+                            # Attempt re-calibration
+                            self.try_recalibrate(is_stationary)
 
-                accel_data = self.read_calibrated(raw_data)
-                if accel_data:
-                    try:
-                        self.accel_queue.put_nowait(accel_data)
-                    except:
-                        # Queue full, skip sample
-                        pass
+                        accel_data = self.read_calibrated(raw_data)
+                        if accel_data:
+                            try:
+                                self.accel_queue.put_nowait(accel_data)
+                            except:
+                                # Queue full, skip sample
+                                pass
+
+                except Exception as e:
+                    # Log error but continue running
+                    if not self.stop_event.is_set():
+                        print(f"\n⚠ Accel thread error (continuing): {e}")
+                    time.sleep(0.1)
+
+        except Exception as e:
+            # Fatal error - thread will die
+            print(f"\n⚠ Accel thread FATAL error: {e}")
+            import traceback
+            traceback.print_exc()
 
 
 class BatteryReader:
@@ -572,6 +607,12 @@ class MotionTrackerV2:
         self.gps_failure_count = 0
         self.max_consecutive_failures = 10
 
+        # Thread health monitoring
+        self.last_thread_health_check = time.time()
+        self.thread_health_check_interval = 5.0  # Check every 5 seconds
+        self.thread_restart_count = {'gps': 0, 'accel': 0}
+        self.max_thread_restarts = 3  # Max restart attempts per thread
+
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -595,6 +636,100 @@ class MotionTrackerV2:
         except:
             return 0
 
+    def check_thread_health(self):
+        """
+        Check if critical threads are alive and healthy.
+        Returns dict with thread status and recommendations.
+        """
+        status = {
+            'gps_alive': self.gps_thread.is_alive() if self.gps_thread else False,
+            'accel_alive': self.accel_thread.is_alive() if self.accel_thread else False,
+            'healthy': True,
+            'warnings': []
+        }
+
+        # Check GPS thread
+        if self.gps_thread and not status['gps_alive']:
+            status['healthy'] = False
+            status['warnings'].append("GPS thread died unexpectedly")
+
+        # Check accelerometer thread
+        if self.accel_thread and not status['accel_alive']:
+            status['healthy'] = False
+            status['warnings'].append("Accelerometer thread died unexpectedly")
+
+        return status
+
+    def restart_accel_thread(self):
+        """Attempt to restart the accelerometer thread after failure"""
+        if self.thread_restart_count['accel'] >= self.max_thread_restarts:
+            print(f"⚠ Accelerometer thread failed {self.max_thread_restarts} times, not restarting")
+            return False
+
+        print(f"\n⚡ Attempting to restart accelerometer thread (attempt {self.thread_restart_count['accel'] + 1}/{self.max_thread_restarts})...")
+
+        try:
+            # Stop existing thread if any
+            if self.accel_thread:
+                self.accel_thread.join(timeout=1)
+
+            # Clear the queue to prevent stale data
+            while not self.accel_queue.empty():
+                try:
+                    self.accel_queue.get_nowait()
+                except:
+                    break
+
+            # Restart with pure Python version (safer fallback)
+            self.accel_thread = AccelerometerThread(
+                self.accel_queue,
+                self.stop_event,
+                self.sensor_daemon,
+                fusion=self.fusion,
+                sample_rate=self.accel_sample_rate
+            )
+            self.accel_thread.start()
+
+            self.thread_restart_count['accel'] += 1
+            print(f"✓ Accelerometer thread restarted successfully")
+            return True
+
+        except Exception as e:
+            print(f"⚠ Failed to restart accelerometer thread: {e}")
+            return False
+
+    def restart_gps_thread(self):
+        """Attempt to restart the GPS thread after failure"""
+        if self.thread_restart_count['gps'] >= self.max_thread_restarts:
+            print(f"⚠ GPS thread failed {self.max_thread_restarts} times, not restarting")
+            return False
+
+        print(f"\n⚡ Attempting to restart GPS thread (attempt {self.thread_restart_count['gps'] + 1}/{self.max_thread_restarts})...")
+
+        try:
+            # Stop existing thread if any
+            if self.gps_thread:
+                self.gps_thread.join(timeout=1)
+
+            # Clear the queue
+            while not self.gps_queue.empty():
+                try:
+                    self.gps_queue.get_nowait()
+                except:
+                    break
+
+            # Restart GPS thread
+            self.gps_thread = GPSThread(self.gps_queue, self.stop_event)
+            self.gps_thread.start()
+
+            self.thread_restart_count['gps'] += 1
+            print(f"✓ GPS thread restarted successfully")
+            return True
+
+        except Exception as e:
+            print(f"⚠ Failed to restart GPS thread: {e}")
+            return False
+
     def start_threads(self):
         """Start background sensor threads"""
         print("Starting background sensor threads...")
@@ -611,47 +746,53 @@ class MotionTrackerV2:
         self.gps_thread.start()
         print("✓ GPS thread started")
 
-        # Start accelerometer thread
-        if HAS_CYTHON and self.sensor_daemon:
-            # ✓ CYTHON VERSION - Better performance, less sample loss, 70% less CPU
-            # First, do calibration using pure Python thread
-            temp_accel_thread = AccelerometerThread(
-                self.accel_queue,
-                self.stop_event,
-                self.sensor_daemon,
-                fusion=self.fusion,
-                sample_rate=self.accel_sample_rate
-            )
-            temp_accel_thread.calibrate()
+        # Start accelerometer thread with better error handling
+        try:
+            if HAS_CYTHON and self.sensor_daemon:
+                # ✓ CYTHON VERSION - Better performance, less sample loss, 70% less CPU
+                # First, do calibration using pure Python thread
+                temp_accel_thread = AccelerometerThread(
+                    self.accel_queue,
+                    self.stop_event,
+                    self.sensor_daemon,
+                    fusion=self.fusion,
+                    sample_rate=self.accel_sample_rate
+                )
+                temp_accel_thread.calibrate()
 
-            # Now use Cython processor with calibration bias and gravity
-            self.accel_processor = FastAccelProcessor(
-                self.sensor_daemon,
-                self.accel_queue,
-                temp_accel_thread.bias,
-                temp_accel_thread.gravity,
-                self.stop_event
-            )
+                # Now use Cython processor with calibration bias and gravity
+                self.accel_processor = FastAccelProcessor(
+                    self.sensor_daemon,
+                    self.accel_queue,
+                    temp_accel_thread.bias,
+                    temp_accel_thread.gravity,
+                    self.stop_event
+                )
 
-            # Start Cython processor in a thread
-            self.accel_thread = threading.Thread(
-                target=self.accel_processor.run,
-                daemon=True
-            )
-            self.accel_thread.start()
-            print(f"✓ Accelerometer thread started ({self.accel_sample_rate} Hz) [CYTHON OPTIMIZED - 70% less CPU]")
+                # Start Cython processor in a thread
+                self.accel_thread = threading.Thread(
+                    target=self.accel_processor.run,
+                    daemon=True
+                )
+                self.accel_thread.start()
+                print(f"✓ Accelerometer thread started ({self.accel_sample_rate} Hz) [CYTHON OPTIMIZED - 70% less CPU]")
 
-        else:
-            # ⚠ PURE PYTHON VERSION - Fallback if Cython unavailable
-            self.accel_thread = AccelerometerThread(
-                self.accel_queue,
-                self.stop_event,
-                self.sensor_daemon,
-                fusion=self.fusion,
-                sample_rate=self.accel_sample_rate
-            )
-            self.accel_thread.start()
-            print(f"✓ Accelerometer thread started ({self.accel_sample_rate} Hz)")
+            else:
+                # ⚠ PURE PYTHON VERSION - Fallback if Cython unavailable
+                self.accel_thread = AccelerometerThread(
+                    self.accel_queue,
+                    self.stop_event,
+                    self.sensor_daemon,
+                    fusion=self.fusion,
+                    sample_rate=self.accel_sample_rate
+                )
+                self.accel_thread.start()
+                print(f"✓ Accelerometer thread started ({self.accel_sample_rate} Hz)")
+
+        except Exception as e:
+            print(f"⚠ Failed to start accelerometer thread: {e}")
+            print("⚠ Continuing with GPS-only tracking")
+            self.accel_thread = None
 
     def track(self, duration_minutes=None):
         """Main tracking loop"""
@@ -734,6 +875,24 @@ class MotionTrackerV2:
                     throttle_str = "CRITICAL" if memory_throttle == 2 else "WARNING"
                     print(f"\n⚠ Memory {throttle_str}: {memory.percent:.1f}% ({memory.used/1024/1024:.0f}MB / {memory.total/1024/1024:.0f}MB)")
                     self.last_memory_check = current_time
+
+                # THREAD HEALTH CHECK
+                if current_time - self.last_thread_health_check >= self.thread_health_check_interval:
+                    health_status = self.check_thread_health()
+
+                    if not health_status['healthy']:
+                        for warning in health_status['warnings']:
+                            print(f"\n⚠ THREAD HEALTH: {warning}")
+
+                        # Attempt to restart failed threads
+                        if not health_status['accel_alive'] and self.accel_thread:
+                            self.restart_accel_thread()
+
+                        if not health_status['gps_alive'] and self.gps_thread:
+                            if not self.restart_gps_thread():
+                                print("⚠ GPS thread failed permanently, continuing with accelerometer-only")
+
+                    self.last_thread_health_check = current_time
 
                 # AUTO-SAVE check
                 if current_time - self.last_save_time >= self.auto_save_interval:
