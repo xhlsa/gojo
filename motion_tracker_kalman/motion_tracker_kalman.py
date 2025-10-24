@@ -1222,11 +1222,11 @@ class MotionTrackerV2:
             print(f"\n✓ Data saved:")
             print(f"  {filename_json}")
             print(f"  {filename_gz}")
-            print(f"  motion_track_v2_{timestamp}.gpx")
+            print(f"  motion_track_kalman_{timestamp}.gpx")
 
     def export_gpx(self, timestamp):
         """Export GPS track to GPX format"""
-        filename = os.path.join(SESSIONS_DIR, f"motion_track_v2_{timestamp}.gpx")
+        filename = os.path.join(SESSIONS_DIR, f"motion_track_kalman_{timestamp}.gpx")
 
         # Convert deque to list for iteration
         samples_list = list(self.samples)
