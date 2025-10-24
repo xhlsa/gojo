@@ -1160,7 +1160,7 @@ class MotionTrackerV2:
     def save_data(self, auto_save=False, clear_after_save=False):
         """Save tracking data to files"""
         timestamp = self.start_time.strftime('%Y%m%d_%H%M%S')
-        base_filename = os.path.join(SESSIONS_DIR, f"motion_track_v2_{timestamp}")
+        base_filename = os.path.join(SESSIONS_DIR, f"motion_track_kalman_{timestamp}")
 
         # Convert deques to lists for JSON serialization
         samples_list = list(self.samples)
