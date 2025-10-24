@@ -1,0 +1,82 @@
+{
+  "start_time": "2025-10-22T17:26:24.576625",
+  "end_time": "2025-10-22T17:26:38.210158",
+  "total_distance": 0.0,
+  "samples": [
+    {
+      "timestamp": "2025-10-22T17:26:31.160232",
+      "elapsed": 4.523759,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21597923,
+        "longitude": -110.84328197,
+        "altitude": 781.0487060546875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 4.986783981323242
+      },
+      "battery": {
+        "percentage": 97,
+        "current": -915000,
+        "temperature": 32.2,
+        "voltage": 4217,
+        "status": "DISCHARGING",
+        "charge_counter": 4490640
+      }
+    },
+    {
+      "timestamp": "2025-10-22T17:26:33.779150",
+      "elapsed": 7.58379,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.2159803,
+        "longitude": -110.84329083,
+        "altitude": 774.083984375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-22T17:26:36.721703",
+      "elapsed": 10.203019,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21597659,
+        "longitude": -110.84329736,
+        "altitude": 770.3492431640625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      },
+      "battery": null
+    }
+  ],
+  "auto_save_count": 0,
+  "battery_start": {
+    "percentage": 97,
+    "current": -1183,
+    "temperature": 32.2,
+    "voltage": 4217,
+    "status": "DISCHARGING",
+    "charge_counter": 4490640
+  },
+  "battery_samples": [
+    {
+      "timestamp": "2025-10-22T17:26:31.160201",
+      "elapsed": 4.523759,
+      "battery": {
+        "percentage": 97,
+        "current": -915000,
+        "temperature": 32.2,
+        "voltage": 4217,
+        "status": "DISCHARGING",
+        "charge_counter": 4490640
+      }
+    }
+  ]
+}

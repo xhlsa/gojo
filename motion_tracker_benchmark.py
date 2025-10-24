@@ -13,6 +13,8 @@ import signal
 import os
 import threading
 import psutil
+import tracemalloc
+import sys
 from queue import Queue, Empty
 from datetime import datetime
 from collections import deque
@@ -383,12 +385,63 @@ class RateTracker:
             self.metrics['velocity_errors'].append(error)  # Deque handles size limit auto
 
 
+class MemoryProfiler:
+    """Tracks memory usage and deque sizes over time"""
+    def __init__(self):
+        self.memory_samples = []
+        self.deque_sizes = {}
+        self.queue_depths = {}
+        self.peak_memory = 0
+        self.start_time = None
+        tracemalloc.start()
+
+    def record(self, elapsed, trackers, accel_queues, gps_queues):
+        """Record current memory state"""
+        try:
+            current, peak = tracemalloc.get_traced_memory()
+            self.peak_memory = max(self.peak_memory, peak)
+
+            # Count items in deques
+            deque_items = 0
+            for name, tracker in trackers.items():
+                deque_items += len(tracker.gps_samples) + len(tracker.accel_samples)
+
+            # Queue depths
+            total_queue_depth = sum(q.qsize() for q in accel_queues) + sum(q.qsize() for q in gps_queues)
+
+            sample = {
+                'elapsed': elapsed,
+                'current_mb': current / 1024 / 1024,
+                'peak_mb': peak / 1024 / 1024,
+                'total_deque_items': deque_items,
+                'total_queue_depth': total_queue_depth,
+                'accel_queue_depths': [q.qsize() for q in accel_queues],
+                'gps_queue_depths': [q.qsize() for q in gps_queues]
+            }
+            self.memory_samples.append(sample)
+        except:
+            pass
+
+    def get_growth_rate(self):
+        """Calculate memory growth rate in MB/minute"""
+        if len(self.memory_samples) < 2:
+            return 0
+        first = self.memory_samples[0]
+        last = self.memory_samples[-1]
+        elapsed_minutes = (last['elapsed'] - first['elapsed']) / 60
+        if elapsed_minutes <= 0:
+            return 0
+        return (last['current_mb'] - first['current_mb']) / elapsed_minutes
+
+
 class BenchmarkTracker:
     """Main benchmark tracker running multiple rates"""
 
-    def __init__(self, rates=[10, 25, 50, 100], auto_save_interval=120):
+    def __init__(self, rates=[10, 25, 50, 100], auto_save_interval=120, enable_memory_profile=True):
         self.rates = rates
         self.auto_save_interval = auto_save_interval
+        self.enable_memory_profile = enable_memory_profile
+        self.memory_profiler = MemoryProfiler() if enable_memory_profile else None
 
         # Threading
         self.stop_event = threading.Event()
@@ -581,9 +634,19 @@ class BenchmarkTracker:
                     if queue_size > self.accel_queues[i].maxsize * 0.9:
                         self.queue_overflows[rate_name] += 1
 
+                # Record memory profile
+                if self.memory_profiler:
+                    self.memory_profiler.record(elapsed, self.trackers, self.accel_queues, self.gps_queues)
+
                 # Display update (throttled)
                 if current_time - last_display_time >= 5.0:
                     print(f"\n--- Status @ {int(elapsed//60)}:{int(elapsed%60):02d} ---")
+
+                    # Memory status
+                    if self.memory_profiler:
+                        current, peak = tracemalloc.get_traced_memory()
+                        print(f"Memory: {current/1024/1024:.1f}MB (peak: {peak/1024/1024:.1f}MB)")
+
                     for rate_name, tracker in self.trackers.items():
                         warning = ""
                         if self.queue_overflows[rate_name] > 0:

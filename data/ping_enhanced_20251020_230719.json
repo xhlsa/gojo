@@ -1,0 +1,1200 @@
+{
+  "host": "8.8.8.8",
+  "interval": 30,
+  "spike_threshold": 100,
+  "start_time": "2025-10-20T23:07:19.526812",
+  "end_time": "2025-10-21T01:07:19.749246",
+  "spike_count": 14,
+  "results": [
+    {
+      "timestamp": "2025-10-20T23:07:19.577305",
+      "status": "success",
+      "ping_ms": 38.8
+    },
+    {
+      "timestamp": "2025-10-20T23:07:49.629998",
+      "status": "success",
+      "ping_ms": 32.7
+    },
+    {
+      "timestamp": "2025-10-20T23:08:19.682302",
+      "status": "success",
+      "ping_ms": 30.5
+    },
+    {
+      "timestamp": "2025-10-20T23:08:49.736262",
+      "status": "success",
+      "ping_ms": 36.2
+    },
+    {
+      "timestamp": "2025-10-20T23:09:19.785386",
+      "status": "success",
+      "ping_ms": 22.0
+    },
+    {
+      "timestamp": "2025-10-20T23:09:49.846802",
+      "status": "success",
+      "ping_ms": 18.8
+    },
+    {
+      "timestamp": "2025-10-20T23:10:19.949796",
+      "status": "success",
+      "ping_ms": 58.5
+    },
+    {
+      "timestamp": "2025-10-20T23:10:50.067293",
+      "status": "success",
+      "ping_ms": 57.4
+    },
+    {
+      "timestamp": "2025-10-20T23:11:20.187881",
+      "status": "success",
+      "ping_ms": 60.5
+    },
+    {
+      "timestamp": "2025-10-20T23:11:50.280413",
+      "status": "success",
+      "ping_ms": 31.7
+    },
+    {
+      "timestamp": "2025-10-20T23:12:20.435292",
+      "status": "success",
+      "ping_ms": 92.4
+    },
+    {
+      "timestamp": "2025-10-20T23:12:50.553936",
+      "status": "success",
+      "ping_ms": 57.1
+    },
+    {
+      "timestamp": "2025-10-20T23:13:20.678675",
+      "status": "success",
+      "ping_ms": 54.2
+    },
+    {
+      "timestamp": "2025-10-20T23:13:50.759520",
+      "status": "success",
+      "ping_ms": 29.7
+    },
+    {
+      "timestamp": "2025-10-20T23:14:20.873132",
+      "status": "success",
+      "ping_ms": 46.7
+    },
+    {
+      "timestamp": "2025-10-20T23:14:50.974695",
+      "status": "success",
+      "ping_ms": 38.8
+    },
+    {
+      "timestamp": "2025-10-20T23:15:21.083725",
+      "status": "success",
+      "ping_ms": 48.0
+    },
+    {
+      "timestamp": "2025-10-20T23:15:51.206883",
+      "status": "success",
+      "ping_ms": 62.3
+    },
+    {
+      "timestamp": "2025-10-20T23:16:21.341947",
+      "status": "success",
+      "ping_ms": 64.8
+    },
+    {
+      "timestamp": "2025-10-20T23:16:51.489357",
+      "status": "success",
+      "ping_ms": 86.0
+    },
+    {
+      "timestamp": "2025-10-20T23:17:21.614651",
+      "status": "success",
+      "ping_ms": 67.0
+    },
+    {
+      "timestamp": "2025-10-20T23:17:51.808370",
+      "status": "success",
+      "ping_ms": 125.0
+    },
+    {
+      "timestamp": "2025-10-20T23:18:24.260073",
+      "status": "success",
+      "ping_ms": 65.6
+    },
+    {
+      "timestamp": "2025-10-20T23:18:54.377942",
+      "status": "success",
+      "ping_ms": 62.8
+    },
+    {
+      "timestamp": "2025-10-20T23:19:24.498213",
+      "status": "success",
+      "ping_ms": 56.2
+    },
+    {
+      "timestamp": "2025-10-20T23:19:54.581111",
+      "status": "success",
+      "ping_ms": 25.2
+    },
+    {
+      "timestamp": "2025-10-20T23:20:24.793536",
+      "status": "success",
+      "ping_ms": 152.0
+    },
+    {
+      "timestamp": "2025-10-20T23:20:56.959460",
+      "status": "success",
+      "ping_ms": 64.3
+    },
+    {
+      "timestamp": "2025-10-20T23:21:27.086464",
+      "status": "success",
+      "ping_ms": 65.9
+    },
+    {
+      "timestamp": "2025-10-20T23:21:57.212618",
+      "status": "success",
+      "ping_ms": 61.3
+    },
+    {
+      "timestamp": "2025-10-20T23:22:27.363540",
+      "status": "success",
+      "ping_ms": 89.4
+    },
+    {
+      "timestamp": "2025-10-20T23:22:57.486749",
+      "status": "success",
+      "ping_ms": 64.6
+    },
+    {
+      "timestamp": "2025-10-20T23:23:27.610222",
+      "status": "success",
+      "ping_ms": 63.1
+    },
+    {
+      "timestamp": "2025-10-20T23:23:57.743634",
+      "status": "success",
+      "ping_ms": 63.9
+    },
+    {
+      "timestamp": "2025-10-20T23:24:27.863001",
+      "status": "success",
+      "ping_ms": 59.7
+    },
+    {
+      "timestamp": "2025-10-20T23:24:57.975173",
+      "status": "success",
+      "ping_ms": 55.2
+    },
+    {
+      "timestamp": "2025-10-20T23:25:28.102710",
+      "status": "success",
+      "ping_ms": 62.9
+    },
+    {
+      "timestamp": "2025-10-20T23:25:58.228210",
+      "status": "success",
+      "ping_ms": 63.7
+    },
+    {
+      "timestamp": "2025-10-20T23:26:28.337871",
+      "status": "success",
+      "ping_ms": 47.7
+    },
+    {
+      "timestamp": "2025-10-20T23:26:58.454580",
+      "status": "success",
+      "ping_ms": 57.7
+    },
+    {
+      "timestamp": "2025-10-20T23:27:28.543490",
+      "status": "success",
+      "ping_ms": 33.7
+    },
+    {
+      "timestamp": "2025-10-20T23:27:58.742490",
+      "status": "success",
+      "ping_ms": 141.0
+    },
+    {
+      "timestamp": "2025-10-20T23:28:30.879110",
+      "status": "success",
+      "ping_ms": 62.4
+    },
+    {
+      "timestamp": "2025-10-20T23:29:00.987910",
+      "status": "success",
+      "ping_ms": 47.4
+    },
+    {
+      "timestamp": "2025-10-20T23:29:31.113528",
+      "status": "success",
+      "ping_ms": 62.6
+    },
+    {
+      "timestamp": "2025-10-20T23:30:01.224175",
+      "status": "success",
+      "ping_ms": 47.2
+    },
+    {
+      "timestamp": "2025-10-20T23:30:31.336292",
+      "status": "success",
+      "ping_ms": 61.3
+    },
+    {
+      "timestamp": "2025-10-20T23:31:01.522165",
+      "status": "success",
+      "ping_ms": 128.0
+    },
+    {
+      "timestamp": "2025-10-20T23:31:33.592045",
+      "status": "success",
+      "ping_ms": 54.5
+    },
+    {
+      "timestamp": "2025-10-20T23:32:03.683132",
+      "status": "success",
+      "ping_ms": 17.8
+    },
+    {
+      "timestamp": "2025-10-20T23:32:33.794885",
+      "status": "success",
+      "ping_ms": 49.3
+    },
+    {
+      "timestamp": "2025-10-20T23:33:03.907995",
+      "status": "success",
+      "ping_ms": 56.8
+    },
+    {
+      "timestamp": "2025-10-20T23:33:34.011436",
+      "status": "success",
+      "ping_ms": 46.2
+    },
+    {
+      "timestamp": "2025-10-20T23:34:04.108631",
+      "status": "success",
+      "ping_ms": 35.6
+    },
+    {
+      "timestamp": "2025-10-20T23:34:34.319303",
+      "status": "success",
+      "ping_ms": 143.0
+    },
+    {
+      "timestamp": "2025-10-20T23:35:06.492668",
+      "status": "success",
+      "ping_ms": 58.5
+    },
+    {
+      "timestamp": "2025-10-20T23:35:36.609008",
+      "status": "success",
+      "ping_ms": 54.9
+    },
+    {
+      "timestamp": "2025-10-20T23:36:06.738413",
+      "status": "success",
+      "ping_ms": 64.5
+    },
+    {
+      "timestamp": "2025-10-20T23:36:36.891919",
+      "status": "success",
+      "ping_ms": 98.0
+    },
+    {
+      "timestamp": "2025-10-20T23:37:07.013401",
+      "status": "success",
+      "ping_ms": 49.7
+    },
+    {
+      "timestamp": "2025-10-20T23:37:37.135593",
+      "status": "success",
+      "ping_ms": 45.5
+    },
+    {
+      "timestamp": "2025-10-20T23:38:07.312329",
+      "status": "success",
+      "ping_ms": 108.0
+    },
+    {
+      "timestamp": "2025-10-20T23:38:39.455613",
+      "status": "success",
+      "ping_ms": 75.7
+    },
+    {
+      "timestamp": "2025-10-20T23:39:09.579366",
+      "status": "success",
+      "ping_ms": 56.2
+    },
+    {
+      "timestamp": "2025-10-20T23:39:39.701607",
+      "status": "success",
+      "ping_ms": 57.8
+    },
+    {
+      "timestamp": "2025-10-20T23:40:09.828458",
+      "status": "success",
+      "ping_ms": 61.7
+    },
+    {
+      "timestamp": "2025-10-20T23:40:39.948436",
+      "status": "success",
+      "ping_ms": 65.3
+    },
+    {
+      "timestamp": "2025-10-20T23:41:10.089426",
+      "status": "success",
+      "ping_ms": 77.5
+    },
+    {
+      "timestamp": "2025-10-20T23:41:40.222538",
+      "status": "success",
+      "ping_ms": 68.5
+    },
+    {
+      "timestamp": "2025-10-20T23:42:10.360768",
+      "status": "success",
+      "ping_ms": 79.3
+    },
+    {
+      "timestamp": "2025-10-20T23:42:40.490935",
+      "status": "success",
+      "ping_ms": 59.4
+    },
+    {
+      "timestamp": "2025-10-20T23:43:10.611827",
+      "status": "success",
+      "ping_ms": 54.9
+    },
+    {
+      "timestamp": "2025-10-20T23:43:40.738984",
+      "status": "success",
+      "ping_ms": 66.1
+    },
+    {
+      "timestamp": "2025-10-20T23:44:10.869242",
+      "status": "success",
+      "ping_ms": 72.4
+    },
+    {
+      "timestamp": "2025-10-20T23:44:40.992314",
+      "status": "success",
+      "ping_ms": 69.0
+    },
+    {
+      "timestamp": "2025-10-20T23:45:11.107710",
+      "status": "success",
+      "ping_ms": 48.7
+    },
+    {
+      "timestamp": "2025-10-20T23:45:41.225766",
+      "status": "success",
+      "ping_ms": 56.9
+    },
+    {
+      "timestamp": "2025-10-20T23:46:11.348891",
+      "status": "success",
+      "ping_ms": 59.9
+    },
+    {
+      "timestamp": "2025-10-20T23:46:41.473762",
+      "status": "success",
+      "ping_ms": 66.0
+    },
+    {
+      "timestamp": "2025-10-20T23:47:11.586542",
+      "status": "success",
+      "ping_ms": 53.0
+    },
+    {
+      "timestamp": "2025-10-20T23:47:41.707624",
+      "status": "success",
+      "ping_ms": 60.7
+    },
+    {
+      "timestamp": "2025-10-20T23:48:11.859898",
+      "status": "success",
+      "ping_ms": 83.5
+    },
+    {
+      "timestamp": "2025-10-20T23:48:41.986758",
+      "status": "success",
+      "ping_ms": 70.8
+    },
+    {
+      "timestamp": "2025-10-20T23:49:12.116462",
+      "status": "success",
+      "ping_ms": 68.6
+    },
+    {
+      "timestamp": "2025-10-20T23:49:42.306593",
+      "status": "success",
+      "ping_ms": 134.0
+    },
+    {
+      "timestamp": "2025-10-20T23:50:14.487547",
+      "status": "success",
+      "ping_ms": 44.5
+    },
+    {
+      "timestamp": "2025-10-20T23:50:44.595817",
+      "status": "success",
+      "ping_ms": 49.2
+    },
+    {
+      "timestamp": "2025-10-20T23:51:14.741110",
+      "status": "success",
+      "ping_ms": 81.2
+    },
+    {
+      "timestamp": "2025-10-20T23:51:44.862035",
+      "status": "success",
+      "ping_ms": 63.1
+    },
+    {
+      "timestamp": "2025-10-20T23:52:14.990488",
+      "status": "success",
+      "ping_ms": 67.0
+    },
+    {
+      "timestamp": "2025-10-20T23:52:45.118049",
+      "status": "success",
+      "ping_ms": 64.6
+    },
+    {
+      "timestamp": "2025-10-20T23:53:15.238766",
+      "status": "success",
+      "ping_ms": 64.6
+    },
+    {
+      "timestamp": "2025-10-20T23:53:45.337502",
+      "status": "success",
+      "ping_ms": 47.3
+    },
+    {
+      "timestamp": "2025-10-20T23:54:15.476706",
+      "status": "success",
+      "ping_ms": 77.5
+    },
+    {
+      "timestamp": "2025-10-20T23:54:45.632992",
+      "status": "success",
+      "ping_ms": 99.0
+    },
+    {
+      "timestamp": "2025-10-20T23:55:15.745160",
+      "status": "success",
+      "ping_ms": 48.0
+    },
+    {
+      "timestamp": "2025-10-20T23:55:45.887475",
+      "status": "success",
+      "ping_ms": 84.8
+    },
+    {
+      "timestamp": "2025-10-20T23:56:16.007349",
+      "status": "success",
+      "ping_ms": 60.8
+    },
+    {
+      "timestamp": "2025-10-20T23:56:46.115178",
+      "status": "success",
+      "ping_ms": 54.9
+    },
+    {
+      "timestamp": "2025-10-20T23:57:16.237266",
+      "status": "success",
+      "ping_ms": 58.9
+    },
+    {
+      "timestamp": "2025-10-20T23:57:46.436652",
+      "status": "success",
+      "ping_ms": 134.0
+    },
+    {
+      "timestamp": "2025-10-20T23:58:18.687002",
+      "status": "success",
+      "ping_ms": 61.7
+    },
+    {
+      "timestamp": "2025-10-20T23:58:48.796352",
+      "status": "success",
+      "ping_ms": 48.1
+    },
+    {
+      "timestamp": "2025-10-20T23:59:18.942968",
+      "status": "success",
+      "ping_ms": 77.9
+    },
+    {
+      "timestamp": "2025-10-20T23:59:49.058359",
+      "status": "success",
+      "ping_ms": 48.2
+    },
+    {
+      "timestamp": "2025-10-21T00:00:19.153801",
+      "status": "success",
+      "ping_ms": 55.4
+    },
+    {
+      "timestamp": "2025-10-21T00:00:49.270567",
+      "status": "success",
+      "ping_ms": 54.4
+    },
+    {
+      "timestamp": "2025-10-21T00:01:19.400746",
+      "status": "success",
+      "ping_ms": 70.5
+    },
+    {
+      "timestamp": "2025-10-21T00:01:49.520065",
+      "status": "success",
+      "ping_ms": 56.5
+    },
+    {
+      "timestamp": "2025-10-21T00:02:19.651598",
+      "status": "success",
+      "ping_ms": 64.8
+    },
+    {
+      "timestamp": "2025-10-21T00:02:49.764269",
+      "status": "success",
+      "ping_ms": 57.5
+    },
+    {
+      "timestamp": "2025-10-21T00:03:19.877055",
+      "status": "success",
+      "ping_ms": 56.3
+    },
+    {
+      "timestamp": "2025-10-21T00:03:49.995264",
+      "status": "success",
+      "ping_ms": 60.1
+    },
+    {
+      "timestamp": "2025-10-21T00:04:20.134767",
+      "status": "success",
+      "ping_ms": 64.0
+    },
+    {
+      "timestamp": "2025-10-21T00:04:50.246603",
+      "status": "success",
+      "ping_ms": 49.5
+    },
+    {
+      "timestamp": "2025-10-21T00:05:20.369077",
+      "status": "success",
+      "ping_ms": 63.0
+    },
+    {
+      "timestamp": "2025-10-21T00:05:50.498480",
+      "status": "success",
+      "ping_ms": 66.9
+    },
+    {
+      "timestamp": "2025-10-21T00:06:20.605942",
+      "status": "success",
+      "ping_ms": 49.7
+    },
+    {
+      "timestamp": "2025-10-21T00:06:50.728248",
+      "status": "success",
+      "ping_ms": 62.8
+    },
+    {
+      "timestamp": "2025-10-21T00:07:20.858762",
+      "status": "success",
+      "ping_ms": 64.8
+    },
+    {
+      "timestamp": "2025-10-21T00:07:50.978553",
+      "status": "success",
+      "ping_ms": 53.3
+    },
+    {
+      "timestamp": "2025-10-21T00:08:21.096078",
+      "status": "success",
+      "ping_ms": 59.6
+    },
+    {
+      "timestamp": "2025-10-21T00:08:51.175237",
+      "status": "success",
+      "ping_ms": 28.6
+    },
+    {
+      "timestamp": "2025-10-21T00:09:21.294679",
+      "status": "success",
+      "ping_ms": 58.9
+    },
+    {
+      "timestamp": "2025-10-21T00:09:51.422012",
+      "status": "success",
+      "ping_ms": 62.9
+    },
+    {
+      "timestamp": "2025-10-21T00:10:21.543219",
+      "status": "success",
+      "ping_ms": 60.9
+    },
+    {
+      "timestamp": "2025-10-21T00:10:51.663864",
+      "status": "success",
+      "ping_ms": 62.8
+    },
+    {
+      "timestamp": "2025-10-21T00:11:21.783390",
+      "status": "success",
+      "ping_ms": 57.4
+    },
+    {
+      "timestamp": "2025-10-21T00:11:51.875614",
+      "status": "success",
+      "ping_ms": 56.1
+    },
+    {
+      "timestamp": "2025-10-21T00:12:21.995483",
+      "status": "success",
+      "ping_ms": 61.2
+    },
+    {
+      "timestamp": "2025-10-21T00:12:52.113134",
+      "status": "success",
+      "ping_ms": 52.0
+    },
+    {
+      "timestamp": "2025-10-21T00:13:22.233055",
+      "status": "success",
+      "ping_ms": 60.3
+    },
+    {
+      "timestamp": "2025-10-21T00:13:52.355067",
+      "status": "success",
+      "ping_ms": 55.6
+    },
+    {
+      "timestamp": "2025-10-21T00:14:22.503694",
+      "status": "success",
+      "ping_ms": 86.7
+    },
+    {
+      "timestamp": "2025-10-21T00:14:52.596246",
+      "status": "success",
+      "ping_ms": 30.3
+    },
+    {
+      "timestamp": "2025-10-21T00:15:22.718521",
+      "status": "success",
+      "ping_ms": 58.9
+    },
+    {
+      "timestamp": "2025-10-21T00:15:52.829629",
+      "status": "success",
+      "ping_ms": 56.8
+    },
+    {
+      "timestamp": "2025-10-21T00:16:22.957549",
+      "status": "success",
+      "ping_ms": 62.3
+    },
+    {
+      "timestamp": "2025-10-21T00:16:53.082033",
+      "status": "success",
+      "ping_ms": 56.9
+    },
+    {
+      "timestamp": "2025-10-21T00:17:23.214682",
+      "status": "success",
+      "ping_ms": 61.6
+    },
+    {
+      "timestamp": "2025-10-21T00:17:53.330721",
+      "status": "success",
+      "ping_ms": 56.2
+    },
+    {
+      "timestamp": "2025-10-21T00:18:23.461746",
+      "status": "success",
+      "ping_ms": 73.6
+    },
+    {
+      "timestamp": "2025-10-21T00:18:53.577321",
+      "status": "success",
+      "ping_ms": 61.1
+    },
+    {
+      "timestamp": "2025-10-21T00:19:23.695538",
+      "status": "success",
+      "ping_ms": 53.6
+    },
+    {
+      "timestamp": "2025-10-21T00:19:53.881592",
+      "status": "success",
+      "ping_ms": 122.0
+    },
+    {
+      "timestamp": "2025-10-21T00:20:26.182841",
+      "status": "success",
+      "ping_ms": 45.4
+    },
+    {
+      "timestamp": "2025-10-21T00:20:56.293287",
+      "status": "success",
+      "ping_ms": 54.6
+    },
+    {
+      "timestamp": "2025-10-21T00:21:26.404427",
+      "status": "success",
+      "ping_ms": 47.2
+    },
+    {
+      "timestamp": "2025-10-21T00:21:56.523614",
+      "status": "success",
+      "ping_ms": 63.0
+    },
+    {
+      "timestamp": "2025-10-21T00:22:26.652922",
+      "status": "success",
+      "ping_ms": 65.4
+    },
+    {
+      "timestamp": "2025-10-21T00:22:56.767025",
+      "status": "success",
+      "ping_ms": 51.7
+    },
+    {
+      "timestamp": "2025-10-21T00:23:26.886672",
+      "status": "success",
+      "ping_ms": 58.2
+    },
+    {
+      "timestamp": "2025-10-21T00:23:56.994955",
+      "status": "success",
+      "ping_ms": 54.9
+    },
+    {
+      "timestamp": "2025-10-21T00:24:27.179738",
+      "status": "success",
+      "ping_ms": 123.0
+    },
+    {
+      "timestamp": "2025-10-21T00:24:59.259938",
+      "status": "success",
+      "ping_ms": 47.6
+    },
+    {
+      "timestamp": "2025-10-21T00:25:29.382159",
+      "status": "success",
+      "ping_ms": 56.9
+    },
+    {
+      "timestamp": "2025-10-21T00:25:59.496341",
+      "status": "success",
+      "ping_ms": 62.3
+    },
+    {
+      "timestamp": "2025-10-21T00:26:29.602186",
+      "status": "success",
+      "ping_ms": 47.1
+    },
+    {
+      "timestamp": "2025-10-21T00:26:59.721451",
+      "status": "success",
+      "ping_ms": 57.3
+    },
+    {
+      "timestamp": "2025-10-21T00:27:29.867880",
+      "status": "success",
+      "ping_ms": 73.8
+    },
+    {
+      "timestamp": "2025-10-21T00:27:59.990228",
+      "status": "success",
+      "ping_ms": 57.3
+    },
+    {
+      "timestamp": "2025-10-21T00:28:30.104521",
+      "status": "success",
+      "ping_ms": 60.2
+    },
+    {
+      "timestamp": "2025-10-21T00:29:00.218435",
+      "status": "success",
+      "ping_ms": 55.5
+    },
+    {
+      "timestamp": "2025-10-21T00:29:30.359966",
+      "status": "success",
+      "ping_ms": 67.4
+    },
+    {
+      "timestamp": "2025-10-21T00:30:00.480229",
+      "status": "success",
+      "ping_ms": 53.0
+    },
+    {
+      "timestamp": "2025-10-21T00:30:30.594293",
+      "status": "success",
+      "ping_ms": 53.7
+    },
+    {
+      "timestamp": "2025-10-21T00:31:00.731354",
+      "status": "success",
+      "ping_ms": 86.1
+    },
+    {
+      "timestamp": "2025-10-21T00:31:30.850058",
+      "status": "success",
+      "ping_ms": 57.6
+    },
+    {
+      "timestamp": "2025-10-21T00:32:00.964448",
+      "status": "success",
+      "ping_ms": 57.8
+    },
+    {
+      "timestamp": "2025-10-21T00:32:31.088917",
+      "status": "success",
+      "ping_ms": 62.4
+    },
+    {
+      "timestamp": "2025-10-21T00:33:01.202186",
+      "status": "success",
+      "ping_ms": 56.4
+    },
+    {
+      "timestamp": "2025-10-21T00:33:31.350715",
+      "status": "success",
+      "ping_ms": 90.9
+    },
+    {
+      "timestamp": "2025-10-21T00:34:01.480444",
+      "status": "success",
+      "ping_ms": 71.7
+    },
+    {
+      "timestamp": "2025-10-21T00:34:31.600682",
+      "status": "success",
+      "ping_ms": 55.6
+    },
+    {
+      "timestamp": "2025-10-21T00:35:01.721249",
+      "status": "success",
+      "ping_ms": 50.9
+    },
+    {
+      "timestamp": "2025-10-21T00:35:31.837080",
+      "status": "success",
+      "ping_ms": 50.7
+    },
+    {
+      "timestamp": "2025-10-21T00:36:01.966252",
+      "status": "success",
+      "ping_ms": 61.4
+    },
+    {
+      "timestamp": "2025-10-21T00:36:32.078396",
+      "status": "success",
+      "ping_ms": 52.7
+    },
+    {
+      "timestamp": "2025-10-21T00:37:02.189621",
+      "status": "success",
+      "ping_ms": 51.9
+    },
+    {
+      "timestamp": "2025-10-21T00:37:32.311885",
+      "status": "success",
+      "ping_ms": 60.3
+    },
+    {
+      "timestamp": "2025-10-21T00:38:02.432077",
+      "status": "success",
+      "ping_ms": 60.1
+    },
+    {
+      "timestamp": "2025-10-21T00:38:32.537384",
+      "status": "success",
+      "ping_ms": 47.2
+    },
+    {
+      "timestamp": "2025-10-21T00:39:02.663042",
+      "status": "success",
+      "ping_ms": 51.8
+    },
+    {
+      "timestamp": "2025-10-21T00:39:32.781482",
+      "status": "success",
+      "ping_ms": 61.9
+    },
+    {
+      "timestamp": "2025-10-21T00:40:02.908405",
+      "status": "success",
+      "ping_ms": 60.0
+    },
+    {
+      "timestamp": "2025-10-21T00:40:33.033300",
+      "status": "success",
+      "ping_ms": 65.3
+    },
+    {
+      "timestamp": "2025-10-21T00:41:03.153452",
+      "status": "success",
+      "ping_ms": 57.2
+    },
+    {
+      "timestamp": "2025-10-21T00:41:33.323835",
+      "status": "success",
+      "ping_ms": 105.0
+    },
+    {
+      "timestamp": "2025-10-21T00:42:05.561265",
+      "status": "success",
+      "ping_ms": 61.8
+    },
+    {
+      "timestamp": "2025-10-21T00:42:35.689231",
+      "status": "success",
+      "ping_ms": 61.8
+    },
+    {
+      "timestamp": "2025-10-21T00:43:05.811321",
+      "status": "success",
+      "ping_ms": 56.1
+    },
+    {
+      "timestamp": "2025-10-21T00:43:35.934670",
+      "status": "success",
+      "ping_ms": 63.9
+    },
+    {
+      "timestamp": "2025-10-21T00:44:06.057000",
+      "status": "success",
+      "ping_ms": 62.7
+    },
+    {
+      "timestamp": "2025-10-21T00:44:36.169660",
+      "status": "success",
+      "ping_ms": 49.1
+    },
+    {
+      "timestamp": "2025-10-21T00:45:06.287419",
+      "status": "success",
+      "ping_ms": 49.2
+    },
+    {
+      "timestamp": "2025-10-21T00:45:36.407475",
+      "status": "success",
+      "ping_ms": 58.0
+    },
+    {
+      "timestamp": "2025-10-21T00:46:06.515789",
+      "status": "success",
+      "ping_ms": 53.7
+    },
+    {
+      "timestamp": "2025-10-21T00:46:36.621282",
+      "status": "success",
+      "ping_ms": 46.6
+    },
+    {
+      "timestamp": "2025-10-21T00:47:06.744612",
+      "status": "success",
+      "ping_ms": 63.9
+    },
+    {
+      "timestamp": "2025-10-21T00:47:36.885684",
+      "status": "success",
+      "ping_ms": 72.3
+    },
+    {
+      "timestamp": "2025-10-21T00:48:07.006197",
+      "status": "success",
+      "ping_ms": 58.3
+    },
+    {
+      "timestamp": "2025-10-21T00:48:37.125713",
+      "status": "success",
+      "ping_ms": 49.1
+    },
+    {
+      "timestamp": "2025-10-21T00:49:07.254959",
+      "status": "success",
+      "ping_ms": 64.1
+    },
+    {
+      "timestamp": "2025-10-21T00:49:37.366128",
+      "status": "success",
+      "ping_ms": 53.3
+    },
+    {
+      "timestamp": "2025-10-21T00:50:07.508244",
+      "status": "success",
+      "ping_ms": 88.2
+    },
+    {
+      "timestamp": "2025-10-21T00:50:37.627028",
+      "status": "success",
+      "ping_ms": 58.4
+    },
+    {
+      "timestamp": "2025-10-21T00:51:07.735577",
+      "status": "success",
+      "ping_ms": 45.2
+    },
+    {
+      "timestamp": "2025-10-21T00:51:37.848125",
+      "status": "success",
+      "ping_ms": 53.9
+    },
+    {
+      "timestamp": "2025-10-21T00:52:08.020142",
+      "status": "success",
+      "ping_ms": 103.0
+    },
+    {
+      "timestamp": "2025-10-21T00:52:40.305558",
+      "status": "success",
+      "ping_ms": 111.0
+    },
+    {
+      "timestamp": "2025-10-21T00:53:14.410552",
+      "status": "success",
+      "ping_ms": 49.2
+    },
+    {
+      "timestamp": "2025-10-21T00:53:44.540417",
+      "status": "success",
+      "ping_ms": 60.2
+    },
+    {
+      "timestamp": "2025-10-21T00:54:14.666811",
+      "status": "success",
+      "ping_ms": 65.6
+    },
+    {
+      "timestamp": "2025-10-21T00:54:44.778429",
+      "status": "success",
+      "ping_ms": 49.1
+    },
+    {
+      "timestamp": "2025-10-21T00:55:14.901627",
+      "status": "success",
+      "ping_ms": 59.1
+    },
+    {
+      "timestamp": "2025-10-21T00:55:45.019049",
+      "status": "success",
+      "ping_ms": 60.4
+    },
+    {
+      "timestamp": "2025-10-21T00:56:15.144365",
+      "status": "success",
+      "ping_ms": 57.7
+    },
+    {
+      "timestamp": "2025-10-21T00:56:45.322116",
+      "status": "success",
+      "ping_ms": 116.0
+    },
+    {
+      "timestamp": "2025-10-21T00:57:17.410505",
+      "status": "success",
+      "ping_ms": 67.8
+    },
+    {
+      "timestamp": "2025-10-21T00:57:47.535225",
+      "status": "success",
+      "ping_ms": 65.9
+    },
+    {
+      "timestamp": "2025-10-21T00:58:17.652504",
+      "status": "success",
+      "ping_ms": 55.1
+    },
+    {
+      "timestamp": "2025-10-21T00:58:47.761892",
+      "status": "success",
+      "ping_ms": 47.4
+    },
+    {
+      "timestamp": "2025-10-21T00:59:17.871422",
+      "status": "success",
+      "ping_ms": 51.0
+    },
+    {
+      "timestamp": "2025-10-21T00:59:47.980311",
+      "status": "success",
+      "ping_ms": 49.2
+    },
+    {
+      "timestamp": "2025-10-21T01:00:18.122195",
+      "status": "success",
+      "ping_ms": 68.5
+    },
+    {
+      "timestamp": "2025-10-21T01:00:48.250295",
+      "status": "success",
+      "ping_ms": 63.8
+    },
+    {
+      "timestamp": "2025-10-21T01:01:18.368309",
+      "status": "success",
+      "ping_ms": 49.9
+    },
+    {
+      "timestamp": "2025-10-21T01:01:48.487996",
+      "status": "success",
+      "ping_ms": 56.2
+    },
+    {
+      "timestamp": "2025-10-21T01:02:18.618641",
+      "status": "success",
+      "ping_ms": 64.9
+    },
+    {
+      "timestamp": "2025-10-21T01:02:48.738939",
+      "status": "success",
+      "ping_ms": 48.9
+    },
+    {
+      "timestamp": "2025-10-21T01:03:18.867899",
+      "status": "success",
+      "ping_ms": 63.2
+    },
+    {
+      "timestamp": "2025-10-21T01:03:48.987746",
+      "status": "success",
+      "ping_ms": 64.2
+    },
+    {
+      "timestamp": "2025-10-21T01:04:19.108313",
+      "status": "success",
+      "ping_ms": 50.6
+    },
+    {
+      "timestamp": "2025-10-21T01:04:49.237676",
+      "status": "success",
+      "ping_ms": 70.2
+    },
+    {
+      "timestamp": "2025-10-21T01:05:19.364991",
+      "status": "success",
+      "ping_ms": 67.8
+    },
+    {
+      "timestamp": "2025-10-21T01:05:49.494825",
+      "status": "success",
+      "ping_ms": 71.5
+    },
+    {
+      "timestamp": "2025-10-21T01:06:19.612603",
+      "status": "success",
+      "ping_ms": 65.2
+    },
+    {
+      "timestamp": "2025-10-21T01:06:49.747499",
+      "status": "success",
+      "ping_ms": 64.2
+    }
+  ]
+}

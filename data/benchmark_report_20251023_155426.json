@@ -1,0 +1,20 @@
+{
+  "timestamp": "20251023_155426",
+  "start_time": "2025-10-23T15:54:26.631779",
+  "end_time": "2025-10-23T15:54:54.203519",
+  "rates_tested": [
+    10
+  ],
+  "comparison": {
+    "10hz": {
+      "rate_hz": 10,
+      "gps_samples": 0,
+      "accel_samples": 0,
+      "total_distance_m": 0,
+      "max_velocity_ms": 0,
+      "max_accel_ms2": 0,
+      "avg_velocity_error_ms": 0,
+      "data_file_size_estimate_mb": 0.0
+    }
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "rate": "50hz",
+  "rate_hz": 50,
+  "start_time": "2025-10-23T15:19:55.611512",
+  "end_time": "2025-10-23T15:20:19.435223",
+  "metrics": {
+    "sample_count": 0,
+    "accel_sample_count": 0,
+    "gps_sample_count": 0,
+    "start_time": null,
+    "end_time": null,
+    "max_velocity": 0,
+    "max_accel": 0,
+    "total_distance": 0,
+    "velocity_errors": [],
+    "thread_start_time": null,
+    "thread_end_time": null
+  },
+  "gps_samples": [],
+  "accel_samples": []
+}

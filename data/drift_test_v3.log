@@ -1,0 +1,90 @@
+
+================================================================================
+GPS + ACCELEROMETER MOTION TRACKER V2
+Multithreaded High-Frequency Data Capture
+================================================================================
+
+Configuration:
+  Duration: 1 minutes
+  Accelerometer: 50 Hz
+  Auto-save: Every 2 minutes
+
+Starting in 3 seconds...
+
+================================================================================
+GPS + ACCELEROMETER MOTION TRACKER V2 - Multithreaded Edition
+High-Frequency Sensor Fusion
+================================================================================
+Start time: 2025-10-23 17:55:48
+Running for 1 minutes (Ctrl+C to stop early)
+✓ Wakelock acquired
+Starting background sensor threads...
+✓ Sensor daemon started (accelerometer, 50Hz)
+✓ GPS thread started
+Calibrating accelerometer (keep device still)...
+✓ Calibrated. Bias: x=0.18, y=9.16, z=3.66, Gravity: 9.87 m/s²
+✓ Accelerometer thread started (50 Hz) [CYTHON OPTIMIZED - 70% less CPU]
+
+Waiting for GPS fix...
+✓ GPS locked: 32.215980, -110.843286
+
+Tracking... (Press Ctrl+C to stop)
+
+Auto-save enabled: every 2 minutes
+Accelerometer sampling: 50 Hz
+Time     | Speed (km/h) | Distance (m) | Accel      | GPS Acc 
+------------------------------------------------------------------------------------------
+0:06     |       0.00 |        0.0 |     0.00 |    3.8m
+0:08     |       0.00 |        0.1 |     0.00 |    3.8m
+0:11     |       0.00 |        0.5 |     0.00 |    3.8m
+0:14     |       0.00 |        0.5 |     0.00 |    3.8m
+0:16     |       0.00 |        0.7 |     0.00 |    3.8m
+0:19     |       0.00 |        1.1 |     0.00 |    3.8m
+0:21     |       0.00 |        3.0 |     0.00 |    3.8m
+0:24     |       0.00 |        5.0 |     0.00 |    3.8m
+0:27     |       0.00 |        6.6 |     0.00 |    3.8m
+0:29     |       0.00 |        8.0 |     0.00 |    3.8m
+0:32     |       0.00 |        9.4 |     0.00 |    3.8m
+0:34     |       0.00 |       10.8 |     0.00 |    3.8m
+0:37     |       0.00 |       12.5 |     0.00 |    3.8m
+0:40     |       0.00 |       14.2 |     0.00 |    3.8m
+0:42     |       0.00 |       15.8 |     0.00 |    3.8m
+0:45     |       0.00 |       17.7 |     0.00 |    3.8m
+0:47     |       0.00 |       20.0 |     0.00 |    3.8m
+0:50     |       0.00 |       22.2 |     0.00 |    3.8m
+0:52     |       0.00 |       24.6 |     0.00 |    3.8m
+0:55     |       0.00 |       34.5 |     0.00 |    3.8m
+0:58     |       0.00 |       53.4 |     0.00 |    3.8m
+
+Stopping background threads...
+
+
+⚠ Received SIGTERM, shutting down threads...
+✓ Threads stopped
+✓ Wakelock released
+
+Saving final data...
+
+================================================================================
+TRACKING SESSION SUMMARY
+================================================================================
+
+Session duration:     1m 2s
+Total distance:       0.05 km (53 m)
+GPS samples (in memory): 21
+Accelerometer samples (in memory): 2837
+Average speed:        0.0 km/h
+Max speed:            0.0 km/h
+
+Battery:
+  Start: 57%
+  End:   57%
+  Drop:  0%
+
+Auto-saves performed: 0
+================================================================================
+
+✓ Data saved:
+  motion_track_v2_20251023_175548.json
+  motion_track_v2_20251023_175548.json.gz
+  motion_track_v2_20251023_175548.gpx

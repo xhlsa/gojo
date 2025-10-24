@@ -1,0 +1,79 @@
+
+================================================================================
+GPS + ACCELEROMETER MOTION TRACKER V2
+Multithreaded High-Frequency Data Capture
+================================================================================
+
+Configuration:
+  Duration: 2 minutes
+  Accelerometer: 50 Hz
+  Auto-save: Every 2 minutes
+
+Starting in 3 seconds...
+
+================================================================================
+GPS + ACCELEROMETER MOTION TRACKER V2 - Multithreaded Edition
+High-Frequency Sensor Fusion
+================================================================================
+Start time: 2025-10-23 16:31:29
+Running for 2 minutes (Ctrl+C to stop early)
+✓ Wakelock acquired
+Starting background sensor threads...
+✓ Sensor daemon started (accelerometer, 50Hz)
+✓ GPS thread started
+Calibrating accelerometer (keep device still)...
+✓ Accelerometer thread started (50 Hz)
+
+Waiting for GPS fix...
+✓ GPS locked: 32.134168, -110.910274
+
+Tracking... (Press Ctrl+C to stop)
+
+Auto-save enabled: every 2 minutes
+Accelerometer sampling: 50 Hz
+Time     | Speed (km/h) | Distance (m) | Accel      | GPS Acc 
+------------------------------------------------------------------------------------------
+0:06     |       0.00 |        0.0 |     0.00 |    7.0m
+0:09     |       0.00 |        0.0 |     0.00 |    8.4m
+0:12     |       1.61 |        2.1 |     0.45 |    7.7m
+⚠ Calibration failed, using zero bias
+0:14     |       3.00 |        6.9 |     0.83 |    8.0m
+0:17     |       2.44 |        8.3 |     0.68 |    7.7m
+0:19     |       0.00 |        8.3 |     0.00 |    6.1m
+0:22     |       0.00 |        8.3 |     0.00 |    3.8m
+0:24     |       0.00 |        8.3 |     0.00 |    3.8m
+0:27     |       0.00 |        8.3 |     0.00 |    4.1m
+0:29     |       0.00 |        8.3 |     0.00 |    5.3m
+
+
+⚠ Received SIGTERM, shutting down threads...
+
+Stopping background threads...
+✓ Threads stopped
+✓ Wakelock released
+
+Saving final data...
+
+================================================================================
+TRACKING SESSION SUMMARY
+================================================================================
+
+Session duration:     0m 33s
+Total distance:       0.01 km (8 m)
+GPS samples (in memory): 10
+Accelerometer samples (in memory): 0
+Average speed:        0.7 km/h
+Max speed:            3.0 km/h
+
+Battery:
+  Start: 64%
+  End:   64%
+  Drop:  0%
+
+Auto-saves performed: 0
+================================================================================
+
+✓ Data saved:
+  motion_track_v2_20251023_163129.json
+  motion_track_v2_20251023_163129.json.gz
+  motion_track_v2_20251023_163129.gpx

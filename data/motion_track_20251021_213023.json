@@ -1,0 +1,273 @@
+{
+  "start_time": "2025-10-21T21:30:23.820621",
+  "end_time": "2025-10-21T21:31:24.926531",
+  "total_distance": 10.724412628993283,
+  "samples": [
+    {
+      "timestamp": "2025-10-21T21:30:36.523767",
+      "elapsed": 11.102876,
+      "velocity": 0.0,
+      "distance": 2.6343747215673696,
+      "gps": {
+        "latitude": 32.2159928,
+        "longitude": -110.84332592,
+        "altitude": 768.2569580078125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 9.396100044250488
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:39.174214",
+      "elapsed": 13.704189,
+      "velocity": 0.0,
+      "distance": 6.047269249795971,
+      "gps": {
+        "latitude": 32.21596867,
+        "longitude": -110.8433035,
+        "altitude": 765.33544921875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 7.694529056549072
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:41.780503",
+      "elapsed": 16.353795,
+      "velocity": 0.0,
+      "distance": 7.260618427913428,
+      "gps": {
+        "latitude": 32.2159639,
+        "longitude": -110.8433151,
+        "altitude": 762.646728515625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 4.923559665679932
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:44.385536",
+      "elapsed": 18.960113,
+      "velocity": 0.0,
+      "distance": 7.848563108376128,
+      "gps": {
+        "latitude": 32.21596768,
+        "longitude": -110.84331073,
+        "altitude": 764.466796875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 4.178625106811523
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:46.985324",
+      "elapsed": 21.565161,
+      "velocity": 0.0,
+      "distance": 8.846485002308217,
+      "gps": {
+        "latitude": 32.21597647,
+        "longitude": -110.84330859,
+        "altitude": 764.14697265625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.8364555835723877
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:49.589107",
+      "elapsed": 24.164971,
+      "velocity": 0.0,
+      "distance": 9.178842480890115,
+      "gps": {
+        "latitude": 32.2159748,
+        "longitude": -110.84330566,
+        "altitude": 764.2957763671875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:52.199729",
+      "elapsed": 26.769229,
+      "velocity": 0.0,
+      "distance": 9.529516283861248,
+      "gps": {
+        "latitude": 32.21597544,
+        "longitude": -110.84330201,
+        "altitude": 765.057861328125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:54.810136",
+      "elapsed": 29.379297,
+      "velocity": 0.0,
+      "distance": 9.758449066301017,
+      "gps": {
+        "latitude": 32.21597632,
+        "longitude": -110.84329981,
+        "altitude": 765.7578125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:30:57.419601",
+      "elapsed": 31.989728,
+      "velocity": 0.0,
+      "distance": 9.892668293110948,
+      "gps": {
+        "latitude": 32.21597687,
+        "longitude": -110.84330108,
+        "altitude": 766.376708984375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:00.038036",
+      "elapsed": 34.599176,
+      "velocity": 0.0,
+      "distance": 10.169753740528748,
+      "gps": {
+        "latitude": 32.21597774,
+        "longitude": -110.84330384,
+        "altitude": 766.153564453125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:02.643040",
+      "elapsed": 37.217613,
+      "velocity": 0.0,
+      "distance": 10.226733397547754,
+      "gps": {
+        "latitude": 32.21597767,
+        "longitude": -110.84330444,
+        "altitude": 766.3426513671875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:05.235297",
+      "elapsed": 39.823356,
+      "velocity": 0.0,
+      "distance": 10.29229927611902,
+      "gps": {
+        "latitude": 32.21597737,
+        "longitude": -110.84330504,
+        "altitude": 766.2843017578125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:07.816311",
+      "elapsed": 42.415382,
+      "velocity": 0.0,
+      "distance": 10.373031522904208,
+      "gps": {
+        "latitude": 32.21597695,
+        "longitude": -110.84330574,
+        "altitude": 766.3408203125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.800271511077881
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:10.436784",
+      "elapsed": 44.995902,
+      "velocity": 0.0,
+      "distance": 10.425954572214618,
+      "gps": {
+        "latitude": 32.21597705,
+        "longitude": -110.84330519,
+        "altitude": 766.4072265625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:13.047627",
+      "elapsed": 47.616488,
+      "velocity": 0.0,
+      "distance": 10.476965053532705,
+      "gps": {
+        "latitude": 32.21597692,
+        "longitude": -110.84330467,
+        "altitude": 766.610107421875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:15.645766",
+      "elapsed": 50.227245,
+      "velocity": 0.0,
+      "distance": 10.582318032685665,
+      "gps": {
+        "latitude": 32.21597782,
+        "longitude": -110.84330502,
+        "altitude": 766.631591796875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:18.255439",
+      "elapsed": 52.82535,
+      "velocity": 0.0,
+      "distance": 10.63015267302665,
+      "gps": {
+        "latitude": 32.21597824,
+        "longitude": -110.84330513,
+        "altitude": 766.697021484375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:20.855534",
+      "elapsed": 55.434994,
+      "velocity": 0.0,
+      "distance": 10.697107980262096,
+      "gps": {
+        "latitude": 32.21597884,
+        "longitude": -110.84330519,
+        "altitude": 766.785400390625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    },
+    {
+      "timestamp": "2025-10-21T21:31:23.456708",
+      "elapsed": 58.03511,
+      "velocity": 0.0,
+      "distance": 10.724412628993283,
+      "gps": {
+        "latitude": 32.21597883,
+        "longitude": -110.8433049,
+        "altitude": 766.8369140625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188
+      }
+    }
+  ]
+}
