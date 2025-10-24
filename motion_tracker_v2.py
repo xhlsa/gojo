@@ -54,6 +54,9 @@ class SensorFusion:
         self.velocity_history = deque(maxlen=10)
         self.stationary_threshold = 0.20  # m/s² (filters sensor noise effectively)
 
+        # Stationary tracking (for dynamic recalibration)
+        self.is_stationary = False
+
         # Thread safety
         self.lock = threading.Lock()
 
@@ -100,6 +103,7 @@ class SensorFusion:
                     speed_threshold = 0.1  # m/s (~0.36 km/h) - optimized from testing
 
                     is_stationary = (dist < movement_threshold and gps_velocity < speed_threshold)
+                    self.is_stationary = is_stationary  # Track for dynamic recalibration
 
                     if is_stationary:
                         # Stationary - don't add distance, zero out velocity
@@ -170,7 +174,8 @@ class SensorFusion:
                 'velocity': self.velocity,
                 'distance': self.distance,
                 'accel_velocity': self.accel_velocity,
-                'last_gps_time': self.last_gps_time
+                'last_gps_time': self.last_gps_time,
+                'is_stationary': self.is_stationary
             }
 
 
@@ -339,11 +344,12 @@ class GPSThread(threading.Thread):
 class AccelerometerThread(threading.Thread):
     """Background thread for reading from sensor daemon"""
 
-    def __init__(self, accel_queue, stop_event, sensor_daemon, sample_rate=50):
+    def __init__(self, accel_queue, stop_event, sensor_daemon, fusion=None, sample_rate=50):
         super().__init__(daemon=True)
         self.accel_queue = accel_queue
         self.stop_event = stop_event
         self.sensor_daemon = sensor_daemon
+        self.fusion = fusion  # Reference to fusion for stationary detection
         self.sample_rate = sample_rate  # Hz
 
         # Calibration
@@ -351,9 +357,16 @@ class AccelerometerThread(threading.Thread):
         self.gravity = 9.8
         self.calibrated = False
 
-    def calibrate(self, samples=10):
+        # Dynamic re-calibration (when stationary)
+        self.last_recal_time = None
+        self.recal_interval = 30  # seconds - check every 30s if stationary
+        self.recal_buffer = []
+        self.recal_threshold = 0.5  # buffer count before recalibrating
+
+    def calibrate(self, samples=10, silent=False):
         """Calibrate accelerometer bias from daemon readings (magnitude-based)"""
-        print("Calibrating accelerometer (keep device still)...")
+        if not silent:
+            print("Calibrating accelerometer (keep device still)...")
         calibration_samples = []
 
         for _ in range(samples):
@@ -375,9 +388,55 @@ class AccelerometerThread(threading.Thread):
             self.gravity = math.sqrt(gravity_x**2 + gravity_y**2 + gravity_z**2)
 
             self.calibrated = True
-            print(f"✓ Calibrated. Bias: x={self.bias['x']:.2f}, y={self.bias['y']:.2f}, z={self.bias['z']:.2f}, Gravity: {self.gravity:.2f} m/s²")
+            if not silent:
+                print(f"✓ Calibrated. Bias: x={self.bias['x']:.2f}, y={self.bias['y']:.2f}, z={self.bias['z']:.2f}, Gravity: {self.gravity:.2f} m/s²")
         else:
-            print("⚠ Calibration failed, using zero bias")
+            if not silent:
+                print("⚠ Calibration failed, using zero bias")
+
+    def try_recalibrate(self, is_stationary):
+        """Attempt dynamic re-calibration when device is stationary (handles rotation)"""
+        current_time = time.time()
+
+        if self.last_recal_time is None:
+            self.last_recal_time = current_time
+
+        # Check every recal_interval seconds if stationary
+        if is_stationary and (current_time - self.last_recal_time >= self.recal_interval):
+            # Collect samples while stationary
+            if len(self.recal_buffer) >= 10:
+                # Have enough samples, recalibrate silently
+                old_bias_x = self.bias['x']
+                old_gravity = self.gravity
+
+                # Perform re-calibration with collected samples
+                calibration_samples = self.recal_buffer[:10]
+                self.bias['x'] = mean(s['x'] for s in calibration_samples)
+                self.bias['y'] = mean(s['y'] for s in calibration_samples)
+                self.bias['z'] = mean(s['z'] for s in calibration_samples)
+
+                gravity_x = self.bias['x']
+                gravity_y = self.bias['y']
+                gravity_z = self.bias['z']
+                new_gravity = math.sqrt(gravity_x**2 + gravity_y**2 + gravity_z**2)
+                self.gravity = new_gravity
+
+                # Only log if significant change detected (> 0.5 m/s² gravity drift)
+                gravity_drift = abs(new_gravity - old_gravity)
+                if gravity_drift > 0.5:
+                    print(f"⚡ Dynamic recal: gravity {old_gravity:.2f} → {new_gravity:.2f} m/s² (drift: {gravity_drift:.2f})")
+
+                self.recal_buffer = []
+                self.last_recal_time = current_time
+
+        # Add to buffer if stationary
+        if is_stationary and len(self.recal_buffer) < 10:
+            # We'll feed this from the main run loop
+            pass
+        elif not is_stationary:
+            # Clear buffer when moving again
+            self.recal_buffer = []
+            self.last_recal_time = current_time
 
     def read_calibrated(self, raw):
         """Apply magnitude-based calibration (handles any device orientation)"""
@@ -412,6 +471,18 @@ class AccelerometerThread(threading.Thread):
             raw_data = self.sensor_daemon.get_data(timeout=0.1)
 
             if raw_data:
+                # Check for dynamic re-calibration opportunity
+                if self.fusion:
+                    state = self.fusion.get_state()
+                    is_stationary = state.get('is_stationary', False)
+
+                    # Collect samples during stationary periods
+                    if is_stationary and len(self.recal_buffer) < 10:
+                        self.recal_buffer.append(raw_data)
+
+                    # Attempt re-calibration
+                    self.try_recalibrate(is_stationary)
+
                 accel_data = self.read_calibrated(raw_data)
                 if accel_data:
                     try:
@@ -544,6 +615,7 @@ class MotionTrackerV2:
                 self.accel_queue,
                 self.stop_event,
                 self.sensor_daemon,
+                fusion=self.fusion,
                 sample_rate=self.accel_sample_rate
             )
             temp_accel_thread.calibrate()
@@ -571,6 +643,7 @@ class MotionTrackerV2:
                 self.accel_queue,
                 self.stop_event,
                 self.sensor_daemon,
+                fusion=self.fusion,
                 sample_rate=self.accel_sample_rate
             )
             self.accel_thread.start()
