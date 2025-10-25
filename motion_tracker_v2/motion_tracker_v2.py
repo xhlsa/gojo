@@ -29,6 +29,20 @@ try:
 except ImportError:
     HAS_CYTHON = False
 
+# Import health monitoring and acceleration calculation
+try:
+    from accel_health_monitor import AccelHealthMonitor
+    HAS_HEALTH_MONITOR = True
+except ImportError:
+    HAS_HEALTH_MONITOR = False
+    print("⚠ AccelHealthMonitor not available (continuing without detailed diagnostics)")
+
+try:
+    from accel_calculator import AccelerationCalculator
+    HAS_ACCEL_CALC = True
+except ImportError:
+    HAS_ACCEL_CALC = False
+
 class SensorFusion:
     """
     Fuses GPS and accelerometer data using complementary filtering
@@ -188,6 +202,7 @@ class SensorDaemon:
     Single long-lived sensor daemon process for continuous streaming
     Spawns termux-sensor ONCE and reads continuous JSON output
     Instead of spawning 50 processes per second
+    Device-agnostic: Auto-detects sensor names for different phones (LSM6DSO, BMI160, etc)
     """
 
     def __init__(self, sensor_type='accelerometer', delay_ms=20, max_queue_size=1000):
@@ -197,20 +212,97 @@ class SensorDaemon:
         self.data_queue = Queue(maxsize=max_queue_size)
         self.reader_thread = None
         self.stop_event = threading.Event()
+        self.actual_sensor_name = None  # Will be populated by awaken()
+
+    def awaken(self):
+        """
+        Query available sensors and find the requested type.
+        Device-agnostic: works with LSM6DSO, BMI160, KXG07, etc
+        Returns True if sensor found, False otherwise
+        """
+        try:
+            output = subprocess.check_output(
+                "termux-sensor -l",
+                shell=True,
+                text=True,
+                timeout=5
+            )
+
+            # Parse JSON output (termux-sensor -l returns {"sensors": [...]})
+            try:
+                sensor_data = json.loads(output)
+                available_sensors = sensor_data.get('sensors', [])
+            except json.JSONDecodeError:
+                # Fallback: try parsing as plain text lines (older termux-api versions?)
+                available_sensors = [line.strip() for line in output.strip().split('\n') if line.strip()]
+
+            # Map generic sensor names to search patterns
+            # Note: termux-sensor -s matching is case-sensitive
+            # 'accel' matches both 'lsm6dso LSM6DSO Accelerometer Non-wakeup' and 'linear_acceleration'
+            # We want the RAW sensor (has full chip name), not derived 'linear_acceleration'
+            sensor_patterns = {
+                'accelerometer': 'accel',
+                'gyroscope': 'gyro'
+            }
+
+            search_pattern = sensor_patterns.get(self.sensor_type, self.sensor_type).lower()
+
+            # Find matching sensor using partial match
+            # For accelerometer: prefer raw sensor (has chip name like lsm6dso, BMI160) over 'linear_acceleration'
+            matching_sensors = [
+                s for s in available_sensors
+                if search_pattern in s.lower()
+            ]
+
+            # Prioritize raw sensors for accelerometer
+            if self.sensor_type == 'accelerometer':
+                # Filter out 'linear_acceleration' and 'Uncalibrated' variants
+                raw_sensors = [
+                    s for s in matching_sensors
+                    if 'linear_acceleration' not in s.lower() and 'uncalibrated' not in s.lower()
+                ]
+                if raw_sensors:
+                    self.actual_sensor_name = raw_sensors[0]
+                    return True
+                elif matching_sensors:
+                    # Fallback to any match
+                    self.actual_sensor_name = matching_sensors[0]
+                    return True
+            else:
+                # For other sensor types, just use first match
+                if matching_sensors:
+                    self.actual_sensor_name = matching_sensors[0]
+                    return True
+
+            print(f"⚠ Sensor '{self.sensor_type}' not found. Available sensors:")
+            for sensor_name in available_sensors[:5]:  # Show first 5
+                print(f"   - {sensor_name}")
+            if len(available_sensors) > 5:
+                print(f"   ... and {len(available_sensors) - 5} more")
+
+            return False
+
+        except subprocess.TimeoutExpired:
+            print("⚠ Sensor detection timeout")
+            return False
+        except Exception as e:
+            print(f"⚠ Failed to detect sensors: {e}")
+            return False
 
     def start(self):
         """Start the sensor daemon process"""
         try:
-            # Map generic sensor names to actual device sensor names
-            sensor_map = {
-                'accelerometer': 'lsm6dso LSM6DSO Accelerometer Non-wakeup',
-                'gyroscope': 'lsm6dso LSM6DSO Gyroscope Non-wakeup'
-            }
-            sensor_name = sensor_map.get(self.sensor_type, self.sensor_type)
+            # Auto-detect sensor name if not already done
+            if not self.actual_sensor_name:
+                if not self.awaken():
+                    print(f"⚠ Could not find {self.sensor_type} sensor")
+                    return False
 
-            # Start single long-lived termux-sensor process
+            # Start single long-lived termux-sensor process with unbuffered output
+            # Use stdbuf to force line-buffered output for reliable JSON stream reading
+            # Use list args with shell=False to avoid buffering issues from sh -c wrapper
             self.process = subprocess.Popen(
-                ['termux-sensor', '-s', sensor_name, '-d', str(self.delay_ms)],
+                ['stdbuf', '-oL', 'termux-sensor', '-s', self.actual_sensor_name, '-d', str(self.delay_ms)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -221,6 +313,7 @@ class SensorDaemon:
             self.reader_thread = threading.Thread(target=self._read_stream, daemon=True)
             self.reader_thread.start()
             print(f"✓ Sensor daemon started ({self.sensor_type}, {1000//self.delay_ms:.0f}Hz)")
+            print(f"   Using: {self.actual_sensor_name}")
             return True
         except Exception as e:
             print(f"⚠ Failed to start sensor daemon: {e}")
@@ -369,18 +462,22 @@ class GPSThread(threading.Thread):
 class AccelerometerThread(threading.Thread):
     """Background thread for reading from sensor daemon"""
 
-    def __init__(self, accel_queue, stop_event, sensor_daemon, fusion=None, sample_rate=50):
+    def __init__(self, accel_queue, stop_event, sensor_daemon, fusion=None, sample_rate=50, health_monitor=None):
         super().__init__(daemon=True)
         self.accel_queue = accel_queue
         self.stop_event = stop_event
         self.sensor_daemon = sensor_daemon
         self.fusion = fusion  # Reference to fusion for stationary detection
         self.sample_rate = sample_rate  # Hz
+        self.health_monitor = health_monitor  # Health monitoring
 
         # Calibration
         self.bias = {'x': 0.0, 'y': 0.0, 'z': 0.0}
         self.gravity = 9.8
         self.calibrated = False
+
+        # Acceleration calculator (handles device tilt correctly)
+        self.accel_calc = None
 
         # Dynamic re-calibration (when stationary)
         self.last_recal_time = None
@@ -388,7 +485,7 @@ class AccelerometerThread(threading.Thread):
         self.recal_buffer = []
         self.recal_threshold = 0.5  # buffer count before recalibrating
 
-    def calibrate(self, samples=10, silent=False):
+    def calibrate(self, samples=10, silent=False, health_monitor=None):
         """Calibrate accelerometer bias from daemon readings (magnitude-based)"""
         if not silent:
             print("Calibrating accelerometer (keep device still)...")
@@ -413,8 +510,29 @@ class AccelerometerThread(threading.Thread):
             self.gravity = math.sqrt(gravity_x**2 + gravity_y**2 + gravity_z**2)
 
             self.calibrated = True
+
+            # Initialize acceleration calculator (handles device tilt correctly)
+            if HAS_ACCEL_CALC:
+                self.accel_calc = AccelerationCalculator(
+                    gravity_magnitude=self.gravity,
+                    bias_x=self.bias['x'],
+                    bias_y=self.bias['y'],
+                    bias_z=self.bias['z'],
+                    method='magnitude'  # Use magnitude-based (orientation-independent)
+                )
+
             if not silent:
                 print(f"✓ Calibrated. Bias: x={self.bias['x']:.2f}, y={self.bias['y']:.2f}, z={self.bias['z']:.2f}, Gravity: {self.gravity:.2f} m/s²")
+
+            # Validate calibration with health monitor
+            if health_monitor:
+                valid, gravity, issues = health_monitor.validate_calibration(
+                    self.bias['x'], self.bias['y'], self.bias['z']
+                )
+                if not valid and not silent:
+                    print("⚠ Calibration validation warnings:")
+                    for issue in issues:
+                        print(f"  ⚠ {issue}")
         else:
             if not silent:
                 print("⚠ Calibration failed, using zero bias")
@@ -490,7 +608,7 @@ class AccelerometerThread(threading.Thread):
         try:
             # Calibrate before starting
             if not self.calibrated:
-                self.calibrate()
+                self.calibrate(health_monitor=self.health_monitor)
 
             while not self.stop_event.is_set():
                 try:
@@ -498,6 +616,11 @@ class AccelerometerThread(threading.Thread):
                     raw_data = self.sensor_daemon.get_data(timeout=0.1)
 
                     if raw_data:
+                        # Track data quality with health monitor
+                        if self.health_monitor:
+                            quality, issues = self.health_monitor.check_data_quality(raw_data)
+                            # Could log issues if needed: if issues: print(f"⚠ {issues}")
+
                         # Check for dynamic re-calibration opportunity
                         if self.fusion:
                             state = self.fusion.get_state()
@@ -572,6 +695,11 @@ class MotionTrackerV2:
         # Sensor fusion
         self.fusion = SensorFusion()
         self.battery = BatteryReader()
+
+        # Accelerometer health monitoring
+        self.health_monitor = None
+        if HAS_HEALTH_MONITOR:
+            self.health_monitor = AccelHealthMonitor(target_sample_rate=accel_sample_rate)
 
         # Threading
         self.stop_event = threading.Event()
@@ -740,6 +868,18 @@ class MotionTrackerV2:
         self.sensor_daemon = SensorDaemon(sensor_type='accelerometer', delay_ms=delay_ms)
         if not self.sensor_daemon.start():
             print("⚠ Sensor daemon failed to start, continuing anyway...")
+        else:
+            # Validate sensor daemon is producing data
+            if self.health_monitor:
+                success, sample_count, rate = self.health_monitor.validate_startup(
+                    self.sensor_daemon,
+                    duration=5,
+                    target_samples=int(self.accel_sample_rate * 5)
+                )
+                if not success:
+                    print("\n⚠ WARNING: Accelerometer startup validation FAILED")
+                    print("  Data quality may be compromised. Check sensor connection.")
+                    print("  Continuing with caution...\n")
 
         # Start GPS thread
         self.gps_thread = GPSThread(self.gps_queue, self.stop_event)
@@ -758,7 +898,7 @@ class MotionTrackerV2:
                     fusion=self.fusion,
                     sample_rate=self.accel_sample_rate
                 )
-                temp_accel_thread.calibrate()
+                temp_accel_thread.calibrate(health_monitor=self.health_monitor)
 
                 # Now use Cython processor with calibration bias and gravity
                 self.accel_processor = FastAccelProcessor(
@@ -784,7 +924,8 @@ class MotionTrackerV2:
                     self.stop_event,
                     self.sensor_daemon,
                     fusion=self.fusion,
-                    sample_rate=self.accel_sample_rate
+                    sample_rate=self.accel_sample_rate,
+                    health_monitor=self.health_monitor
                 )
                 self.accel_thread.start()
                 print(f"✓ Accelerometer thread started ({self.accel_sample_rate} Hz)")
@@ -856,6 +997,7 @@ class MotionTrackerV2:
         self.last_save_time = time.time()
         last_battery_time = time.time()
         last_display_time = time.time()
+        last_health_check_time = time.time()
         gps_sample_count = 0
         accel_sample_count = 0
 
@@ -893,6 +1035,21 @@ class MotionTrackerV2:
                                 print("⚠ GPS thread failed permanently, continuing with accelerometer-only")
 
                     self.last_thread_health_check = current_time
+
+                # ACCELEROMETER HEALTH CHECK
+                if self.health_monitor and current_time - last_health_check_time >= 30.0:
+                    # Check every 30 seconds
+                    diag = self.health_monitor.get_diagnostics()
+
+                    # Alert on critical issues
+                    if diag['queue_stalled']:
+                        print(f"\n⚠ ACCEL HEALTH: Queue stalled for {diag['time_since_last_sample_ms']:.0f}ms")
+                    elif not diag['current_sample_rate_healthy']:
+                        print(f"\n⚠ ACCEL HEALTH: Sample rate {diag['current_sample_rate_hz']:.1f}Hz out of range")
+                    elif diag['gravity_drift_detected']:
+                        print(f"\n⚠ ACCEL HEALTH: Gravity drift detected, recalibration may be needed")
+
+                    last_health_check_time = current_time
 
                 # AUTO-SAVE check
                 if current_time - self.last_save_time >= self.auto_save_interval:
@@ -966,11 +1123,12 @@ class MotionTrackerV2:
                         accel_data = self.accel_queue.get_nowait()
 
                         if accel_data:
-                            # Use horizontal acceleration as forward acceleration estimate
-                            horizontal_accel = math.sqrt(accel_data['x']**2 + accel_data['y']**2)
+                            # Use calibrated magnitude-based acceleration (handles device tilt)
+                            # This is the 'magnitude' field already calculated by AccelerometerThread
+                            motion_accel = accel_data.get('magnitude', 0)
 
                             # Update fusion with accelerometer
-                            velocity, distance = self.fusion.update_accelerometer(horizontal_accel)
+                            velocity, distance = self.fusion.update_accelerometer(motion_accel)
 
                             # Log accelerometer sample (full detail)
                             self.accel_samples.append({
@@ -1013,6 +1171,13 @@ class MotionTrackerV2:
         if self.sensor_daemon:
             self.sensor_daemon.stop()
 
+        # Kill any lingering termux-sensor processes
+        try:
+            subprocess.run(['pkill', '-9', 'termux-sensor'], check=False)
+            subprocess.run(['pkill', '-9', 'stdbuf'], check=False)
+        except:
+            pass
+
         print("✓ Threads stopped")
 
         # Release wakelock
@@ -1026,6 +1191,11 @@ class MotionTrackerV2:
         print("\nSaving final data...")
         self.print_summary()
         self.save_data(auto_save=False)
+
+        # Print final accelerometer diagnostics
+        if self.health_monitor:
+            print("\nFinal Accelerometer Diagnostics:")
+            self.health_monitor.print_diagnostics()
 
     def print_summary(self):
         """Print summary statistics"""
