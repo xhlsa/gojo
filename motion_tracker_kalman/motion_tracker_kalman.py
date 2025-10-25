@@ -495,20 +495,97 @@ class SensorDaemon:
         self.data_queue = Queue(maxsize=max_queue_size)
         self.reader_thread = None
         self.stop_event = threading.Event()
+        self.actual_sensor_name = None  # Will be populated by awaken()
+
+    def awaken(self):
+        """
+        Query available sensors and find the requested type.
+        Device-agnostic: works with LSM6DSO, BMI160, KXG07, etc
+        Returns True if sensor found, False otherwise
+        """
+        try:
+            output = subprocess.check_output(
+                "termux-sensor -l",
+                shell=True,
+                text=True,
+                timeout=5
+            )
+
+            # Parse JSON output (termux-sensor -l returns {"sensors": [...]})
+            try:
+                sensor_data = json.loads(output)
+                available_sensors = sensor_data.get('sensors', [])
+            except json.JSONDecodeError:
+                # Fallback: try parsing as plain text lines (older termux-api versions?)
+                available_sensors = [line.strip() for line in output.strip().split('\n') if line.strip()]
+
+            # Map generic sensor names to search patterns
+            # Note: termux-sensor -s matching is case-sensitive
+            # 'accel' matches both 'lsm6dso LSM6DSO Accelerometer Non-wakeup' and 'linear_acceleration'
+            # We want the RAW sensor (has full chip name), not derived 'linear_acceleration'
+            sensor_patterns = {
+                'accelerometer': 'accel',
+                'gyroscope': 'gyro'
+            }
+
+            search_pattern = sensor_patterns.get(self.sensor_type, self.sensor_type).lower()
+
+            # Find matching sensor using partial match
+            # For accelerometer: prefer raw sensor (has chip name like lsm6dso, BMI160) over 'linear_acceleration'
+            matching_sensors = [
+                s for s in available_sensors
+                if search_pattern in s.lower()
+            ]
+
+            # Prioritize raw sensors for accelerometer
+            if self.sensor_type == 'accelerometer':
+                # Filter out 'linear_acceleration' and 'Uncalibrated' variants
+                raw_sensors = [
+                    s for s in matching_sensors
+                    if 'linear_acceleration' not in s.lower() and 'uncalibrated' not in s.lower()
+                ]
+                if raw_sensors:
+                    self.actual_sensor_name = raw_sensors[0]
+                    return True
+                elif matching_sensors:
+                    # Fallback to any match
+                    self.actual_sensor_name = matching_sensors[0]
+                    return True
+            else:
+                # For other sensor types, just use first match
+                if matching_sensors:
+                    self.actual_sensor_name = matching_sensors[0]
+                    return True
+
+            print(f"⚠ Sensor '{self.sensor_type}' not found. Available sensors:")
+            for sensor_name in available_sensors[:5]:  # Show first 5
+                print(f"   - {sensor_name}")
+            if len(available_sensors) > 5:
+                print(f"   ... and {len(available_sensors) - 5} more")
+
+            return False
+
+        except subprocess.CalledProcessError as e:
+            print(f"⚠ Error listing sensors: {e}")
+            return False
+        except Exception as e:
+            print(f"⚠ Unexpected error during sensor detection: {e}")
+            return False
 
     def start(self):
         """Start the sensor daemon process"""
         try:
-            # Map generic sensor names to actual device sensor names
-            sensor_map = {
-                'accelerometer': 'lsm6dso LSM6DSO Accelerometer Non-wakeup',
-                'gyroscope': 'lsm6dso LSM6DSO Gyroscope Non-wakeup'
-            }
-            sensor_name = sensor_map.get(self.sensor_type, self.sensor_type)
+            # Auto-detect sensor name if not already done
+            if not self.actual_sensor_name:
+                if not self.awaken():
+                    print(f"⚠ Could not find {self.sensor_type} sensor")
+                    return False
 
             # Start single long-lived termux-sensor process
+            # Use stdbuf to force line-buffered output for reliable JSON stream reading
+            # Use list args with shell=False to avoid buffering issues from sh -c wrapper
             self.process = subprocess.Popen(
-                ['termux-sensor', '-s', sensor_name, '-d', str(self.delay_ms)],
+                ['stdbuf', '-oL', 'termux-sensor', '-s', self.actual_sensor_name, '-d', str(self.delay_ms)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
@@ -519,6 +596,7 @@ class SensorDaemon:
             self.reader_thread = threading.Thread(target=self._read_stream, daemon=True)
             self.reader_thread.start()
             print(f"✓ Sensor daemon started ({self.sensor_type}, {1000//self.delay_ms:.0f}Hz)")
+            print(f"   Using: {self.actual_sensor_name}")
             return True
         except Exception as e:
             print(f"⚠ Failed to start sensor daemon: {e}")
