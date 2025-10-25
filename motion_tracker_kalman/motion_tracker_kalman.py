@@ -12,7 +12,6 @@ import math
 import signal
 import os
 import threading
-import psutil
 from queue import Queue, Empty
 from datetime import datetime
 from collections import deque
@@ -20,6 +19,13 @@ from statistics import mean
 import numpy as np
 from filterpy.kalman import KalmanFilter as FilterPyKalmanFilter
 from filterpy.common import Q_discrete_white_noise
+
+# Optional: psutil for battery monitoring (not critical for benchmarking)
+try:
+    import psutil
+    HAS_PSUTIL = True
+except ImportError:
+    HAS_PSUTIL = False
 
 # Ensure sessions directory exists (one level up from scripts)
 SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "motion_tracker_sessions")
