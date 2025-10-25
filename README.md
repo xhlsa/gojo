@@ -25,14 +25,19 @@ Data saves to `motion_tracker_sessions/` with JSON, compressed, and GPX formats.
 
 ---
 
-## 📁 Key Files
+## 📁 Project Structure
 
-| Path | Purpose |
-|------|---------|
-| `motion_tracker_v2/` | Main motion tracking application |
-| `motion_tracker_sessions/` | Session data storage |
-| `.claude/CLAUDE.md` | Detailed technical notes & code patterns |
-| `motion_tracker_v2.sh` | Convenient launcher script |
+```
+gojo/
+├── motion_tracker_v2/              ⭐ Main application (production-ready)
+├── motion_tracker_kalman/          Kalman filter experiment
+├── motion_tracker_sessions/        Session data storage (JSON, GZ, GPX)
+├── tools/                          Legacy & utility scripts
+├── tests/                          Test & analysis files
+├── docs/                           Documentation & references
+├── motion_tracker_v2.sh            Launcher wrapper
+└── .claude/CLAUDE.md               Technical patterns & session notes
+```
 
 ---
 
@@ -67,19 +72,19 @@ Latest data: `motion_tracker_sessions/motion_track_v2_20251023_205116.*`
 
 ---
 
-## 📦 Other Tools in This Workspace
+## 📦 Additional Tools
 
-| Tool | Purpose | Status |
-|------|---------|--------|
-| `motion_tracker.py` | Original motion tracker (v1) | Legacy |
-| `motion_tracker_benchmark.py` | Performance testing & benchmarking | Utility |
-| `system_monitor.py` | Termux system stats & telemetry | Active |
-| `ping_tracker.py` | Network ping tracking | Utility |
-| `ping_tracker_enhanced.py` | Enhanced ping analysis | Utility |
-| `gps_tester.py` | GPS functionality validation | Testing |
-| `monitor_ping.sh` | Simple ping monitoring script | Utility |
-| `data/` | Archive folder for old test data | Archive |
-| `docs/` | Documentation | Reference |
+In `tools/` - Legacy & utility scripts:
+- `motion_tracker.py` - Original v1 (reference)
+- `system_monitor.py` - Termux system stats
+- `ping_tracker.py` / `ping_tracker_enhanced.py` - Network monitoring
+- `gps_tester.py` - GPS validation
+- `monitor_ping.sh` - Ping monitoring script
+
+In `tests/` - Test & analysis utilities:
+- `motion_tracker_benchmark.py` - Performance testing
+- Various sensor daemon & accel tests
+- `analyze_drive.py` - Session data analysis
 
 **Philosophy:** Single directory keeps related Termux projects together. Each can be developed/tested independently.
 
