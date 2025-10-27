@@ -62,8 +62,23 @@ try:
 except ImportError:
     HAS_PSUTIL = False
 
-# Ensure sessions directory exists (one level up from scripts)
-SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "motion_tracker_sessions")
+# Ensure sessions directory exists (date-based organization for multi-session clarity)
+# Sessions organized by date: sessions/YYYY-MM-DD_description/
+from datetime import datetime
+current_date = datetime.now().strftime("%Y-%m-%d")
+# Auto-detect session folder or fall back to "2025-10-27_accel_fix" format
+session_base = os.path.join(os.path.dirname(__file__), "..", "sessions")
+# Try to find today's session folder, or use archive
+session_subdirs = []
+if os.path.exists(session_base):
+    session_subdirs = [d for d in os.listdir(session_base) if os.path.isdir(os.path.join(session_base, d)) and d.startswith(current_date.replace("-", "-"))]
+
+if session_subdirs:
+    SESSIONS_DIR = os.path.join(session_base, session_subdirs[0])
+else:
+    # Fall back to current session folder (create if needed)
+    SESSIONS_DIR = os.path.join(session_base, f"{current_date.replace('-', '-')}_session")
+
 os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 # Try to import Cython-optimized accelerometer processor

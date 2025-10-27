@@ -1,0 +1,36 @@
+# Session data (can be large, not needed in git history)
+sessions/
+motion_tracker_sessions/
+
+# Build artifacts
+*.so
+*.o
+*.c
+build/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+
+# IDE/Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+*.tmp
+
+# Test artifacts
+test_*.py
+
+# Large data files (keep locally, don't commit)
+*.json
+*.json.gz
+*.gpx
