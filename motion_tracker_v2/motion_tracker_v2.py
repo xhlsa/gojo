@@ -400,6 +400,13 @@ class PersistentAccelDaemon:
         if self.reader_thread:
             self.reader_thread.join(timeout=2)
 
+    def __del__(self):
+        """Ensure cleanup if daemon is garbage collected without explicit stop()"""
+        try:
+            self.stop()
+        except:
+            pass  # Silently ignore errors during cleanup
+
     def get_data(self, timeout=None):
         """Get next sensor reading from daemon"""
         try:
@@ -1199,19 +1206,38 @@ class MotionTrackerV2:
         print("\nStopping background threads...")
         self.stop_event.set()
 
-        if self.gps_thread:
-            self.gps_thread.join(timeout=2)
-        if self.accel_thread:
-            self.accel_thread.join(timeout=2)
+        # Wait for threads with timeout
+        threads_to_stop = []
+        if self.gps_thread and self.gps_thread.is_alive():
+            threads_to_stop.append(('GPS', self.gps_thread))
+        if self.accel_thread and self.accel_thread.is_alive():
+            threads_to_stop.append(('Accel', self.accel_thread))
+
+        for name, thread in threads_to_stop:
+            try:
+                thread.join(timeout=2)
+                if thread.is_alive():
+                    print(f"⚠ {name} thread did not exit cleanly (still running)")
+                else:
+                    print(f"  ✓ {name} thread stopped")
+            except Exception as e:
+                print(f"⚠ Error stopping {name} thread: {e}")
 
         # Stop sensor daemon
         if self.sensor_daemon:
-            self.sensor_daemon.stop()
+            try:
+                self.sensor_daemon.stop()
+                print("  ✓ Accelerometer daemon stopped")
+            except Exception as e:
+                print(f"⚠ Error stopping accelerometer daemon: {e}")
 
-        # Kill any lingering termux-sensor processes
+        # Kill any lingering termux-sensor and stdbuf processes
+        # This is a safety net in case threads didn't exit cleanly
         try:
-            subprocess.run(['pkill', '-9', 'termux-sensor'], check=False)
-            subprocess.run(['pkill', '-9', 'stdbuf'], check=False)
+            subprocess.run(['pkill', '-9', 'termux-sensor'], check=False,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            subprocess.run(['pkill', '-9', 'stdbuf'], check=False,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except:
             pass
 
