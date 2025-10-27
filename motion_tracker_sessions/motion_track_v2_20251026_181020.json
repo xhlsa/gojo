@@ -1,0 +1,321 @@
+{
+  "version": 2,
+  "start_time": "2025-10-26T18:10:20.491702",
+  "end_time": "2025-10-26T18:11:09.983110",
+  "total_distance": 0.0,
+  "gps_samples": [
+    {
+      "timestamp": "2025-10-26T18:10:28.644776",
+      "elapsed": 8.152356,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21602667,
+        "longitude": -110.84331508,
+        "altitude": 759.0882568359375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 5.3658857345581055,
+        "timestamp": 1761527428.639784
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:31.257487",
+      "elapsed": 10.76542,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21601813,
+        "longitude": -110.84331931,
+        "altitude": 759.0064697265625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 4.058714866638184,
+        "timestamp": 1761527431.2491689
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:33.887148",
+      "elapsed": 13.394806,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600853,
+        "longitude": -110.8433133,
+        "altitude": 759.554443359375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527433.877269
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:36.974607",
+      "elapsed": 16.021994,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600559,
+        "longitude": -110.84332074,
+        "altitude": 760.1431884765625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527436.50382
+      },
+      "battery": {
+        "percentage": 43,
+        "current": -1162,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2032800
+      }
+    },
+    {
+      "timestamp": "2025-10-26T18:10:39.128442",
+      "elapsed": 18.63626,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600346,
+        "longitude": -110.84332364,
+        "altitude": 760.67919921875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527439.11838
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:41.757707",
+      "elapsed": 21.265439,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600146,
+        "longitude": -110.84331885,
+        "altitude": 761.40576171875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527441.756284
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:44.364935",
+      "elapsed": 23.87268,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600023,
+        "longitude": -110.84331295,
+        "altitude": 761.4755859375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527444.3634853
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:47.466902",
+      "elapsed": 26.50221,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21600023,
+        "longitude": -110.84330913,
+        "altitude": 761.810546875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527446.9911153
+      },
+      "battery": {
+        "percentage": 43,
+        "current": -1214,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2032800
+      }
+    },
+    {
+      "timestamp": "2025-10-26T18:10:49.621157",
+      "elapsed": 29.129201,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599632,
+        "longitude": -110.84330643,
+        "altitude": 762.218994140625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527449.620203
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:52.240607",
+      "elapsed": 31.74833,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599294,
+        "longitude": -110.84330182,
+        "altitude": 762.675048828125,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.8611581325531006,
+        "timestamp": 1761527452.2344964
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:54.855708",
+      "elapsed": 34.363694,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599314,
+        "longitude": -110.8432995,
+        "altitude": 762.687744140625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.8256161212921143,
+        "timestamp": 1761527454.8544693
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:10:57.909188",
+      "elapsed": 36.965812,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599204,
+        "longitude": -110.84329727,
+        "altitude": 762.6812744140625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527457.4573684
+      },
+      "battery": {
+        "percentage": 43,
+        "current": -1173,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2028180
+      }
+    },
+    {
+      "timestamp": "2025-10-26T18:11:00.086058",
+      "elapsed": 39.593913,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599202,
+        "longitude": -110.84329674,
+        "altitude": 762.68994140625,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.7900924682617188,
+        "timestamp": 1761527460.0823457
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:11:02.712733",
+      "elapsed": 42.220567,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599208,
+        "longitude": -110.84329711,
+        "altitude": 762.57568359375,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 3.889303207397461,
+        "timestamp": 1761527462.709581
+      },
+      "battery": null
+    },
+    {
+      "timestamp": "2025-10-26T18:11:05.327725",
+      "elapsed": 44.83562,
+      "velocity": 0.0,
+      "distance": 0.0,
+      "gps": {
+        "latitude": 32.21599224,
+        "longitude": -110.84329653,
+        "altitude": 762.498779296875,
+        "speed": 0.0,
+        "bearing": 0.0,
+        "accuracy": 4.2420830726623535,
+        "timestamp": 1761527465.3251162
+      },
+      "battery": null
+    }
+  ],
+  "accel_samples": [],
+  "battery_samples": [
+    {
+      "timestamp": "2025-10-26T18:10:36.974581",
+      "elapsed": 16.021994,
+      "battery": {
+        "percentage": 43,
+        "current": -1162,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2032800
+      }
+    },
+    {
+      "timestamp": "2025-10-26T18:10:47.466878",
+      "elapsed": 26.50221,
+      "battery": {
+        "percentage": 43,
+        "current": -1214,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2032800
+      }
+    },
+    {
+      "timestamp": "2025-10-26T18:10:57.909163",
+      "elapsed": 36.965812,
+      "battery": {
+        "percentage": 43,
+        "current": -1173,
+        "temperature": 31.5,
+        "voltage": 3732,
+        "status": "DISCHARGING",
+        "charge_counter": 2028180
+      }
+    }
+  ],
+  "battery_start": {
+    "percentage": 44,
+    "current": -1378,
+    "temperature": 31.8,
+    "voltage": 3792,
+    "status": "DISCHARGING",
+    "charge_counter": 2037420
+  },
+  "auto_save_count": 0,
+  "config": {
+    "accel_sample_rate": 50,
+    "auto_save_interval": 120
+  }
+}

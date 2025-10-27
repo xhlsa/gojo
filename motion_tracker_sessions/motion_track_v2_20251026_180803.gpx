@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gpx version="1.1" creator="MotionTrackerV2">
+  <metadata>
+    <name>Motion Track 2025-10-26 18:08:03</name>
+    <time>2025-10-26T18:08:03.683019Z</time>
+  </metadata>
+  <trk>
+    <name>Motion Track</name>
+    <trkseg>
+      <trkpt lat="32.21601181" lon="-110.84331601">
+        <ele>758.873779296875</ele>
+        <time>2025-10-26T18:08:09.609153Z</time>
+      </trkpt>
+      <trkpt lat="32.21601813" lon="-110.84333344">
+        <ele>758.6746826171875</ele>
+        <time>2025-10-26T18:08:12.232955Z</time>
+      </trkpt>
+      <trkpt lat="32.21601798" lon="-110.84333692">
+        <ele>758.431884765625</ele>
+        <time>2025-10-26T18:08:14.844743Z</time>
+      </trkpt>
+      <trkpt lat="32.21601904" lon="-110.84334416">
+        <ele>758.03125</ele>
+        <time>2025-10-26T18:08:17.921813Z</time>
+      </trkpt>
+      <trkpt lat="32.21602066" lon="-110.84334773">
+        <ele>758.28955078125</ele>
+        <time>2025-10-26T18:08:20.067468Z</time>
+      </trkpt>
+      <trkpt lat="32.21602301" lon="-110.84335056">
+        <ele>758.380126953125</ele>
+        <time>2025-10-26T18:08:22.697253Z</time>
+      </trkpt>
+      <trkpt lat="32.21602449" lon="-110.84335151">
+        <ele>758.684326171875</ele>
+        <time>2025-10-26T18:08:25.281985Z</time>
+      </trkpt>
+      <trkpt lat="32.21602432" lon="-110.8433505">
+        <ele>758.854248046875</ele>
+        <time>2025-10-26T18:08:28.358854Z</time>
+      </trkpt>
+      <trkpt lat="32.21602453" lon="-110.84335056">
+        <ele>758.9229736328125</ele>
+        <time>2025-10-26T18:08:30.525060Z</time>
+      </trkpt>
+      <trkpt lat="32.21602402" lon="-110.84334911">
+        <ele>759.243408203125</ele>
+        <time>2025-10-26T18:08:33.148669Z</time>
+      </trkpt>
+    </trkseg>
+  </trk>
+</gpx>

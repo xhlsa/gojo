@@ -5,17 +5,55 @@ Continuous sensor streaming with background threads for maximum data capture
 """
 
 import subprocess
-import json
 import gzip
 import time
 import math
 import signal
 import os
+import sys
 import threading
 from queue import Queue, Empty
 from datetime import datetime
 from collections import deque
 from statistics import mean
+
+# Try orjson (faster C-based JSON) with graceful fallback to stdlib json
+try:
+    import orjson
+    HAS_ORJSON = True
+except ImportError:
+    HAS_ORJSON = False
+    import json
+
+# JSON compatibility helpers (unified interface for orjson and json)
+def json_loads(s):
+    """Load JSON from string, using orjson if available."""
+    if HAS_ORJSON:
+        return orjson.loads(s)
+    else:
+        return json.loads(s)
+
+def json_dump(obj, fp, **kwargs):
+    """Dump JSON to file, using orjson if available."""
+    if HAS_ORJSON:
+        indent = kwargs.get('indent', None)
+        option = 0
+        if indent:
+            option |= orjson.OPT_INDENT_2
+        data = orjson.dumps(obj, option=option)
+        if isinstance(data, bytes):
+            fp.write(data.decode('utf-8') if not hasattr(fp, 'mode') or 'b' not in fp.mode else data)
+        else:
+            fp.write(data)
+    else:
+        json.dump(obj, fp, **kwargs)
+
+def json_decode_error():
+    """Return the appropriate JSONDecodeError class."""
+    if HAS_ORJSON:
+        return orjson.JSONDecodeError
+    else:
+        return json.JSONDecodeError
 
 # Optional: psutil for battery monitoring (not critical for benchmarking)
 try:
@@ -236,9 +274,9 @@ class SensorDaemon:
 
             # Parse JSON output (termux-sensor -l returns {"sensors": [...]})
             try:
-                sensor_data = json.loads(output)
+                sensor_data = json_loads(output)
                 available_sensors = sensor_data.get('sensors', [])
-            except json.JSONDecodeError:
+            except (ValueError, KeyError):  # orjson.JSONDecodeError is a ValueError; json.JSONDecodeError is a ValueError
                 # Fallback: try parsing as plain text lines (older termux-api versions?)
                 available_sensors = [line.strip() for line in output.strip().split('\n') if line.strip()]
 
@@ -346,7 +384,7 @@ class SensorDaemon:
                 # When braces match, we have a complete JSON object
                 if brace_count == 0 and json_buffer.strip():
                     try:
-                        data = json.loads(json_buffer)
+                        data = json_loads(json_buffer)
 
                         # Extract accelerometer values
                         for sensor_key, sensor_data in data.items():
@@ -369,7 +407,7 @@ class SensorDaemon:
 
                         json_buffer = ""
 
-                    except (json.JSONDecodeError, KeyError, IndexError, TypeError) as e:
+                    except (ValueError, KeyError, IndexError, TypeError) as e:  # orjson.JSONDecodeError is ValueError
                         # Skip malformed JSON but keep trying
                         json_buffer = ""
 
@@ -424,7 +462,7 @@ class GPSThread(threading.Thread):
             )
 
             if result.returncode == 0 and result.stdout:
-                data = json.loads(result.stdout)
+                data = json_loads(result.stdout)
                 return {
                     'latitude': data.get('latitude'),
                     'longitude': data.get('longitude'),
@@ -497,11 +535,27 @@ class AccelerometerThread(threading.Thread):
             print("Calibrating accelerometer (keep device still)...")
         calibration_samples = []
 
-        for _ in range(samples):
-            raw = self.sensor_daemon.get_data(timeout=1)
-            if raw:
-                calibration_samples.append(raw)
-            time.sleep(0.2)
+        # Try to collect samples with retries if daemon is slow
+        retry_count = 0
+        max_retries = 2
+
+        for attempt in range(max_retries + 1):
+            calibration_samples = []
+            for _ in range(samples):
+                raw = self.sensor_daemon.get_data(timeout=1)
+                if raw:
+                    calibration_samples.append(raw)
+                time.sleep(0.2)
+
+            # If we got enough samples, we're done
+            if calibration_samples:
+                break
+
+            # If no samples and more retries available, wait and try again
+            if attempt < max_retries and not calibration_samples:
+                if not silent:
+                    print(f"  Retrying daemon communication (attempt {attempt + 2}/{max_retries + 1})...")
+                time.sleep(1)
 
         if calibration_samples:
             # Store raw axis biases (used for offset removal)
@@ -675,7 +729,7 @@ class BatteryReader:
             )
 
             if result.returncode == 0 and result.stdout:
-                data = json.loads(result.stdout)
+                data = json_loads(result.stdout)
                 return {
                     'percentage': data.get('percentage'),
                     'current': data.get('current'),  # μA (negative = discharging)
@@ -886,6 +940,11 @@ class MotionTrackerV2:
                     print("\n⚠ WARNING: Accelerometer startup validation FAILED")
                     print("  Data quality may be compromised. Check sensor connection.")
                     print("  Continuing with caution...\n")
+            else:
+                # If health monitor not available, give daemon time to produce samples
+                # before calibration (normally done by validate_startup's 5-second test)
+                print("  Giving daemon 3 seconds to buffer initial samples...")
+                time.sleep(3)
 
         # Start GPS thread
         self.gps_thread = GPSThread(self.gps_queue, self.stop_event)
@@ -1280,7 +1339,7 @@ class MotionTrackerV2:
             temp_filename = f"{filename}.tmp"
 
             with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
-                json.dump(data, f, separators=(',', ':'))
+                json_dump(data, f, separators=(',', ':'))
 
             # Atomic rename
             os.rename(temp_filename, filename)
@@ -1297,14 +1356,14 @@ class MotionTrackerV2:
             temp_filename = f"{filename_json}.tmp"
 
             with open(temp_filename, 'w') as f:
-                json.dump(data, f, indent=2)
+                json_dump(data, f, indent=2)
 
             os.rename(temp_filename, filename_json)
 
             # Compressed
             filename_gz = f"{base_filename}.json.gz"
             with gzip.open(filename_gz, 'wt', encoding='utf-8') as f:
-                json.dump(data, f, separators=(',', ':'))
+                json_dump(data, f, separators=(',', ':'))
 
             # GPX export (GPS samples only)
             self.export_gpx(timestamp)
