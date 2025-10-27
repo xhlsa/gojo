@@ -362,7 +362,7 @@ class PersistentAccelDaemon:
                                         pass
                                     break  # Only process first sensor
 
-                    except (ValueError, KeyError, IndexError, TypeError, json_decode_error()):
+                    except (ValueError, KeyError, IndexError, TypeError):
                         # Skip malformed JSON, continue buffering
                         json_buffer = ""
                         brace_depth = 0
