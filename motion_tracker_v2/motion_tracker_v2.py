@@ -3,13 +3,12 @@
 GPS + Accelerometer Sensor Fusion Tracker V2 - Multithreaded Edition
 Continuous sensor streaming with background threads for maximum data capture
 
-RECENT CHANGES:
-- Switched to persistent accelerometer daemon for true 50Hz sampling
-- termux-sensor starts ONCE and streams continuously (not start/stop for each sample)
-- Eliminates 1.5s initialization delay that prevented high-frequency sampling
-- Uses stdbuf -oL for line-buffered JSON output
-- Achieves ~100+ JSON samples/sec from persistent process
-- See docs/ACCEL_FINDINGS.md for technical details
+RECENT OPTIMIZATION (Oct 27):
+- Added -d 50 parameter to termux-sensor for optimal polling rate
+- Hardware provides ~15-17 Hz actual rate (LSM6DSO accelerometer)
+- Default accel_sample_rate changed from 50 Hz → 16 Hz (hardware reality)
+- Eliminates wasted API calls that only returned cached values
+- See tools/SENSOR_POLLING_FINDINGS.md for detailed analysis and benchmarks
 """
 
 import subprocess
@@ -286,8 +285,9 @@ class PersistentAccelDaemon:
         try:
             # Start termux-sensor as persistent process with line-buffered output
             # stdbuf -oL forces line-buffering (one JSON object per line)
+            # -d 50 sets 50ms polling delay for ~17Hz hardware rate (vs default ~1Hz)
             self.sensor_process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', 'ACCELEROMETER'],
+                ['stdbuf', '-oL', 'termux-sensor', '-s', 'ACCELEROMETER', '-d', '50'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
@@ -713,9 +713,11 @@ class BatteryReader:
 class MotionTrackerV2:
     """Main motion tracking application - Multithreaded Edition"""
 
-    def __init__(self, auto_save_interval=120, battery_sample_interval=10, accel_sample_rate=50):
+    def __init__(self, auto_save_interval=120, battery_sample_interval=10, accel_sample_rate=20):
         self.auto_save_interval = auto_save_interval  # seconds
         self.battery_sample_interval = battery_sample_interval  # sample battery every N seconds
+        # accel_sample_rate: Hardware provides ~15-20 Hz (LSM6DSO sensor optimized with -d 50)
+        # See SENSOR_POLLING_FINDINGS.md for detailed analysis
         self.accel_sample_rate = accel_sample_rate  # Hz
 
         # Sensor fusion
@@ -889,8 +891,9 @@ class MotionTrackerV2:
         print("Starting background sensor threads...")
 
         # Start persistent accelerometer daemon (continuous stream, not start/stop per sample)
-        # Calculate delay_ms from desired sample rate
-        delay_ms = max(10, int(1000 / self.accel_sample_rate))
+        # Use 50ms delay: hardware maxes out at ~17.3Hz, so lower delays just add overhead
+        # See SENSOR_POLLING_FINDINGS.md for detailed analysis
+        delay_ms = 50
         self.sensor_daemon = PersistentAccelDaemon(delay_ms=delay_ms)
         if not self.sensor_daemon.start():
             print("⚠ Accelerometer daemon failed to start, continuing anyway...")
@@ -1392,7 +1395,7 @@ def main():
     try:
         # Parse command line arguments
         duration = None
-        accel_rate = 50  # Default 50 Hz
+        accel_rate = 20  # Default 20 Hz (hardware provides: LSM6DSO accelerometer ~15-20Hz with -d 50)
 
         for arg in sys.argv[1:]:
             if arg == "--test":
