@@ -5,9 +5,23 @@ Real-Time Filter Comparison Test - EKF vs Complementary
 Runs both filters in parallel on live sensor data and displays metrics side-by-side.
 Perfect for evaluating EKF performance against the baseline Complementary filter.
 
-Usage:
-    python test_ekf_vs_complementary.py 5          # Run for 5 minutes
-    python test_ekf_vs_complementary.py 10 --gyro  # 10 minutes with gyroscope
+⚠️  MANDATORY: ALWAYS RUN VIA SHELL SCRIPT, NOT DIRECTLY
+================================================================================
+WRONG:  python test_ekf_vs_complementary.py 5
+RIGHT:  ./test_ekf.sh 5
+
+The shell script (./test_ekf.sh) is REQUIRED because it:
+  1. Cleans up stale sensor processes before startup
+  2. Validates accelerometer is accessible (retry logic)
+  3. Ensures proper sensor initialization
+  4. Handles signal cleanup on exit
+
+Running this directly will fail with "No accelerometer data" errors.
+================================================================================
+
+Usage (via shell script - the only correct way):
+    ./test_ekf.sh 5          # Run for 5 minutes
+    ./test_ekf.sh 10 --gyro  # 10 minutes with gyroscope
 """
 
 import subprocess
@@ -121,21 +135,24 @@ def parse_gps():
 class FilterComparison:
     """Run two filters in parallel and compare"""
 
-    def __init__(self, duration_minutes=5):
+    def __init__(self, duration_minutes=5, enable_gyro=False):
         self.duration_minutes = duration_minutes
+        self.enable_gyro = enable_gyro
         self.stop_event = threading.Event()
 
         # Filters
-        self.ekf = get_filter('ekf', enable_gyro=False)
+        self.ekf = get_filter('ekf', enable_gyro=enable_gyro)
         self.complementary = get_filter('complementary')
 
         # Sensors
         self.accel_daemon = PersistentSensorDaemon('ACCELEROMETER', delay_ms=50)
+        self.gyro_daemon = None  # Will be initialized if enable_gyro=True
 
         # Data storage - BOUNDED to prevent OOM
         # Max ~15000 accel samples (5 min at 50 Hz), ~300 GPS fixes (5 min at 1/sec)
         self.gps_samples = deque(maxlen=5000)
         self.accel_samples = deque(maxlen=50000)
+        self.gyro_samples = deque(maxlen=50000)  # Same size as accel for gyro data
         self.comparison_samples = deque(maxlen=1000)
 
         # Metrics
@@ -185,7 +202,42 @@ class FilterComparison:
 
         print(f"\n✓ EKF filter initialized")
         print(f"✓ Complementary filter initialized")
-        print(f"✓ Running for {self.duration_minutes} minutes...")
+
+        # OPTIONAL: Initialize gyroscope if requested
+        if self.enable_gyro:
+            print(f"\n✓ Initializing gyroscope (optional, will fallback if unavailable)...")
+            self.gyro_daemon = PersistentSensorDaemon('GYROSCOPE', delay_ms=50)
+
+            if not self.gyro_daemon.start():
+                print(f"  ⚠ WARNING: Gyroscope daemon failed to start")
+                print(f"  ⚠ Continuing test WITHOUT gyroscope (EKF will use GPS+Accel only)")
+                self.gyro_daemon = None
+                self.enable_gyro = False
+            else:
+                print(f"  ✓ Gyroscope daemon started")
+
+                # Validate gyroscope responds (optional, 5 second timeout)
+                print(f"  [OPTIONAL] Waiting for gyroscope samples...")
+                gyro_data_received = False
+                for attempt in range(5):  # 5 second timeout
+                    test_data = self.gyro_daemon.get_data(timeout=1.0)
+                    if test_data:
+                        print(f"  ✓ Gyroscope responding with data on attempt {attempt + 1}")
+                        gyro_data_received = True
+                        break
+                    elif attempt < 4:
+                        print(f"  Waiting... (attempt {attempt + 1}/5)")
+
+                if not gyro_data_received:
+                    print(f"  ⚠ WARNING: No gyroscope data received after 5 seconds")
+                    print(f"  ⚠ Continuing test WITHOUT gyroscope (EKF will use GPS+Accel only)")
+                    self.gyro_daemon.stop()
+                    self.gyro_daemon = None
+                    self.enable_gyro = False
+                else:
+                    print(f"  ✓ Gyroscope validated successfully")
+
+        print(f"\n✓ Running for {self.duration_minutes} minutes...")
 
         # Start GPS thread
         gps_thread = threading.Thread(target=self._gps_loop, daemon=True)
@@ -194,6 +246,11 @@ class FilterComparison:
         # Start accel thread
         accel_thread = threading.Thread(target=self._accel_loop, daemon=True)
         accel_thread.start()
+
+        # Start gyro thread (if enabled)
+        if self.gyro_daemon:
+            gyro_thread = threading.Thread(target=self._gyro_loop, daemon=True)
+            gyro_thread.start()
 
         # Display thread
         display_thread = threading.Thread(target=self._display_loop, daemon=True)
@@ -271,6 +328,47 @@ class FilterComparison:
                 except:
                     pass
 
+    def _gyro_loop(self):
+        """Process gyroscope samples and feed to EKF filter (if enabled)"""
+        while not self.stop_event.is_set():
+            # Skip if gyro not available
+            if not self.gyro_daemon or not self.enable_gyro:
+                time.sleep(0.5)
+                continue
+
+            gyro_data = self.gyro_daemon.get_data(timeout=0.1)
+
+            if gyro_data:
+                try:
+                    # Extract gyroscope angular velocities (rad/s)
+                    values = gyro_data.get('values', {})
+                    gyro_x = float(values.get('x', 0))  # rad/s
+                    gyro_y = float(values.get('y', 0))  # rad/s
+                    gyro_z = float(values.get('z', 0))  # rad/s
+
+                    magnitude = (gyro_x**2 + gyro_y**2 + gyro_z**2) ** 0.5
+
+                    # Update EKF filter with gyroscope data
+                    # (Complementary filter does NOT support gyroscope)
+                    v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
+
+                    # Store gyroscope sample for analysis
+                    self.gyro_samples.append({
+                        'timestamp': time.time() - self.start_time,
+                        'gyro_x': gyro_x,
+                        'gyro_y': gyro_y,
+                        'gyro_z': gyro_z,
+                        'magnitude': magnitude,
+                        'ekf_velocity': v1,
+                        'ekf_distance': d1
+                    })
+                except Exception as e:
+                    # Log errors but don't crash thread
+                    pass
+
+            # Brief sleep to avoid CPU spinning
+            time.sleep(0.01)
+
     def _display_loop(self):
         """Display metrics every second, log status every 30 seconds"""
         last_display = 0
@@ -305,11 +403,17 @@ class FilterComparison:
         # Sample counts
         gps_count = len(self.gps_samples)
         accel_count = len(self.accel_samples)
+        gyro_count = len(self.gyro_samples)
 
-        sys.stderr.write(
+        status_msg = (
             f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
-            f"GPS={gps_count:4d} | Accel={accel_count:5d}\n"
+            f"GPS={gps_count:4d} | Accel={accel_count:5d}"
         )
+
+        if self.enable_gyro:
+            status_msg += f" | Gyro={gyro_count:5d}"
+
+        sys.stderr.write(status_msg + "\n")
         sys.stderr.flush()
 
     def _display_metrics(self):
@@ -360,7 +464,10 @@ class FilterComparison:
 
         # Sensor info
         print("-" * 100)
-        print(f"GPS fixes: {len(self.gps_samples)} | Accel samples: {len(self.accel_samples)}")
+        sensor_info = f"GPS fixes: {len(self.gps_samples)} | Accel samples: {len(self.accel_samples)}"
+        if self.enable_gyro:
+            sensor_info += f" | Gyro samples: {len(self.gyro_samples)}"
+        print(sensor_info)
 
     def stop(self):
         self.stop_event.set()
@@ -387,6 +494,7 @@ class FilterComparison:
             'peak_memory_mb': self.peak_memory,
             'gps_samples': list(self.gps_samples),  # Convert deque to list
             'accel_samples': list(self.accel_samples),  # Convert deque to list
+            'gyro_samples': list(self.gyro_samples) if self.enable_gyro else [],  # Convert deque to list
             'final_metrics': {
                 'ekf': self.ekf.get_state(),
                 'complementary': self.complementary.get_state()
@@ -483,6 +591,25 @@ class FilterComparison:
         print(f"  EKF:           {ekf_state['velocity']:.3f} m/s")
         print(f"  Complementary: {comp_state['velocity']:.3f} m/s")
 
+        # Gyro statistics (if enabled)
+        if self.enable_gyro and self.gyro_samples:
+            print(f"\nGyroscope Statistics:")
+            print(f"  Total samples:  {len(self.gyro_samples)}")
+
+            # Calculate rotation rate statistics
+            gyro_x_vals = [s['gyro_x'] for s in self.gyro_samples]
+            gyro_y_vals = [s['gyro_y'] for s in self.gyro_samples]
+            gyro_z_vals = [s['gyro_z'] for s in self.gyro_samples]
+            magnitude_vals = [s['magnitude'] for s in self.gyro_samples]
+
+            import statistics
+            print(f"  X-rotation (rad/s):  mean={statistics.mean(gyro_x_vals):.4f}, max={max(gyro_x_vals):.4f}")
+            print(f"  Y-rotation (rad/s):  mean={statistics.mean(gyro_y_vals):.4f}, max={max(gyro_y_vals):.4f}")
+            print(f"  Z-rotation (rad/s):  mean={statistics.mean(gyro_z_vals):.4f}, max={max(gyro_z_vals):.4f}")
+            print(f"  Overall magnitude:   mean={statistics.mean(magnitude_vals):.4f}, max={max(magnitude_vals):.4f}")
+        elif self.enable_gyro:
+            print(f"\nGyroscope: Enabled but NO samples collected")
+
         print("\n" + "="*100)
 
 
@@ -502,7 +629,7 @@ def main():
     print(f"\nStarting in 2 seconds...")
     time.sleep(2)
 
-    test = FilterComparison(duration_minutes=duration)
+    test = FilterComparison(duration_minutes=duration, enable_gyro=enable_gyro)
     test.start()
 
 
