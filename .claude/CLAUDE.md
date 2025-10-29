@@ -49,34 +49,66 @@
 
 ## 🏆 Priority Projects & Wins
 
-### Motion Tracker V2 (ACTIVE)
-**Status:** ✓ Production Ready | Latest Commit: `72d83b0`
+### Motion Tracker V2 - Open Source Incident Logger (ACTIVE)
+**Status:** ✓ Production Ready | Direction: Open-Source Privacy/Insurance Tool
+
+**Mission:** DIY incident detection for privacy-conscious drivers
+- Log hard braking, impacts, swerving with independent sensor data
+- Prove what happened in accident disputes without corporate trackers
+- Open source, community-driven, transparently validated
 
 **Location:** `motion_tracker_v2/`
-- `motion_tracker_v2.py` - Main application
+- `motion_tracker_v2.py` - Main application + incident detection
+- `filters/` - Sensor fusion engines (EKF, UKF, Complementary, Kalman)
+- `test_ekf_vs_complementary.py` - Real-time filter comparison framework
+- `analyze_comparison.py` - Post-drive analysis and quality scoring
 - `accel_processor.pyx` - Cython optimization (25x faster)
-- `setup.py` - Build configuration
+
+**Sensor Fusion Stack:**
+- **Extended Kalman Filter (EKF)** - Primary (9.5/10) - handles non-linear GPS + gyro
+- **Unscented Kalman Filter (UKF)** - Alternative (8.0/10) - sigma-point based
+- **Kalman (Pure NumPy)** - Reference (9.0/10) - no external dependencies
+- **Complementary Filter** - Baseline (7.5/10) - fast, simple fusion
+- All use Joseph form covariance for numerical stability
 
 **Features:**
-- GPS + Accelerometer sensor fusion (complementary filtering)
+- GPS + Accelerometer + Gyroscope sensor fusion (multi-filter comparison)
+- Automatic incident detection (hard braking >0.8g, impacts >1.5g, swerving >60°/sec)
+- Kalman-filtered data (accurate, noise-reduced)
 - 50 Hz accelerometer sampling with optional Cython acceleration
-- Dynamic re-calibration during stationary periods (handles phone rotation)
+- Dynamic recalibration during stationary periods (handles phone rotation)
 - Auto-save every 2 minutes with memory management
+- Real-time filter validation framework
 - Battery monitoring and session summaries
-- Exports: JSON, compressed JSON.GZ, GPX formats
+- Exports: JSON (raw + filtered), CSV, GPX formats
 
 **Run:**
 ```bash
-python motion_tracker_v2/motion_tracker_v2.py [duration_minutes]  # e.g., python motion_tracker_v2/motion_tracker_v2.py 5
-./motion_tracker_v2.sh [duration]                                 # Wrapper script from root
+# Standard logging (default: EKF filter)
+python motion_tracker_v2/motion_tracker_v2.py 5              # Run for 5 minutes
+python motion_tracker_v2/motion_tracker_v2.py --enable-gyro  # With gyroscope
+
+# Real-time comparison (EKF vs Complementary)
+python motion_tracker_v2/test_ekf_vs_complementary.py 10     # 10 minute test drive
+
+# Analyze results
+python motion_tracker_v2/analyze_comparison.py comparison_*.json
 ```
 
-**Data:** Saves to `motion_tracker_sessions/`
+**Data:** Saves to `motion_tracker_sessions/` (incidents in separate folder)
 
-**Recent Additions (Oct 23):**
-- Dynamic re-calibration for accelerometer drift (stationary detection)
-- Reorganized into project folder for cleaner structure
-- Tested: 2min highway test, 5min indoor test, 3min folder test - all passing ✓
+**Oct 29 Session Additions:**
+- ✓ Extended Kalman Filter with 10D quaternion state (GPS+Accel+Gyro)
+- ✓ Real-time dual-filter comparison framework
+- ✓ Post-test analysis with accuracy scoring
+- ✓ Startup validation (3-second sensor warmup + data verification)
+- ✓ Planned: Incident detection module (hard braking, impacts, swerving)
+
+**Next Steps:**
+- Validate EKF on real drive (Oct 29/30)
+- Add incident detection with event logging
+- Create calibration + legal use documentation
+- Prepare for open source release
 
 ---
 
