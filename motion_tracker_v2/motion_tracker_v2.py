@@ -35,6 +35,9 @@ except ImportError:
 # Import rotation detector for gyroscope-based recalibration
 from rotation_detector import RotationDetector
 
+# Import sensor fusion filters
+from filters import get_filter
+
 # JSON compatibility helpers (unified interface for orjson and json)
 def json_loads(s):
     """Load JSON from string, using orjson if available."""
@@ -111,159 +114,6 @@ try:
     HAS_ACCEL_CALC = True
 except ImportError:
     HAS_ACCEL_CALC = False
-
-class SensorFusion:
-    """
-    Fuses GPS and accelerometer data using complementary filtering
-    GPS provides ground truth, accelerometer provides high-frequency updates
-    """
-
-    def __init__(self, gps_weight=0.7, accel_weight=0.3):
-        # Fusion weights (should sum to 1.0)
-        self.gps_weight = gps_weight
-        self.accel_weight = accel_weight
-
-        # State variables
-        self.velocity = 0.0  # m/s
-        self.distance = 0.0  # meters
-        self.last_time = None
-
-        # GPS state
-        self.last_gps_position = None
-        self.last_gps_speed = None
-        self.last_gps_time = None
-
-        # Accelerometer state
-        self.accel_velocity = 0.0
-        self.last_accel_time = None
-
-        # Drift correction
-        self.velocity_history = deque(maxlen=10)
-        self.stationary_threshold = 0.20  # m/s² (filters sensor noise effectively)
-
-        # Stationary tracking (for dynamic recalibration)
-        self.is_stationary = False
-
-        # Thread safety
-        self.lock = threading.Lock()
-
-    def haversine_distance(self, lat1, lon1, lat2, lon2):
-        """Calculate distance between two GPS coordinates in meters"""
-        R = 6371000  # Earth radius in meters
-
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        delta_phi = math.radians(lat2 - lat1)
-        delta_lambda = math.radians(lon2 - lon1)
-
-        a = (math.sin(delta_phi/2) ** 2 +
-             math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2) ** 2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-        return R * c
-
-    def update_gps(self, latitude, longitude, gps_speed=None, gps_accuracy=None):
-        """Update with GPS data - thread safe"""
-        with self.lock:
-            current_time = time.time()
-
-            # Calculate GPS-based velocity if we have previous position
-            if self.last_gps_position and self.last_gps_time:
-                dt = current_time - self.last_gps_time
-
-                if dt > 0:
-                    # Distance from last GPS position
-                    dist = self.haversine_distance(
-                        self.last_gps_position[0], self.last_gps_position[1],
-                        latitude, longitude
-                    )
-
-                    # GPS velocity
-                    gps_velocity = dist / dt
-
-                    # Use provided GPS speed if available, otherwise calculated
-                    if gps_speed is not None:
-                        gps_velocity = gps_speed
-
-                    # STATIONARY DETECTION - Filter GPS noise
-                    movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
-                    speed_threshold = 0.1  # m/s (~0.36 km/h) - optimized from testing
-
-                    is_stationary = (dist < movement_threshold and gps_velocity < speed_threshold)
-                    self.is_stationary = is_stationary  # Track for dynamic recalibration
-
-                    if is_stationary:
-                        # Stationary - don't add distance, zero out velocity
-                        gps_velocity = 0.0
-                        self.velocity = 0.0
-                        self.accel_velocity = 0.0
-                    else:
-                        # Moving - fuse velocities
-                        if self.accel_velocity is not None:
-                            self.velocity = (self.gps_weight * gps_velocity +
-                                           self.accel_weight * self.accel_velocity)
-                        else:
-                            self.velocity = gps_velocity
-
-                        # Only add distance if we're actually moving
-                        self.distance += dist
-
-                        # Reset accelerometer velocity to GPS velocity (drift correction)
-                        self.accel_velocity = self.velocity
-
-            # Update GPS state
-            self.last_gps_position = (latitude, longitude)
-            self.last_gps_time = current_time
-            self.last_gps_speed = gps_speed
-
-            return self.velocity, self.distance
-
-    def update_accelerometer(self, accel_magnitude):
-        """Update with accelerometer data (forward acceleration in m/s²) - thread safe"""
-        with self.lock:
-            current_time = time.time()
-
-            if self.last_accel_time is None:
-                self.last_accel_time = current_time
-                return self.velocity, self.distance
-
-            dt = current_time - self.last_accel_time
-
-            if dt <= 0:
-                return self.velocity, self.distance
-
-            # Integrate acceleration to get velocity
-            if abs(accel_magnitude) < self.stationary_threshold:
-                # Likely stationary, don't integrate
-                accel_magnitude = 0
-
-            # Update velocity
-            self.accel_velocity += accel_magnitude * dt
-
-            # Prevent negative velocity
-            self.accel_velocity = max(0, self.accel_velocity)
-
-            # Update distance (simple integration)
-            self.distance += self.accel_velocity * dt
-
-            # If we don't have recent GPS, use accelerometer velocity
-            if self.last_gps_time is None or (current_time - self.last_gps_time) > 5.0:
-                self.velocity = self.accel_velocity
-
-            self.last_accel_time = current_time
-
-            return self.velocity, self.distance
-
-    def get_state(self):
-        """Get current state - thread safe"""
-        with self.lock:
-            return {
-                'velocity': self.velocity,
-                'distance': self.distance,
-                'accel_velocity': self.accel_velocity,
-                'last_gps_time': self.last_gps_time,
-                'is_stationary': self.is_stationary
-            }
 
 
 class PersistentAccelDaemon:
@@ -984,15 +834,21 @@ class BatteryReader:
 class MotionTrackerV2:
     """Main motion tracking application - Multithreaded Edition"""
 
-    def __init__(self, auto_save_interval=120, battery_sample_interval=10, accel_sample_rate=20):
+    def __init__(self, auto_save_interval=120, battery_sample_interval=10, accel_sample_rate=20, filter_type='ekf', enable_gyro=False):
         self.auto_save_interval = auto_save_interval  # seconds
         self.battery_sample_interval = battery_sample_interval  # sample battery every N seconds
         # accel_sample_rate: Hardware provides ~15-20 Hz (LSM6DSO sensor optimized with -d 50)
         # See SENSOR_POLLING_FINDINGS.md for detailed analysis
         self.accel_sample_rate = accel_sample_rate  # Hz
+        self.filter_type = filter_type  # 'complementary', 'kalman', or 'ekf'
+        self.enable_gyro = enable_gyro  # Enable gyroscope support in filters that support it
 
-        # Sensor fusion
-        self.fusion = SensorFusion()
+        # Sensor fusion (swappable filter implementations)
+        # EKF supports enable_gyro; other filters don't accept this parameter
+        if filter_type == 'ekf':
+            self.fusion = get_filter(filter_type=filter_type, enable_gyro=enable_gyro)
+        else:
+            self.fusion = get_filter(filter_type=filter_type)
         self.battery = BatteryReader()
 
         # Accelerometer health monitoring
@@ -1201,6 +1057,12 @@ class MotionTrackerV2:
                 print("✓ Gyroscope daemon started")
                 # Give daemon a moment to start producing data
                 time.sleep(0.5)
+
+                # If EKF filter is enabled, recreate it with gyro support
+                if self.filter_type == 'ekf' and self.enable_gyro:
+                    print("  → Enabling gyro support in EKF filter...")
+                    self.fusion = get_filter(filter_type='ekf', enable_gyro=True)
+                    print("  ✓ EKF filter now has gyroscope orientation tracking enabled")
             else:
                 print("⚠ Gyroscope daemon failed to start (rotation detection disabled)")
                 self.gyro_daemon = None
@@ -1625,7 +1487,8 @@ class MotionTrackerV2:
             'auto_save_count': self.save_count,
             'config': {
                 'accel_sample_rate': self.accel_sample_rate,
-                'auto_save_interval': self.auto_save_interval
+                'auto_save_interval': self.auto_save_interval,
+                'filter_type': self.filter_type
             }
         }
 
@@ -1720,10 +1583,18 @@ def main():
         # Parse command line arguments
         duration = None
         accel_rate = 20  # Default 20 Hz (hardware provides: LSM6DSO accelerometer ~15-20Hz with -d 50)
+        filter_type = 'ekf'  # Default filter: EKF (optimal for GPS+accel+gyro)
+        enable_gyro = False  # Enable gyroscope in EKF if available
 
         for arg in sys.argv[1:]:
             if arg == "--test":
                 duration = 2  # 2 minutes for testing
+            elif arg.startswith("--filter="):
+                filter_type = arg.split("=")[1].lower()
+            elif arg == "--enable-gyro":
+                enable_gyro = True
+            elif arg == "--gyro":
+                enable_gyro = True
             elif arg.isdigit():
                 duration = int(arg)
             else:
@@ -1732,17 +1603,29 @@ def main():
                 except:
                     pass
 
+        # Validate filter type
+        if filter_type not in ['complementary', 'kalman', 'ekf']:
+            print(f"⚠ Unknown filter type: {filter_type}")
+            print(f"   Use: --filter=complementary, --filter=kalman, or --filter=ekf")
+            print(f"   Defaulting to: ekf")
+            filter_type = 'ekf'
+
         print(f"\nConfiguration:")
         if duration:
             print(f"  Duration: {duration} minutes")
         else:
             print(f"  Duration: Continuous (Ctrl+C to stop)")
         print(f"  Accelerometer: {accel_rate} Hz")
+        print(f"  Sensor Fusion: {filter_type.upper()} filter")
+        if enable_gyro and filter_type == 'ekf':
+            print(f"  Gyroscope: ENABLED (quaternion orientation tracking)")
+        elif filter_type == 'ekf':
+            print(f"  Gyroscope: Available if sensor detected (use --enable-gyro)")
         print(f"  Auto-save: Every 2 minutes")
         print("\nStarting in 3 seconds...")
         time.sleep(3)
 
-        tracker = MotionTrackerV2(accel_sample_rate=accel_rate)
+        tracker = MotionTrackerV2(accel_sample_rate=accel_rate, filter_type=filter_type, enable_gyro=enable_gyro)
         tracker.track(duration_minutes=duration)
 
     except KeyboardInterrupt:

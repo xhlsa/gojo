@@ -269,11 +269,12 @@ class ExtendedKalmanFilter(SensorFusionBase):
         via equirectangular projection, so the measurement function is linear
         (identity for position states).
 
-        Measurement: z = [x, y] from state [x, y, vx, vy, ax, ay]
+        Measurement: z = [x, y] from state [x, y, vx, vy, ax, ay, ...quaternion...]
+        Works for both 6D (no gyro) and 10D (with gyro) modes.
         """
-        H_gps = np.zeros((2, 6))
-        H_gps[0, 0] = 1  # Measure x
-        H_gps[1, 1] = 1  # Measure y
+        H_gps = np.zeros((2, self.n_state))
+        H_gps[0, 0] = 1  # Measure x (position)
+        H_gps[1, 1] = 1  # Measure y (position)
 
         return H_gps
 
@@ -284,17 +285,19 @@ class ExtendedKalmanFilter(SensorFusionBase):
         Measurement: z = magnitude of [ax, ay] = sqrt(ax^2 + ay^2)
 
         This is non-linear, so we need the Jacobian.
-        dz/d(state) = [0, 0, 0, 0, ax/|a|, ay/|a|]
+        dz/d(state) = [0, 0, 0, 0, ax/|a|, ay/|a|, 0, 0, 0, 0] (in 10D mode)
+
+        Works for both 6D (no gyro) and 10D (with gyro) modes.
         """
         ax = self.state[4]
         ay = self.state[5]
         a_mag = math.sqrt(ax**2 + ay**2)
 
         if a_mag < 1e-6:
-            # Avoid division by zero
-            H_accel = np.array([[0, 0, 0, 0, 0.0, 0.0]])
+            # Avoid division by zero - zero vector in measurement space
+            H_accel = np.zeros((1, self.n_state))
         else:
-            H_accel = np.zeros((1, 6))
+            H_accel = np.zeros((1, self.n_state))
             H_accel[0, 4] = ax / a_mag
             H_accel[0, 5] = ay / a_mag
 

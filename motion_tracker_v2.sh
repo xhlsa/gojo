@@ -1,5 +1,19 @@
 #!/bin/bash
 # Motion Tracker V2 launcher - runs the tracker with proper signal handling
+#
+# Usage:
+#   ./motion_tracker_v2.sh [duration_minutes]                   # Run with default EKF filter
+#   ./motion_tracker_v2.sh --filter=complementary 5             # Run complementary filter for 5 minutes
+#   ./motion_tracker_v2.sh --filter=ekf --enable-gyro 10        # Run EKF with gyro for 10 minutes
+#   ./motion_tracker_v2.sh --test                               # Quick 2-minute test run
+#
+# Options:
+#   --filter=FILTER     Choose filter: 'complementary', 'kalman', or 'ekf' (default: ekf)
+#   --enable-gyro       Enable gyroscope support in EKF filter (orientation tracking)
+#   --gyro              Alias for --enable-gyro
+#   --test              Run 2-minute test
+#   20                  Set accel sampling rate (Hz, default: 20)
+#   5                   Duration in minutes (if numeric)
 
 set -e  # Exit on errors
 
