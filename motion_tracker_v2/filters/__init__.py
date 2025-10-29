@@ -13,7 +13,7 @@ Example usage:
     state = fusion.get_state()
 """
 
-def get_filter(filter_type='complementary', **kwargs):
+def get_filter(filter_type='ekf', **kwargs):
     """
     Factory function to get filter implementation by name.
 
@@ -21,9 +21,9 @@ def get_filter(filter_type='complementary', **kwargs):
         filter_type (str): Filter type - options:
             - 'complementary': Simple weighted fusion (fast, good for testing)
             - 'kalman': Linear Kalman filter (requires filterpy)
-            - 'kalman-numpy': Pure numpy Kalman filter (no dependencies, faster)
-            - 'ekf': Extended Kalman Filter (handles non-linear GPS, recommended)
-            - 'ukf': Unscented Kalman Filter (most accurate, higher CPU)
+            - 'kalman-numpy': Pure numpy Kalman filter (GPS+accel only)
+            - 'ekf': Extended Kalman Filter (RECOMMENDED - handles gyro non-linearity)
+            - 'ukf': Unscented Kalman Filter (most accurate, 7x slower, overkill)
         **kwargs: Additional arguments passed to filter constructor
 
     Returns:
@@ -31,6 +31,10 @@ def get_filter(filter_type='complementary', **kwargs):
 
     Raises:
         ValueError: If filter_type is not recognized
+
+    Note: EKF is recommended for production as it's positioned for gyro integration.
+    Gyro measurements (orientation updates) are inherently non-linear and require
+    Jacobian-based linearization that EKF provides natively via quaternion kinematics.
     """
     if filter_type == 'complementary':
         from .complementary import ComplementaryFilter

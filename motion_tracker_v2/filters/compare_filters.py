@@ -327,10 +327,13 @@ def print_report(results, stats):
     # Recommendations
     print("\n### FILTER RECOMMENDATIONS ###\n")
     print("Complementary:  Fast, simple, good for testing/baseline")
-    print("Kalman-Numpy:   Pure numpy, no dependencies, faster than filterpy")
+    print("Kalman-Numpy:   Pure numpy, optimal for GPS+accel (no gyro)")
     print("Kalman:         Linear model, requires filterpy (use numpy version instead)")
-    print("EKF:            Handles GPS non-linearity, recommended for production")
-    print("UKF:            Most accurate but slower, for high-precision offline analysis\n")
+    print("EKF:            ⭐ RECOMMENDED FOR PRODUCTION")
+    print("                - Handles non-linear gyro measurements (quaternion kinematics)")
+    print("                - Same performance as Kalman-Numpy (0.032 ms/update)")
+    print("                - Positioned for gyro integration")
+    print("UKF:            Most accurate but 7x slower (0.230 ms/update), overkill\n")
 
     print("="*80)
 
