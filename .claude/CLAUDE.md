@@ -9,6 +9,44 @@
 
 ---
 
+## 👤 Working Style & Process
+
+**I am not a programmer.** I direct complex technical projects by:
+- Understanding problem domains deeply (what needs solving, not how to code it)
+- Asking detailed questions about technical tradeoffs and architecture
+- Catching logical and system-level errors (not syntax errors)
+- Testing rigorously to validate requirements are met
+- Making decisions based on system goals and constraints
+
+**How I work with AI (Claude Code):**
+1. Describe the goal/problem clearly
+2. Ask clarifying questions if proposals don't make sense
+3. Guide solutions through feedback and direction (not implementation details)
+4. Validate through testing before accepting work as done
+5. Commit explicitly when goals are achieved
+
+**What helps in sessions:**
+- Explain *why* technical choices matter (tradeoffs, not just code)
+- Show test output or demos to validate solutions work
+- Make assumptions explicit (ask "does this match your goal?")
+- Document decisions clearly (helps future sessions)
+- Ask if I understand before proceeding with implementation
+
+**What I expect to understand:**
+- The system architecture (how pieces fit together)
+- Performance metrics (accuracy, speed, reliability)
+- Failure modes (what can go wrong, how we detect it)
+- Testing strategy (how to validate it works)
+- NOT: Detailed math, algorithm internals, or syntax specifics
+
+**Example from Oct 29 session:**
+- Built production-grade Kalman filters (EKF/UKF) by directing the solution
+- Caught critical bugs by understanding system goals (gyro integration, sensor initialization)
+- Designed real-time comparison framework for validation
+- Did NOT need to write code or understand quaternion math - just guided what code should accomplish
+
+---
+
 ## 🏆 Priority Projects & Wins
 
 ### Motion Tracker V2 (ACTIVE)
