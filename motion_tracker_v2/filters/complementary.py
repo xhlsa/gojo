@@ -48,6 +48,7 @@ class ComplementaryFilter(SensorFusionBase):
 
         # Accelerometer state
         self.accel_velocity = 0.0
+        self.accel_magnitude = 0.0  # Current acceleration magnitude
         self.last_accel_time = None
 
         # Drift correction
@@ -138,12 +139,16 @@ class ComplementaryFilter(SensorFusionBase):
 
             if self.last_accel_time is None:
                 self.last_accel_time = current_time
+                self.accel_magnitude = accel_magnitude
                 return self.velocity, self.distance
 
             dt = current_time - self.last_accel_time
 
             if dt <= 0:
                 return self.velocity, self.distance
+
+            # Store current acceleration magnitude
+            self.accel_magnitude = accel_magnitude
 
             # Integrate acceleration to get velocity
             if abs(accel_magnitude) < self.stationary_threshold:
@@ -174,6 +179,7 @@ class ComplementaryFilter(SensorFusionBase):
                 'velocity': self.velocity,
                 'distance': self.distance,
                 'accel_velocity': self.accel_velocity,
+                'accel_magnitude': self.accel_magnitude,
                 'last_gps_time': self.last_gps_time,
                 'is_stationary': self.is_stationary
             }

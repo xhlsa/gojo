@@ -399,6 +399,29 @@ class ExtendedKalmanFilter(SensorFusionBase):
             vx, vy = self.state[2], self.state[3]
             self.velocity = math.sqrt(vx**2 + vy**2)
 
+            # CRITICAL FIX: Velocity bounds and GPS drift correction
+            # GPS velocity is ground truth - use it to correct Kalman state drift
+            if gps_speed is not None and gps_speed >= 0:
+                # Strong correction: reset velocity to GPS ground truth
+                # This prevents unbounded accumulation of velocity errors
+                if self.velocity > 1.0:  # Only correct when moving
+                    speed_ratio = gps_speed / self.velocity if self.velocity > 0.1 else 0.0
+                    self.state[2] *= speed_ratio  # Scale vx
+                    self.state[3] *= speed_ratio  # Scale vy
+                    self.velocity = gps_speed
+                else:
+                    self.velocity = gps_speed
+
+            # Sanity check: velocity should never exceed 60 m/s (~216 km/h)
+            # This catches numerical divergence before it becomes critical
+            MAX_VELOCITY = 60.0  # m/s (driving sanity limit)
+            if self.velocity > MAX_VELOCITY:
+                self.velocity = MAX_VELOCITY
+                # Scale velocity components proportionally
+                if self.velocity > 0:
+                    self.state[2] = (self.state[2] / math.sqrt(vx**2 + vy**2)) * MAX_VELOCITY
+                    self.state[3] = (self.state[3] / math.sqrt(vx**2 + vy**2)) * MAX_VELOCITY
+
             # Zero velocity if stationary
             if self.is_stationary:
                 self.velocity = 0.0
@@ -411,7 +434,14 @@ class ExtendedKalmanFilter(SensorFusionBase):
             return self.velocity, self.distance
 
     def update_accelerometer(self, accel_magnitude):
-        """Update EKF with accelerometer measurement."""
+        """Update EKF with accelerometer measurement.
+
+        CRITICAL FIX (Oct 29):
+        - Removed predict() call from accelerometer update
+        - Accelerometer is treated as a MEASUREMENT, not a state driver
+        - Prediction only happens on GPS updates (drift correction)
+        - This prevents unbounded velocity accumulation from repeated predictions
+        """
         with self.lock:
             current_time = time.time()
 
@@ -423,8 +453,9 @@ class ExtendedKalmanFilter(SensorFusionBase):
             if dt <= 0:
                 return self.velocity, self.distance
 
-            # Predict step
-            self.predict()
+            # NOTE: Predict step REMOVED - only predict on GPS updates
+            # This prevents accelerometer (50 Hz) from driving 1800+ predictions
+            # while GPS (1 Hz) only provides 40 corrections
 
             # Estimate 2D acceleration from magnitude and velocity direction
             vx, vy = self.state[2], self.state[3]

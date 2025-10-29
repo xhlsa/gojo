@@ -16,6 +16,7 @@ import time
 import sys
 import json
 import os
+import psutil
 from queue import Queue, Empty
 from datetime import datetime
 from collections import deque
@@ -131,19 +132,29 @@ class FilterComparison:
         # Sensors
         self.accel_daemon = PersistentSensorDaemon('ACCELEROMETER', delay_ms=50)
 
-        # Data storage
-        self.gps_samples = []
-        self.accel_samples = []
+        # Data storage - BOUNDED to prevent OOM
+        # Max ~15000 accel samples (5 min at 50 Hz), ~300 GPS fixes (5 min at 1/sec)
+        self.gps_samples = deque(maxlen=5000)
+        self.accel_samples = deque(maxlen=50000)
         self.comparison_samples = deque(maxlen=1000)
 
         # Metrics
         self.last_gps_time = None
         self.start_time = time.time()
+        self.last_status_time = time.time()
+
+        # Memory monitoring
+        self.process = psutil.Process()
+        self.peak_memory = 0
 
     def start(self):
         print("\n" + "="*100)
         print("REAL-TIME FILTER COMPARISON: EKF vs Complementary")
         print("="*100)
+
+        # CLEANUP: Give system time to release sensor resources from previous runs
+        print("\n✓ Initializing sensor (brief pause for cleanup)...")
+        time.sleep(0.5)
 
         if not self.accel_daemon.start():
             print("ERROR: Failed to start sensor daemon")
@@ -151,18 +162,26 @@ class FilterComparison:
 
         print(f"\n✓ Accelerometer daemon started")
 
-        # STARTUP VALIDATION - Wait for sensors to properly initialize
-        print(f"\n✓ Validating sensor startup (waiting 3 seconds for initialization)...")
-        print(f"  Testing sensor data stream...")
-        time.sleep(3)
+        # STARTUP VALIDATION - MANDATORY accelerometer data required
+        print(f"\n✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...")
+        print(f"  [REQUIRED] Waiting for accelerometer samples...")
 
-        # Check if we're getting data
-        test_data = self.accel_daemon.get_data(timeout=1.0)
-        if test_data:
-            print(f"  ✓ Sensor responding with data")
-        else:
-            print(f"  ⚠ WARNING: No sensor data received yet")
-            print(f"    Continuing anyway, but data quality may be compromised")
+        accel_data_received = False
+        for attempt in range(10):  # 10 attempts × 1 second = 10 second timeout
+            test_data = self.accel_daemon.get_data(timeout=1.0)
+            if test_data:
+                print(f"  ✓ Accelerometer responding with data on attempt {attempt + 1}")
+                accel_data_received = True
+                break
+            elif attempt < 9:
+                print(f"  Waiting... (attempt {attempt + 1}/10)")
+
+        if not accel_data_received:
+            print(f"\n✗ FATAL ERROR: No accelerometer data received after 10 seconds")
+            print(f"  Test cannot proceed without accelerometer input")
+            print(f"  Check: termux-sensor -s ACCELEROMETER works manually")
+            self.accel_daemon.stop()
+            return False
 
         print(f"\n✓ EKF filter initialized")
         print(f"✓ Complementary filter initialized")
@@ -253,17 +272,45 @@ class FilterComparison:
                     pass
 
     def _display_loop(self):
-        """Display metrics every second"""
+        """Display metrics every second, log status every 30 seconds"""
         last_display = 0
+        last_status_log = 0
 
         while not self.stop_event.is_set():
             now = time.time()
 
-            if now - last_display > 1.0:  # Update every second
+            # Log status every 30 seconds (to stderr)
+            if now - last_status_log > 30.0:
+                last_status_log = now
+                self._log_status()
+
+            # Display metrics every second
+            if now - last_display > 1.0:
                 last_display = now
                 self._display_metrics()
 
             time.sleep(0.1)
+
+    def _log_status(self):
+        """Log status update to stderr (won't clutter display)"""
+        elapsed = time.time() - self.start_time
+        mins = int(elapsed // 60)
+        secs = int(elapsed % 60)
+
+        # Memory
+        mem_info = self.process.memory_info()
+        mem_mb = mem_info.rss / 1024 / 1024
+        self.peak_memory = max(self.peak_memory, mem_mb)
+
+        # Sample counts
+        gps_count = len(self.gps_samples)
+        accel_count = len(self.accel_samples)
+
+        sys.stderr.write(
+            f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
+            f"GPS={gps_count:4d} | Accel={accel_count:5d}\n"
+        )
+        sys.stderr.flush()
 
     def _display_metrics(self):
         """Show side-by-side comparison"""
@@ -318,6 +365,15 @@ class FilterComparison:
     def stop(self):
         self.stop_event.set()
         self.accel_daemon.stop()
+
+        # CRITICAL: Verify accelerometer data was collected
+        if len(self.accel_samples) == 0:
+            print(f"\n✗ FATAL ERROR: Test completed but NO accelerometer samples were collected")
+            print(f"  This indicates a sensor hardware or configuration problem")
+            print(f"  Verify: termux-sensor -s ACCELEROMETER produces output")
+            print(f"  Results will be saved but test is INVALID")
+            print()
+
         self._save_results()
 
     def _save_results(self):
@@ -328,8 +384,9 @@ class FilterComparison:
         results = {
             'test_duration': self.duration_minutes,
             'actual_duration': time.time() - self.start_time,
-            'gps_samples': self.gps_samples,
-            'accel_samples': self.accel_samples,
+            'peak_memory_mb': self.peak_memory,
+            'gps_samples': list(self.gps_samples),  # Convert deque to list
+            'accel_samples': list(self.accel_samples),  # Convert deque to list
             'final_metrics': {
                 'ekf': self.ekf.get_state(),
                 'complementary': self.complementary.get_state()
@@ -340,6 +397,7 @@ class FilterComparison:
             json.dump(results, f, indent=2)
 
         print(f"\n✓ Results saved to: {filename}")
+        print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
 
         # Print summary
         self._print_summary()
@@ -370,11 +428,17 @@ class FilterComparison:
             print(f"  Complementary Distance: {comp_distance:.2f} m (Error: {comp_error_pct:.2f}%)")
 
             if ekf_error_pct < comp_error_pct:
-                improvement = ((comp_error_pct - ekf_error_pct) / comp_error_pct) * 100
-                print(f"\n  ✓ EKF is {improvement:.1f}% more accurate than Complementary")
+                if comp_error_pct > 0:
+                    improvement = ((comp_error_pct - ekf_error_pct) / comp_error_pct) * 100
+                    print(f"\n  ✓ EKF is {improvement:.1f}% more accurate than Complementary")
+                else:
+                    print(f"\n  ✓ Both filters have zero error (perfect accuracy)")
             else:
-                degradation = ((ekf_error_pct - comp_error_pct) / comp_error_pct) * 100
-                print(f"\n  ⚠ EKF is {degradation:.1f}% less accurate than Complementary")
+                if comp_error_pct > 0:
+                    degradation = ((ekf_error_pct - comp_error_pct) / comp_error_pct) * 100
+                    print(f"\n  ⚠ EKF is {degradation:.1f}% less accurate than Complementary")
+                else:
+                    print(f"\n  ⚠ Complementary has zero error; EKF has {ekf_error_pct:.2f}% error")
 
         print(f"\nFinal Velocities:")
         print(f"  EKF:           {ekf_state['velocity']:.3f} m/s")

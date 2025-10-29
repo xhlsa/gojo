@@ -84,16 +84,28 @@
 
 **Run:**
 ```bash
-# Standard logging (default: EKF filter)
-python motion_tracker_v2/motion_tracker_v2.py 5              # Run for 5 minutes
-python motion_tracker_v2/motion_tracker_v2.py --enable-gyro  # With gyroscope
+# MAIN TRACKER (Standard logging with EKF filter)
+./motion_tracker_v2.sh 5                    # Run for 5 minutes (default: EKF)
+./motion_tracker_v2.sh --filter=complementary 10  # 10 min with complementary filter
+./motion_tracker_v2.sh --enable-gyro 5     # 5 minutes with gyroscope
 
-# Real-time comparison (EKF vs Complementary)
-python motion_tracker_v2/test_ekf_vs_complementary.py 10     # 10 minute test drive
+# TEST/COMPARISON (EKF vs Complementary real-time validation)
+# ⚠️ CRITICAL: ALWAYS use shell script, NOT direct Python
+./test_ekf.sh 10                           # 10-minute test (EKF vs Complementary)
+./test_ekf.sh 5 --gyro                     # 5 minutes with gyro comparison
 
-# Analyze results
+# Analysis & Results
 python motion_tracker_v2/analyze_comparison.py comparison_*.json
 ```
+
+⚠️ **CRITICAL: Shell Script is MANDATORY for test_ekf.sh**
+- Direct Python: `python test_ekf_vs_complementary.py` → Accelerometer sensor fails
+- Shell script: `./test_ekf.sh` → Properly initializes and manages sensor environment
+- Shell script handles:
+  1. Cleanup of stale sensor processes from previous runs
+  2. 3-second delay for sensor resource release
+  3. Clean subprocess initialization with proper signal handling
+  4. Final cleanup after test completion
 
 **Data:** Saves to `motion_tracker_sessions/` (incidents in separate folder)
 
@@ -101,12 +113,39 @@ python motion_tracker_v2/analyze_comparison.py comparison_*.json
 - ✓ Extended Kalman Filter with 10D quaternion state (GPS+Accel+Gyro)
 - ✓ Real-time dual-filter comparison framework
 - ✓ Post-test analysis with accuracy scoring
-- ✓ Startup validation (3-second sensor warmup + data verification)
-- ✓ Planned: Incident detection module (hard braking, impacts, swerving)
+- ✓ Startup validation (10-second sensor warmup + MANDATORY accelerometer data check)
+- ✓ Incident detection module (hard braking, impacts, swerving)
+
+**CRITICAL TEST VALIDATION RULE:**
+```
+🚨 SHELL SCRIPT IS MANDATORY:
+   WRONG: python motion_tracker_v2/test_ekf_vs_complementary.py 10
+   RIGHT: ./test_ekf.sh 10
+
+   Using direct Python will NOT initialize the sensor properly.
+   Always use ./test_ekf.sh instead.
+
+⚠️  A test is ONLY VALID if:
+  1. Accelerometer data is received within 10 seconds of startup
+  2. At least 1+ accelerometer samples collected during entire test run
+  3. If test shows "Accel samples: 0" → TEST IS INVALID, do not declare success
+
+✗ Failure scenarios (DO NOT ignore):
+  - "Accel samples: 0" after test completes = sensor issue, not test success
+  - "No accelerometer data after 10 seconds" at startup = fails immediately
+
+✓ Test passes only with actual accelerometer data in output
+
+⚠️  STALE SENSOR PROCESSES:
+   If test_ekf.sh fails with "No accelerometer data received":
+   1. Script already handles cleanup, but might need manual reset
+   2. Verify: termux-sensor -s ACCELEROMETER (should show JSON output)
+   3. Manual cleanup: pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
+   4. Then retry: ./test_ekf.sh 10
+```
 
 **Next Steps:**
-- Validate EKF on real drive (Oct 29/30)
-- Add incident detection with event logging
+- Validate EKF on real drive with accelerometer enabled
 - Create calibration + legal use documentation
 - Prepare for open source release
 
