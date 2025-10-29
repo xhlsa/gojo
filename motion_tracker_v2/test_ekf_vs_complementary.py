@@ -402,6 +402,43 @@ class FilterComparison:
         # Print summary
         self._print_summary()
 
+    def _calculate_gps_ground_truth(self):
+        """Calculate actual GPS ground truth distance using haversine formula.
+
+        This accumulates the haversine distance between consecutive GPS points
+        to get the true distance traveled based on GPS coordinates alone.
+        """
+        import math
+
+        if len(self.gps_samples) < 2:
+            return 0.0
+
+        total_distance = 0.0
+        for i in range(1, len(self.gps_samples)):
+            prev_gps = self.gps_samples[i-1]
+            curr_gps = self.gps_samples[i]
+
+            lat1 = prev_gps['latitude']
+            lon1 = prev_gps['longitude']
+            lat2 = curr_gps['latitude']
+            lon2 = curr_gps['longitude']
+
+            # Haversine formula
+            R = 6371000  # Earth radius in meters
+            phi1 = math.radians(lat1)
+            phi2 = math.radians(lat2)
+            delta_phi = math.radians(lat2 - lat1)
+            delta_lambda = math.radians(lon2 - lon1)
+
+            a = (math.sin(delta_phi/2) ** 2 +
+                 math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2) ** 2)
+            c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+            distance_increment = R * c
+            total_distance += distance_increment
+
+        return total_distance
+
     def _print_summary(self):
         """Print final comparison summary"""
         print("\n" + "="*100)
@@ -415,7 +452,9 @@ class FilterComparison:
             first_gps = self.gps_samples[0]
             last_gps = self.gps_samples[-1]
 
-            gps_distance = last_gps['ekf_distance']  # GPS is ground truth
+            # CRITICAL FIX: Calculate GPS ground truth from actual coordinates
+            # NOT from EKF's estimate (that defeats the purpose of validation)
+            gps_distance = self._calculate_gps_ground_truth()
             ekf_distance = ekf_state['distance']
             comp_distance = comp_state['distance']
 
@@ -423,9 +462,9 @@ class FilterComparison:
             comp_error_pct = abs(comp_distance - gps_distance) / max(gps_distance, 0.001) * 100 if gps_distance > 0 else 0
 
             print(f"\nDistance Accuracy (vs GPS ground truth):")
-            print(f"  GPS Distance:           {gps_distance:.2f} m")
-            print(f"  EKF Distance:           {ekf_distance:.2f} m (Error: {ekf_error_pct:.2f}%)")
-            print(f"  Complementary Distance: {comp_distance:.2f} m (Error: {comp_error_pct:.2f}%)")
+            print(f"  GPS Distance (Haversine): {gps_distance:.2f} m")
+            print(f"  EKF Distance:             {ekf_distance:.2f} m (Error: {ekf_error_pct:.2f}%)")
+            print(f"  Complementary Distance:   {comp_distance:.2f} m (Error: {comp_error_pct:.2f}%)")
 
             if ekf_error_pct < comp_error_pct:
                 if comp_error_pct > 0:

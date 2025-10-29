@@ -25,6 +25,42 @@ def load_comparison_data(filename):
         return json.load(f)
 
 
+def _calculate_gps_haversine_distance(gps_samples):
+    """Calculate actual GPS distance from coordinates using haversine formula.
+
+    CRITICAL FIX: Do NOT use EKF's distance estimate as ground truth.
+    Calculate true GPS distance by accumulating haversine distances.
+    """
+    if len(gps_samples) < 2:
+        return 0.0
+
+    total_distance = 0.0
+    for i in range(1, len(gps_samples)):
+        prev = gps_samples[i-1]
+        curr = gps_samples[i]
+
+        lat1 = prev['latitude']
+        lon1 = prev['longitude']
+        lat2 = curr['latitude']
+        lon2 = curr['longitude']
+
+        # Haversine formula
+        R = 6371000  # Earth radius in meters
+        phi1 = math.radians(lat1)
+        phi2 = math.radians(lat2)
+        delta_phi = math.radians(lat2 - lat1)
+        delta_lambda = math.radians(lon2 - lon1)
+
+        a = (math.sin(delta_phi/2) ** 2 +
+             math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2) ** 2)
+        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
+
+        distance_increment = R * c
+        total_distance += distance_increment
+
+    return total_distance
+
+
 def compute_distance_accuracy(data):
     """Compare distance measurements"""
     gps_samples = data['gps_samples']
@@ -32,8 +68,8 @@ def compute_distance_accuracy(data):
     if not gps_samples:
         return None
 
-    # Use last GPS distance as ground truth (most accurate)
-    gps_truth = gps_samples[-1]['ekf_distance']
+    # CRITICAL FIX: Calculate GPS ground truth from actual coordinates, not EKF estimate
+    gps_truth = _calculate_gps_haversine_distance(gps_samples)
 
     ekf_dist = data['final_metrics']['ekf']['distance']
     comp_dist = data['final_metrics']['complementary']['distance']
