@@ -292,7 +292,7 @@ class FilterComparison:
         self.complementary = get_filter('complementary')
 
         # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
-        self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+        self.accel_daemon = PersistentAccelDaemon(delay_ms=50)  # Stable baseline - hardware limited to ~15Hz
         self.gps_daemon = PersistentGPSDaemon()  # Continuous GPS polling daemon
         self.gyro_daemon = None  # Will be initialized if enable_gyro=True
 
