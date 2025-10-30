@@ -310,6 +310,50 @@ Implementation:
 
 ---
 
+### 7. **Paired Hardware Sensor Initialization (Shared IMU Stream)**
+**Pattern Used:** Motion Tracker V2 (lines 143-246)
+
+```
+Core idea: Initialize related hardware sensors together from same device
+- Problem: Accelerometer + Gyroscope are from same IMU chip but started separately
+          → 2 processes, independent timing, resource contention
+- Solution: Initialize both as paired stream, single process with dual queues
+
+Implementation:
+  1. Combined sensor request:
+     termux-sensor -s ACCELEROMETER,GYROSCOPE  # Both from same hardware
+
+  2. Single daemon with dual queues:
+     class PersistentAccelDaemon:
+       def __init__(self):
+         self.data_queue = Queue()       # Accel samples
+         self.gyro_queue = Queue()       # Gyro samples (new)
+
+  3. Parse JSON to route to correct queue:
+     for sensor_key, sensor_data in data.items():
+       if 'Accelerometer' in sensor_key:
+         self.data_queue.put(accel_data)
+       elif 'Gyroscope' in sensor_key:
+         self.gyro_queue.put(gyro_data)
+
+  4. Dependent sensors wrap the main daemon:
+     class PersistentGyroDaemon:
+       def __init__(self, accel_daemon):
+         self.data_queue = accel_daemon.gyro_queue  # Share queue
+
+  5. Result:
+     - 1 process instead of 2 (less overhead)
+     - Synchronized timestamps (same hardware clock)
+     - Reduced resource contention
+     - Correct hardware initialization pattern
+```
+
+**When to use:** Multi-sensor devices (IMU = accel + gyro + mag, etc.)
+**Data Validation:** Test showed 100% sync: 493 accel samples + 493 gyro samples in 2 min
+**Reuse file:** motion_tracker_v2.py:143-360, test_ekf_vs_complementary.py:180-241
+
+---
+
 ## 🔧 Technical Decisions
 
 ### GPS + Accel Fusion Weights
