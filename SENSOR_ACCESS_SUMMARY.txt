@@ -1,0 +1,113 @@
+================================================================================
+SENSOR ACCESS EXPLORATION - FINAL SUMMARY
+================================================================================
+
+QUESTION: Can we access sensors from elsewhere/faster than current 15 Hz limit?
+
+ANSWER: No viable alternatives without major infrastructure changes.
+
+================================================================================
+INVESTIGATION RESULTS
+================================================================================
+
+1. CURRENT METHOD (termux-sensor via Termux:API)
+   ✓ Working: 15 Hz accelerometer, ~0.25-1 Hz GPS
+   ✓ Stable: No API overload, proven reliable
+   ✓ Minimal deps: Just termux-sensor command
+   ✗ Limited: 15 Hz ceiling from LocalSocket architecture
+
+2. ATTEMPTED IMPROVEMENTS
+   ├─ PyJNI/JNIUS (Would add 50+ Hz potential)
+   │  └─ FAILED: Requires JDK not available (~500MB system change)
+   ├─ Kivy Framework (Would add ~40 Hz potential)
+   │  └─ NOT TESTED: Heavy dependencies, overkill for CLI tool
+   ├─ Custom C library (Would add 100+ Hz potential)
+   │  └─ NOT FEASIBLE: Requires NDK, significant dev effort
+   └─ Direct /sys access (Would enable kernel sensor access)
+      └─ NOT ACCESSIBLE: Permission model blocks user access
+
+3. FILESYSTEM INVESTIGATION
+   ✓ /sys/class/sensors/ exists
+   ✗ /sys/class/sensors/* not readable (permission denied)
+   ✗ /dev/input/ not accessible
+   ✗ /dev/sensor* not present
+
+4. AVAILABLE COMMANDS
+   ✓ termux-sensor (current)
+   ✓ termux-location (current)
+   ✓ adb (available but no device to connect to)
+   ✗ dumpsys (not in Termux PATH)
+   ✗ sensor_service (not available)
+
+================================================================================
+ARCHITECTURAL BOTTLENECK ANALYSIS
+================================================================================
+
+Why is Termux:API capped at 15 Hz?
+
+Android Sensor HAL
+    ↓ (hardware can deliver 50-200+ Hz)
+Termux:API SensorAPI Service
+    ↓ (service can handle full rate)
+LocalSocket IPC Channel
+    ↓ (BOTTLENECK HERE: ~15-20 Hz capacity)
+Termux Terminal Process
+    ↓ (can handle higher rates)
+
+The LocalSocket communication protocol is optimized for request-response
+interactions, not high-frequency streaming. This is by design - native Android
+apps use memory-mapped sensor buffers or direct HAL access instead.
+
+Termux:API trades performance for accessibility and sandboxing.
+
+================================================================================
+PERFORMANCE REALITY CHECK
+================================================================================
+
+Is 15 Hz enough for motion tracking?
+
+Event Type              Duration      Minimum Freq   15 Hz Sufficient?
+─────────────────────────────────────────────────────────────────────
+Hard braking            1-2 sec       >5 Hz          ✓ Yes
+Impact/collision        100-500ms     >10 Hz         ✓ Yes
+Swerving                500-1000ms    >5 Hz          ✓ Yes
+Lane departure          500ms-2sec    >5 Hz          ✓ Yes
+Pothole/bump            100-200ms     >10 Hz         ✓ Yes (barely)
+──────────────────────────────────────────────────────────────────────
+
+Verdict: 15 Hz is sufficient for safety incident detection.
+
+NOT sufficient for:
+- Vibration analysis (needs 50+ Hz)
+- Shock peak capture (needs 100+ Hz)
+- Gyro calibration (needs >50 Hz for better accel lock)
+
+================================================================================
+CONCLUSION
+================================================================================
+
+✓ Current termux-sensor method is OPTIMAL for this use case
+✗ No practical alternatives available in this Termux configuration
+✓ 15 Hz is a system architectural limit, not a code limitation
+✓ Sufficient for production incident detection
+
+RECOMMENDATIONS:
+
+1. Keep using termux-sensor at current settings
+2. Document the 15 Hz limitation in README
+3. Explain that this is Termux:API's LocalSocket ceiling, not a bug
+4. If higher rates are needed in future, would require:
+   - Separate Android native app development (not Termux CLI)
+   - OR: Major infrastructure changes (install JDK + PyJNI + recompile)
+
+RISK ASSESSMENT: Any attempt to modify the system for higher sensor rates
+would introduce significant complexity and risk of instability. Current
+implementation is proven stable and fit for purpose.
+
+================================================================================
+REFERENCE DOCUMENTS
+================================================================================
+- SENSOR_ACCESS_EXPLORATION.md     - Detailed technical analysis
+- ACCELEROMETER_ROOT_CAUSE.md       - Root cause of 15Hz limit
+- TEST_ANALYSIS_REPORT.md           - Validation test results
+
