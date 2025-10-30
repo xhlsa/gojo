@@ -3,6 +3,20 @@
 GPS + Accelerometer Sensor Fusion Tracker V2 - Multithreaded Edition
 Continuous sensor streaming with background threads for maximum data capture
 
+⚠️  MANDATORY: ALWAYS RUN VIA SHELL SCRIPT, NOT DIRECTLY
+================================================================================
+WRONG:  python motion_tracker_v2.py 5
+RIGHT:  ./motion_tracker_v2.sh 5
+
+The shell script (./motion_tracker_v2.sh) is REQUIRED because it:
+  1. Cleans up stale sensor processes before startup
+  2. Validates accelerometer is accessible (with retry logic)
+  3. Ensures proper sensor initialization
+  4. Handles signal cleanup on exit
+
+Running this directly will fail with sensor initialization errors.
+================================================================================
+
 RECENT OPTIMIZATION (Oct 27):
 - Added -d 50 parameter to termux-sensor for optimal polling rate
 - Hardware provides ~15-17 Hz actual rate (LSM6DSO accelerometer)
@@ -129,6 +143,7 @@ class PersistentAccelDaemon:
     def __init__(self, delay_ms=20, max_queue_size=1000):
         self.delay_ms = delay_ms
         self.data_queue = Queue(maxsize=max_queue_size)
+        self.gyro_queue = Queue(maxsize=max_queue_size)  # For gyroscope data from paired sensor
         self.reader_thread = None
         self.stop_event = threading.Event()
         self.sensor_process = None
@@ -137,10 +152,11 @@ class PersistentAccelDaemon:
         """Start persistent termux-sensor daemon"""
         try:
             # Start termux-sensor as persistent process with line-buffered output
+            # Request both ACCELEROMETER and GYROSCOPE together (same hardware sensor)
             # stdbuf -oL forces line-buffering (one JSON object per line)
             # -d 50 sets 50ms polling delay for ~17Hz hardware rate (vs default ~1Hz)
             self.sensor_process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', 'ACCELEROMETER', '-d', '50'],
+                ['stdbuf', '-oL', 'termux-sensor', '-s', 'ACCELEROMETER,GYROSCOPE', '-d', '50'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
@@ -157,7 +173,8 @@ class PersistentAccelDaemon:
             self.reader_thread.start()
 
             delay_hz = 1000 // self.delay_ms
-            print(f"✓ Accelerometer daemon started ({delay_hz:.0f}Hz, persistent stream)")
+            print(f"✓ IMU daemon started ({delay_hz:.0f}Hz, persistent paired stream)")
+            print(f"   Sensors: ACCELEROMETER + GYROSCOPE (same hardware)")
             print(f"   Process: termux-sensor (PID {self.sensor_process.pid})")
             return True
         except Exception as e:
@@ -191,29 +208,41 @@ class PersistentAccelDaemon:
                 # When brace_depth returns to 0, we have a complete JSON object
                 if brace_depth == 0 and '{' in json_buffer and json_buffer.count('}') > 0:
                     try:
-                        # Parse the complete JSON object
+                        # Parse the complete JSON object (contains both accel and gyro from paired sensors)
                         data = json_loads(json_buffer)
                         json_buffer = ""
 
-                        # Extract accelerometer values from any sensor key
+                        # Extract both accelerometer and gyroscope from the combined JSON
                         for sensor_key, sensor_data in data.items():
                             if isinstance(sensor_data, dict) and 'values' in sensor_data:
                                 values = sensor_data['values']
                                 if len(values) >= 3:
-                                    accel_data = {
-                                        'x': values[0],
-                                        'y': values[1],
-                                        'z': values[2],
-                                        'timestamp': time.time()
-                                    }
+                                    # Determine sensor type from key name
+                                    if 'Accelerometer' in sensor_key:
+                                        accel_data = {
+                                            'x': values[0],
+                                            'y': values[1],
+                                            'z': values[2],
+                                            'timestamp': time.time()
+                                        }
+                                        # Try to put in accel queue
+                                        try:
+                                            self.data_queue.put_nowait(accel_data)
+                                        except:
+                                            pass  # Queue full, skip this sample
 
-                                    # Try to put in queue, skip if full
-                                    try:
-                                        self.data_queue.put_nowait(accel_data)
-                                    except:
-                                        # Queue full, skip this sample
-                                        pass
-                                    break  # Only process first sensor
+                                    elif 'Gyroscope' in sensor_key:
+                                        gyro_data = {
+                                            'x': values[0],  # rad/s around X-axis (pitch)
+                                            'y': values[1],  # rad/s around Y-axis (roll)
+                                            'z': values[2],  # rad/s around Z-axis (yaw)
+                                            'timestamp': time.time()
+                                        }
+                                        # Try to put in gyro queue
+                                        try:
+                                            self.gyro_queue.put_nowait(gyro_data)
+                                        except:
+                                            pass  # Queue full, skip this sample
 
                     except (ValueError, KeyError, IndexError, TypeError):
                         # Skip malformed JSON, continue buffering
@@ -270,163 +299,62 @@ class PersistentAccelDaemon:
 
 class PersistentGyroDaemon:
     """
-    Persistent gyroscope daemon - starts termux-sensor ONCE and reads continuously.
+    Gyroscope data reader - gets data from paired PersistentAccelDaemon stream.
 
-    Mirrors PersistentAccelDaemon pattern:
-    - Single long-lived termux-sensor process
-    - Continuous JSON stream with brace-depth parsing
-    - Queue-based data passing to AccelerometerThread
-    - Thread-safe with stop_event
+    IMPORTANT: Accelerometer and gyroscope are from the same IMU hardware,
+    so they MUST be initialized together using `termux-sensor -s ACCELEROMETER,GYROSCOPE`.
+
+    This class provides a wrapper interface to access gyroscope data that's already
+    being read from the paired sensor stream in PersistentAccelDaemon.
 
     The gyroscope provides angular velocity data (rad/s) that, when integrated,
     gives absolute rotation angles. Used by RotationDetector to detect device
     orientation changes that trigger accelerometer recalibration.
     """
 
-    def __init__(self, delay_ms=50, max_queue_size=1000):
+    def __init__(self, accel_daemon=None, delay_ms=50, max_queue_size=1000):
         """
-        Initialize gyroscope daemon.
+        Initialize gyroscope daemon (wrapper around shared paired sensor).
 
         Args:
-            delay_ms (int): Polling delay in milliseconds (50ms = ~20Hz sampling)
+            accel_daemon: PersistentAccelDaemon instance (provides shared gyro_queue)
+            delay_ms (int): Polling delay in milliseconds (for reference only)
             max_queue_size (int): Maximum queue depth before dropping samples
         """
         self.delay_ms = delay_ms
-        self.data_queue = Queue(maxsize=max_queue_size)
-        self.reader_thread = None
+        self.accel_daemon = accel_daemon
+        # Use the accel daemon's gyro queue if available, else create our own
+        self.data_queue = accel_daemon.gyro_queue if accel_daemon else Queue(maxsize=max_queue_size)
         self.stop_event = threading.Event()
-        self.sensor_process = None
 
     def start(self):
-        """Start persistent termux-sensor daemon for gyroscope"""
+        """Start reading from shared gyroscope stream (no process to start)"""
         try:
-            # Start termux-sensor with same parameters as accelerometer
-            # -s GYROSCOPE: Select gyroscope sensor
-            # -d 50: 50ms polling delay for ~20Hz hardware rate
-            # stdbuf -oL: Line-buffered output (one JSON object per line)
-            self.sensor_process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', 'GYROSCOPE', '-d', '50'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=1  # Line buffered
-            )
-
-            # Verify process started
-            if self.sensor_process.poll() is not None:
-                stderr_out = self.sensor_process.stderr.read() if self.sensor_process.stderr else ""
-                raise RuntimeError(f"termux-sensor GYROSCOPE exited immediately: {stderr_out}")
-
-            # Start reader thread
-            self.reader_thread = threading.Thread(target=self._read_loop, daemon=True)
-            self.reader_thread.start()
+            if self.accel_daemon is None:
+                print("⚠ GyroDaemon: No accel_daemon provided, cannot read gyro data")
+                return False
 
             delay_hz = 1000 // self.delay_ms
-            print(f"✓ Gyroscope daemon started ({delay_hz:.0f}Hz, persistent stream)")
-            print(f"   Process: termux-sensor (PID {self.sensor_process.pid})")
+            print(f"✓ Gyroscope daemon started ({delay_hz:.0f}Hz, paired with accelerometer)")
+            print(f"   Source: Shared IMU sensor stream (ACCELEROMETER,GYROSCOPE)")
             return True
         except Exception as e:
-            print(f"⚠ Failed to start gyroscope daemon: {e}")
+            print(f"⚠ Failed to initialize gyroscope daemon: {e}")
             return False
 
-    def _read_loop(self):
-        """Read JSON objects from persistent gyroscope stream (multi-line formatted)"""
-        try:
-            if not self.sensor_process or not self.sensor_process.stdout:
-                print("⚠ [GyroDaemon] No stdout from sensor process", file=sys.stderr)
-                return
-
-            json_buffer = ""
-            brace_depth = 0
-            line_count = 0
-
-            for line in self.sensor_process.stdout:
-                if self.stop_event.is_set():
-                    break
-
-                if not line:
-                    continue
-
-                line_count += 1
-                json_buffer += line + '\n'
-
-                # Track brace depth to detect complete JSON objects
-                brace_depth += line.count('{') - line.count('}')
-
-                # When brace_depth returns to 0, we have a complete JSON object
-                if brace_depth == 0 and '{' in json_buffer and json_buffer.count('}') > 0:
-                    try:
-                        # Parse the complete JSON object
-                        data = json_loads(json_buffer)
-                        json_buffer = ""
-
-                        # Extract gyroscope values from any sensor key
-                        for sensor_key, sensor_data in data.items():
-                            if isinstance(sensor_data, dict) and 'values' in sensor_data:
-                                values = sensor_data['values']
-                                if len(values) >= 3:
-                                    gyro_data = {
-                                        'x': values[0],  # rad/s around X-axis (pitch)
-                                        'y': values[1],  # rad/s around Y-axis (roll)
-                                        'z': values[2],  # rad/s around Z-axis (yaw)
-                                        'timestamp': time.time()
-                                    }
-
-                                    # Try to put in queue, skip if full
-                                    try:
-                                        self.data_queue.put_nowait(gyro_data)
-                                    except:
-                                        # Queue full, skip this sample
-                                        pass
-                                    break  # Only process first sensor
-
-                    except (ValueError, KeyError, IndexError, TypeError):
-                        # Skip malformed JSON, continue buffering
-                        json_buffer = ""
-                        brace_depth = 0
-
-        except Exception as e:
-            print(f"⚠ [GyroDaemon] Reader thread error: {e}", file=sys.stderr)
-        finally:
-            # Clean up process
-            if self.sensor_process:
-                try:
-                    self.sensor_process.terminate()
-                    self.sensor_process.wait(timeout=1)
-                except:
-                    try:
-                        self.sensor_process.kill()
-                    except:
-                        pass
-
     def stop(self):
-        """Stop the daemon"""
+        """Stop the daemon (no process to kill, just set flag)"""
         self.stop_event.set()
-
-        # Kill sensor process if running
-        if self.sensor_process:
-            try:
-                self.sensor_process.terminate()
-                self.sensor_process.wait(timeout=1)
-            except:
-                try:
-                    self.sensor_process.kill()
-                except:
-                    pass
-
-        # Wait for reader thread
-        if self.reader_thread:
-            self.reader_thread.join(timeout=2)
 
     def __del__(self):
         """Ensure cleanup if daemon is garbage collected without explicit stop()"""
         try:
             self.stop()
         except:
-            pass  # Silently ignore errors during cleanup
+            pass
 
     def get_data(self, timeout=None):
-        """Get next gyroscope reading from daemon"""
+        """Get next gyroscope reading from shared daemon"""
         try:
             return self.data_queue.get(timeout=timeout)
         except Empty:
@@ -1021,7 +949,8 @@ class MotionTrackerV2:
         """Start background sensor threads"""
         print("Starting background sensor threads...")
 
-        # Start persistent accelerometer daemon (continuous stream, not start/stop per sample)
+        # Start persistent IMU daemon with PAIRED accelerometer + gyroscope
+        # (they are from the same hardware sensor and MUST be initialized together)
         # Use 50ms delay: hardware maxes out at ~17.3Hz, so lower delays just add overhead
         # See SENSOR_POLLING_FINDINGS.md for detailed analysis
         delay_ms = 50
@@ -1049,12 +978,13 @@ class MotionTrackerV2:
                 print("  Giving daemon 2 seconds to start producing samples...")
                 time.sleep(2)
 
-        # Start gyroscope daemon (optional, non-critical)
+        # Start gyroscope daemon (shared with accelerometer - same IMU hardware)
         print("Starting gyroscope daemon...")
         try:
-            self.gyro_daemon = PersistentGyroDaemon(delay_ms=50)
+            # Pass accel_daemon so gyro uses the shared sensor stream
+            self.gyro_daemon = PersistentGyroDaemon(accel_daemon=self.sensor_daemon, delay_ms=50)
             if self.gyro_daemon.start():
-                print("✓ Gyroscope daemon started")
+                print("✓ Gyroscope daemon started (using shared IMU stream)")
                 # Give daemon a moment to start producing data
                 time.sleep(0.5)
 

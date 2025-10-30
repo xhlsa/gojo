@@ -44,6 +44,7 @@ except ImportError:
     import json
 
 from filters import get_filter
+from motion_tracker_v2 import PersistentAccelDaemon, PersistentGyroDaemon
 
 
 class PersistentSensorDaemon:
@@ -175,8 +176,8 @@ class FilterComparison:
         self.ekf = get_filter('ekf', enable_gyro=enable_gyro)
         self.complementary = get_filter('complementary')
 
-        # Sensors
-        self.accel_daemon = PersistentSensorDaemon('ACCELEROMETER', delay_ms=50)
+        # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
+        self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
         self.gyro_daemon = None  # Will be initialized if enable_gyro=True
 
         # Data storage - BOUNDED to prevent OOM
@@ -234,10 +235,10 @@ class FilterComparison:
         print(f"\n✓ EKF filter initialized")
         print(f"✓ Complementary filter initialized")
 
-        # OPTIONAL: Initialize gyroscope if requested
+        # OPTIONAL: Initialize gyroscope if requested (uses shared IMU stream from accel_daemon)
         if self.enable_gyro:
             print(f"\n✓ Initializing gyroscope (optional, will fallback if unavailable)...")
-            self.gyro_daemon = PersistentSensorDaemon('GYROSCOPE', delay_ms=50)
+            self.gyro_daemon = PersistentGyroDaemon(accel_daemon=self.accel_daemon, delay_ms=50)
 
             if not self.gyro_daemon.start():
                 print(f"  ⚠ WARNING: Gyroscope daemon failed to start")
@@ -245,7 +246,7 @@ class FilterComparison:
                 self.gyro_daemon = None
                 self.enable_gyro = False
             else:
-                print(f"  ✓ Gyroscope daemon started")
+                print(f"  ✓ Gyroscope daemon started (using shared IMU stream)")
                 print(f"  Note: Gyroscope data will be collected during test run")
 
         print(f"\n✓ Running for {self.duration_minutes} minutes...")

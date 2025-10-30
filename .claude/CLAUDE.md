@@ -406,13 +406,86 @@ These are separate experiments in the same workspace. Focus on Motion Tracker V2
 
 ---
 
+## 🆘 Troubleshooting
+
+### Termux Crash During Test (Process 9 Error)
+
+**Root Cause:** Combined disk space and sensor initialization issues
+
+**Symptoms:**
+- Test exits with "signal 9" or "Killed"
+- Running direct Python: `python test_ekf_vs_complementary.py` fails on sensor init
+- Termux restarts unexpectedly
+
+**Solution:**
+
+1. **Always use shell script (MANDATORY):**
+   ```bash
+   ./test_ekf.sh 5      # ✓ CORRECT - shell handles sensor init
+   # NOT:
+   python test_ekf_vs_complementary.py  # ✗ WRONG - sensor fails
+   ```
+
+2. **If sensor still fails, reset stale processes:**
+   ```bash
+   pkill -9 termux-sensor
+   pkill -9 termux-api
+   sleep 3
+   ./test_ekf.sh 5
+   ```
+
+### Disk Space Full (100% reported)
+
+**The /dev/block/dm-7 partition is system bloatware (can't clear)**
+
+**Check actual available space for motion tracker:**
+```bash
+df -h | grep "storage/emulated"    # Should show plenty of free space (250GB+)
+df -h | grep "cache"               # System cache partition
+du -sh ~/*                         # User home directory usage
+```
+
+**Real disk layout:**
+| Partition | Size | Used | Free | Purpose |
+|-----------|------|------|------|---------|
+| `/dev/block/dm-7` | 6.9G | 6.9G | 0 | **Samsung carrier bloatware (ignore 100%)** |
+| `/cache` | 779M | 16M | **747M** | System scratch (cleanable) |
+| `/storage/emulated` | 461G | 208G | **253G** | Your data (plenty of space) |
+
+**Your motion tracker uses `/storage/emulated` → You have 253GB free, no issue.**
+
+**Cleanup if needed (removes old session data):**
+```bash
+rm -rf ~/game ~/go ~/llama.cpp ~/raylib ~/ollama  # Frees ~1.3GB
+rm -rf ~/gojo/sessions/                           # Old session archives
+apt clean                                          # Termux package cache
+```
+
+---
+
 ## 📝 Session Log
 
-### Oct 23 (Today)
+### Oct 29 (Today)
+- ✓ Debugged Termux crash (process 9 error)
+- ✓ Identified: Must use shell script (./test_ekf.sh) for sensor initialization
+- ✓ Confirmed: 100% full warning is Samsung system bloatware, not user data
+- ✓ Freed 1.3GB by removing unused projects (game, go, llama.cpp, raylib, ollama)
+- ✓ Verified: Motion tracker has 253GB free space on /storage/emulated
+- ✓ Successfully ran 1-minute test: EKF vs Complementary comparison working
+- ✓ Test output saved: comparison_2025-10-29_14-17-44.json (210KB)
+- ✓ Peak memory: 90.1 MB (well within limits)
+
+**Key learnings:**
+1. Shell script is MANDATORY - directly running Python bypasses sensor init
+2. Stale sensor processes can block accelerometer - script handles cleanup
+3. Samsung carrier partition (100% full) is inaccessible - doesn't affect user data
+4. Motion tracker has plenty of space: 253GB available on /storage/emulated
+
+**Next:** Run extended tests (10-60 minute) to validate EKF accuracy on real drives
+
+### Oct 23 (Previous)
 - ✓ Added dynamic re-calibration for accelerometer drift
 - ✓ Tested: 2min highway, 5min indoor, 3min folder-structure tests
 - ✓ Reorganized code into dedicated project folder
 - ✓ All tests passing, ready for real drive session
 - ✓ Created comprehensive documentation (README.md + CLAUDE.md)
-
-**Next:** Run during actual car drive to validate dynamic recal during traffic stops
