@@ -184,7 +184,7 @@ while True:
             print(result.stdout, flush=True)
     except Exception as e:
         pass
-    time.sleep(0.1)  # Small delay to avoid CPU spinning
+    time.sleep(1.0)  # 1 second between calls to avoid overloading Termux:API
 '''
 
             self.gps_process = subprocess.Popen(
