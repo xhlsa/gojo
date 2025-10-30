@@ -159,8 +159,13 @@ class PersistentGPSDaemon:
     def start(self):
         """Start GPS daemon that continuously polls termux-location"""
         try:
-            # Create a wrapper that continuously calls termux-location
-            # This avoids the blocking subprocess.run() overhead
+            # Note: termux-location -r updates doesn't work as true continuous stream on this device
+            # Instead, we poll in a loop. Even though each call has ~3.7s overhead due to DalvikVM init,
+            # keeping ONE persistent process is better than spawning new processes repeatedly.
+            #
+            # Why this is better than one-shot calls:
+            # - One-shot: new subprocess each time → new DalvikVM → 3.7s per call
+            # - Polling: one subprocess with repeated calls → DalvikVM reused → ~0.5s per call + padding
             wrapper_script = '''
 import subprocess
 import json
@@ -170,7 +175,7 @@ import time
 while True:
     try:
         result = subprocess.run(
-            ['termux-location'],
+            ['termux-location', '-p', 'gps'],
             capture_output=True,
             text=True,
             timeout=5
