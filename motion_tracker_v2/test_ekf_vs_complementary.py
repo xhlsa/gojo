@@ -307,10 +307,14 @@ class FilterComparison:
         self.last_gps_time = None
         self.start_time = time.time()
         self.last_status_time = time.time()
+        self.last_auto_save_time = time.time()
 
         # Memory monitoring
         self.process = psutil.Process()
         self.peak_memory = 0
+
+        # Auto-save configuration
+        self.auto_save_interval = 120  # Save every 2 minutes
 
     def start(self):
         print("\n" + "="*100)
@@ -395,12 +399,17 @@ class FilterComparison:
         display_thread = threading.Thread(target=self._display_loop, daemon=True)
         display_thread.start()
 
-        # Wait for duration
+        # Wait for duration with periodic auto-save
         try:
             if self.duration_minutes is None:
-                # Run continuously until interrupted
+                # Run continuously until interrupted, auto-save every 2 minutes
                 while not self.stop_event.is_set():
                     time.sleep(1)
+                    # Check if time to auto-save
+                    if time.time() - self.last_auto_save_time > self.auto_save_interval:
+                        print(f"\n✓ Auto-saving data ({len(self.gps_samples)} GPS, {len(self.accel_samples)} accel samples)...")
+                        self._save_results(auto_save=True)
+                        self.last_auto_save_time = time.time()
             else:
                 time.sleep(self.duration_minutes * 60)
         except KeyboardInterrupt:
@@ -636,15 +645,22 @@ class FilterComparison:
 
         self._save_results()
 
-    def _save_results(self):
-        """Save results to JSON file"""
+    def _save_results(self, auto_save=False):
+        """Save results to JSON file (with auto-save support)"""
         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-        filename = f"comparison_{timestamp}.json"
+
+        # Auto-save files include "autosave_" prefix and don't overwrite each other
+        if auto_save:
+            save_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            filename = f"comparison_autosave_{save_time}.json"
+        else:
+            filename = f"comparison_{timestamp}.json"
 
         results = {
             'test_duration': self.duration_minutes,
             'actual_duration': time.time() - self.start_time,
             'peak_memory_mb': self.peak_memory,
+            'auto_save': auto_save,
             'gps_samples': list(self.gps_samples),  # Convert deque to list
             'accel_samples': list(self.accel_samples),  # Convert deque to list
             'gyro_samples': list(self.gyro_samples) if self.enable_gyro else [],  # Convert deque to list
@@ -657,11 +673,13 @@ class FilterComparison:
         with open(filename, 'w') as f:
             json.dump(results, f, indent=2)
 
-        print(f"\n✓ Results saved to: {filename}")
-        print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
-
-        # Print summary
-        self._print_summary()
+        if auto_save:
+            print(f"✓ Auto-saved: {filename}")
+        else:
+            print(f"\n✓ Final results saved to: {filename}")
+            print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
+            # Print summary only on final save
+            self._print_summary()
 
     def _calculate_gps_ground_truth(self):
         """Calculate actual GPS ground truth distance using haversine formula.
@@ -786,6 +804,16 @@ def main():
     time.sleep(2)
 
     test = FilterComparison(duration_minutes=duration, enable_gyro=enable_gyro)
+
+    # Set up signal handlers for graceful shutdown (SIGINT, SIGTERM)
+    import signal
+    def signal_handler(signum, frame):
+        print(f"\n✓ Received signal {signum}, gracefully shutting down...")
+        test.stop_event.set()
+
+    signal.signal(signal.SIGINT, signal_handler)   # Ctrl+C
+    signal.signal(signal.SIGTERM, signal_handler)  # Kill signal
+
     test.start()
 
 
