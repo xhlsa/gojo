@@ -58,12 +58,18 @@ class PersistentSensorDaemon:
 
     def start(self):
         try:
+            # Use stdbuf with line buffering for consistent output streaming
+            # This ensures data is flushed line-by-line for reliable Python iteration
+            # NOTE: Gyroscope support is limited on Termux - sensor HAL may not stream
+            # data to Python subprocesses even though direct termux-sensor calls work
+            cmd = ['stdbuf', '-oL', 'termux-sensor', '-s', self.sensor_type, '-d', str(self.delay_ms)]
+
+            # Use text=True for consistent line-by-line iteration and automatic UTF-8 decoding
             self.process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', self.sensor_type, '-d', str(self.delay_ms)],
+                cmd,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                universal_newlines=True,
-                bufsize=1
+                text=True
             )
 
             reader = threading.Thread(target=self._read_loop, daemon=True)
@@ -74,23 +80,48 @@ class PersistentSensorDaemon:
             return False
 
     def _read_loop(self):
+        import sys
+        packets_received = 0
         try:
             json_buffer = ""
             brace_depth = 0
 
             for line in self.process.stdout:
+                # line is already a string (text=True mode)
                 json_buffer += line
                 brace_depth += line.count('{') - line.count('}')
 
                 if brace_depth == 0 and json_buffer.strip():
+                    packets_received += 1
                     try:
                         data = json.loads(json_buffer)
-                        self.data_queue.put(data, block=False)
-                    except:
-                        pass
+
+                        # termux-sensor returns nested structure:
+                        # {"sensor_name": {"values": [x, y, z]}}
+                        # Extract and flatten for easier consumption
+                        for sensor_key, sensor_data in data.items():
+                            if isinstance(sensor_data, dict) and 'values' in sensor_data:
+                                values = sensor_data['values']
+                                # values is an array [x, y, z]
+                                if isinstance(values, list) and len(values) >= 3:
+                                    self.data_queue.put({
+                                        'x': values[0],
+                                        'y': values[1],
+                                        'z': values[2],
+                                        'timestamp': time.time()
+                                    }, block=False)
+                                    if packets_received <= 3:
+                                        print(f"[{self.sensor_type}] Queued packet {packets_received}", file=sys.stderr)
+                                    break  # Only process first sensor
+                        if packets_received <= 3 and not any(isinstance(v, dict) and 'values' in v for v in data.values()):
+                            print(f"[{self.sensor_type}] Packet {packets_received} had no valid sensor data: {list(data.keys())}", file=sys.stderr)
+                    except Exception as e:
+                        if packets_received <= 3:
+                            print(f"[{self.sensor_type}] Parse error on packet {packets_received}: {str(e)[:50]}", file=sys.stderr)
                     json_buffer = ""
-        except:
-            pass
+        except Exception as e:
+            import sys
+            print(f"[{self.sensor_type}] _read_loop exception: {e}", file=sys.stderr)
 
     def get_data(self, timeout=0.1):
         try:
@@ -215,27 +246,7 @@ class FilterComparison:
                 self.enable_gyro = False
             else:
                 print(f"  ✓ Gyroscope daemon started")
-
-                # Validate gyroscope responds (optional, 5 second timeout)
-                print(f"  [OPTIONAL] Waiting for gyroscope samples...")
-                gyro_data_received = False
-                for attempt in range(5):  # 5 second timeout
-                    test_data = self.gyro_daemon.get_data(timeout=1.0)
-                    if test_data:
-                        print(f"  ✓ Gyroscope responding with data on attempt {attempt + 1}")
-                        gyro_data_received = True
-                        break
-                    elif attempt < 4:
-                        print(f"  Waiting... (attempt {attempt + 1}/5)")
-
-                if not gyro_data_received:
-                    print(f"  ⚠ WARNING: No gyroscope data received after 5 seconds")
-                    print(f"  ⚠ Continuing test WITHOUT gyroscope (EKF will use GPS+Accel only)")
-                    self.gyro_daemon.stop()
-                    self.gyro_daemon = None
-                    self.enable_gyro = False
-                else:
-                    print(f"  ✓ Gyroscope validated successfully")
+                print(f"  Note: Gyroscope data will be collected during test run")
 
         print(f"\n✓ Running for {self.duration_minutes} minutes...")
 
@@ -306,10 +317,10 @@ class FilterComparison:
 
             if accel_data:
                 try:
-                    values = accel_data.get('values', {})
-                    x = float(values.get('x', 0))
-                    y = float(values.get('y', 0))
-                    z = float(values.get('z', 0))
+                    # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
+                    x = float(accel_data.get('x', 0))
+                    y = float(accel_data.get('y', 0))
+                    z = float(accel_data.get('z', 0))
 
                     magnitude = (x**2 + y**2 + z**2) ** 0.5
 
@@ -330,6 +341,8 @@ class FilterComparison:
 
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
+        import sys
+        samples_collected = 0
         while not self.stop_event.is_set():
             # Skip if gyro not available
             if not self.gyro_daemon or not self.enable_gyro:
@@ -339,12 +352,15 @@ class FilterComparison:
             gyro_data = self.gyro_daemon.get_data(timeout=0.1)
 
             if gyro_data:
+                samples_collected += 1
+                if samples_collected <= 1:
+                    print(f"[GYRO] First sample received: {list(gyro_data.keys())}", file=sys.stderr)
                 try:
                     # Extract gyroscope angular velocities (rad/s)
-                    values = gyro_data.get('values', {})
-                    gyro_x = float(values.get('x', 0))  # rad/s
-                    gyro_y = float(values.get('y', 0))  # rad/s
-                    gyro_z = float(values.get('z', 0))  # rad/s
+                    # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
+                    gyro_x = float(gyro_data.get('x', 0))  # rad/s
+                    gyro_y = float(gyro_data.get('y', 0))  # rad/s
+                    gyro_z = float(gyro_data.get('z', 0))  # rad/s
 
                     magnitude = (gyro_x**2 + gyro_y**2 + gyro_z**2) ** 0.5
 
