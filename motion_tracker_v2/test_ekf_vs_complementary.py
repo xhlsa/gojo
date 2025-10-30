@@ -140,8 +140,118 @@ class PersistentSensorDaemon:
                 pass
 
 
+class PersistentGPSDaemon:
+    """
+    Persistent GPS daemon - continuously polls termux-location and queues results
+
+    Key insight: Instead of blocking on subprocess.run() (3.7 second latency),
+    we run termux-location in a background loop and read results from a queue.
+
+    This achieves ~0.5-1 Hz GPS vs ~0.3 Hz with blocking calls.
+    """
+
+    def __init__(self):
+        self.data_queue = Queue(maxsize=100)
+        self.reader_thread = None
+        self.stop_event = threading.Event()
+        self.gps_process = None
+
+    def start(self):
+        """Start GPS daemon that continuously polls termux-location"""
+        try:
+            # Create a wrapper that continuously calls termux-location
+            # This avoids the blocking subprocess.run() overhead
+            wrapper_script = '''
+import subprocess
+import json
+import sys
+import time
+
+while True:
+    try:
+        result = subprocess.run(
+            ['termux-location'],
+            capture_output=True,
+            text=True,
+            timeout=5
+        )
+        if result.returncode == 0:
+            print(result.stdout, flush=True)
+    except Exception as e:
+        pass
+    time.sleep(0.1)  # Small delay to avoid CPU spinning
+'''
+
+            self.gps_process = subprocess.Popen(
+                ['python3', '-c', wrapper_script],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1
+            )
+
+            reader = threading.Thread(target=self._read_loop, daemon=True)
+            reader.start()
+            return True
+        except Exception as e:
+            print(f"Failed to start GPS daemon: {e}")
+            return False
+
+    def _read_loop(self):
+        """Read GPS JSON objects from continuous stream (handles pretty-printed JSON)"""
+        try:
+            json_buffer = ""
+            brace_depth = 0
+
+            for line in self.gps_process.stdout:
+                if self.stop_event.is_set():
+                    break
+
+                json_buffer += line
+                brace_depth += line.count('{') - line.count('}')
+
+                # Complete JSON object when braces balance
+                if brace_depth == 0 and json_buffer.strip():
+                    try:
+                        data = json.loads(json_buffer)
+                        gps_data = {
+                            'latitude': float(data.get('latitude')),
+                            'longitude': float(data.get('longitude')),
+                            'accuracy': float(data.get('accuracy', 5.0)),
+                            'altitude': float(data.get('altitude', 0)),
+                            'bearing': float(data.get('bearing', 0)),
+                            'speed': float(data.get('speed', 0))
+                        }
+                        try:
+                            self.data_queue.put_nowait(gps_data)
+                        except:
+                            pass  # Queue full, drop oldest
+                        json_buffer = ""
+                    except Exception as e:
+                        pass  # Invalid JSON, skip
+        except:
+            pass
+
+    def get_data(self, timeout=0.1):
+        """Non-blocking read from GPS queue"""
+        try:
+            return self.data_queue.get(timeout=timeout)
+        except Empty:
+            return None
+
+    def stop(self):
+        """Stop GPS daemon"""
+        self.stop_event.set()
+        if self.gps_process:
+            try:
+                self.gps_process.terminate()
+                self.gps_process.wait(timeout=2)
+            except:
+                pass
+
+
 def parse_gps():
-    """Get GPS data from termux-location"""
+    """Legacy function - deprecated, use PersistentGPSDaemon instead"""
     try:
         result = subprocess.run(
             ['termux-location'],
@@ -178,6 +288,7 @@ class FilterComparison:
 
         # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
         self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+        self.gps_daemon = PersistentGPSDaemon()  # Continuous GPS polling daemon
         self.gyro_daemon = None  # Will be initialized if enable_gyro=True
 
         # Data storage - BOUNDED to prevent OOM
@@ -235,6 +346,14 @@ class FilterComparison:
         print(f"\n✓ EKF filter initialized")
         print(f"✓ Complementary filter initialized")
 
+        # Start GPS daemon (continuous polling in background)
+        print(f"\n✓ Starting GPS daemon (continuous polling)...")
+        if not self.gps_daemon.start():
+            print(f"  ⚠ WARNING: GPS daemon failed to start")
+            print(f"  ⚠ Continuing test WITHOUT GPS (EKF will use Accel only)")
+        else:
+            print(f"  ✓ GPS daemon started (polling termux-location continuously)")
+
         # OPTIONAL: Initialize gyroscope if requested (uses shared IMU stream from accel_daemon)
         if self.enable_gyro:
             print(f"\n✓ Initializing gyroscope (optional, will fallback if unavailable)...")
@@ -249,7 +368,10 @@ class FilterComparison:
                 print(f"  ✓ Gyroscope daemon started (using shared IMU stream)")
                 print(f"  Note: Gyroscope data will be collected during test run")
 
-        print(f"\n✓ Running for {self.duration_minutes} minutes...")
+        if self.duration_minutes is None:
+            print(f"\n✓ Running continuously (press Ctrl+C to stop)...")
+        else:
+            print(f"\n✓ Running for {self.duration_minutes} minutes...")
 
         # Start GPS thread
         gps_thread = threading.Thread(target=self._gps_loop, daemon=True)
@@ -270,7 +392,12 @@ class FilterComparison:
 
         # Wait for duration
         try:
-            time.sleep(self.duration_minutes * 60)
+            if self.duration_minutes is None:
+                # Run continuously until interrupted
+                while not self.stop_event.is_set():
+                    time.sleep(1)
+            else:
+                time.sleep(self.duration_minutes * 60)
         except KeyboardInterrupt:
             print("\n\nInterrupted by user")
         finally:
@@ -279,19 +406,15 @@ class FilterComparison:
         return True
 
     def _gps_loop(self):
-        """Periodically get GPS fix"""
-        last_gps_attempt = 0
-
+        """Read GPS data from daemon queue continuously (no blocking)"""
         while not self.stop_event.is_set():
-            now = time.time()
+            # Non-blocking read from GPS daemon queue
+            gps = self.gps_daemon.get_data(timeout=0.1)
 
-            # Try GPS every 5 seconds
-            if now - last_gps_attempt > 5:
-                last_gps_attempt = now
-                gps = parse_gps()
-
-                if gps:
-                    # Update both filters
+            if gps:
+                try:
+                    now = time.time()
+                    # Update both filters with new GPS fix
                     v1, d1 = self.ekf.update_gps(gps['latitude'], gps['longitude'],
                                                   gps['speed'], gps['accuracy'])
                     v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
@@ -308,8 +431,12 @@ class FilterComparison:
                         'comp_velocity': v2,
                         'comp_distance': d2
                     })
+                except Exception as e:
+                    print(f"ERROR in GPS loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc()
 
-            time.sleep(0.1)
+            time.sleep(0.01)  # Brief sleep to avoid CPU spinning
 
     def _accel_loop(self):
         """Process accelerometer samples"""
@@ -337,8 +464,10 @@ class FilterComparison:
                         'comp_velocity': v2,
                         'comp_distance': d2
                     })
-                except:
-                    pass
+                except Exception as e:
+                    print(f"ERROR in accel loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc()
 
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
@@ -380,8 +509,9 @@ class FilterComparison:
                         'ekf_distance': d1
                     })
                 except Exception as e:
-                    # Log errors but don't crash thread
-                    pass
+                    print(f"ERROR in gyro loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
+                    import traceback
+                    traceback.print_exc()
 
             # Brief sleep to avoid CPU spinning
             time.sleep(0.01)
@@ -489,6 +619,7 @@ class FilterComparison:
     def stop(self):
         self.stop_event.set()
         self.accel_daemon.stop()
+        self.gps_daemon.stop()
 
         # CRITICAL: Verify accelerometer data was collected
         if len(self.accel_samples) == 0:
@@ -631,7 +762,7 @@ class FilterComparison:
 
 
 def main():
-    duration = 5  # default 5 minutes
+    duration = None  # default: continuous (None means run until interrupted)
     enable_gyro = False
 
     for arg in sys.argv[1:]:
@@ -641,7 +772,10 @@ def main():
             duration = int(arg)
 
     print(f"\nConfiguration:")
-    print(f"  Duration: {duration} minutes")
+    if duration is None:
+        print(f"  Duration: Continuous (press Ctrl+C to stop)")
+    else:
+        print(f"  Duration: {duration} minutes")
     print(f"  Gyroscope: {'Enabled' if enable_gyro else 'Disabled'}")
     print(f"\nStarting in 2 seconds...")
     time.sleep(2)
