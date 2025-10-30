@@ -348,7 +348,17 @@ class ExtendedKalmanFilter(SensorFusionBase):
                     latitude, longitude
                 )
 
-                # Stationary detection
+                # Use GPS accuracy as noise floor for distance accumulation
+                # This filters out GPS jitter while capturing real movement
+                if gps_accuracy is not None:
+                    # Subtract GPS noise floor to get true movement
+                    true_movement = max(0.0, dist_increment - gps_accuracy)
+                    self.distance += true_movement
+                else:
+                    # If no accuracy info, accumulate all movement
+                    self.distance += dist_increment
+
+                # Stationary detection (still used for other purposes like recalibration)
                 movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
                 speed_threshold = 0.1  # m/s
 
@@ -359,9 +369,6 @@ class ExtendedKalmanFilter(SensorFusionBase):
                     is_stationary = (dist_increment < movement_threshold)
 
                 self.is_stationary = is_stationary
-
-                if not is_stationary:
-                    self.distance += dist_increment
 
             # Predict step
             self.predict()

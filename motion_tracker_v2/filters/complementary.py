@@ -99,7 +99,17 @@ class ComplementaryFilter(SensorFusionBase):
                     if gps_speed is not None:
                         gps_velocity = gps_speed
 
-                    # STATIONARY DETECTION - Filter GPS noise
+                    # Use GPS accuracy as noise floor for distance accumulation
+                    # This filters out GPS jitter while capturing real movement
+                    if gps_accuracy is not None:
+                        # Subtract GPS noise floor to get true movement
+                        true_movement = max(0.0, dist - gps_accuracy)
+                        self.distance += true_movement
+                    else:
+                        # If no accuracy info, accumulate all movement
+                        self.distance += dist
+
+                    # STATIONARY DETECTION - Filter GPS noise (still used for velocity zeroing)
                     movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
                     speed_threshold = 0.1  # m/s (~0.36 km/h) - optimized from testing
 
@@ -107,7 +117,7 @@ class ComplementaryFilter(SensorFusionBase):
                     self.is_stationary = is_stationary  # Track for dynamic recalibration
 
                     if is_stationary:
-                        # Stationary - don't add distance, zero out velocity
+                        # Stationary - zero out velocity
                         gps_velocity = 0.0
                         self.velocity = 0.0
                         self.accel_velocity = 0.0
@@ -118,9 +128,6 @@ class ComplementaryFilter(SensorFusionBase):
                                            self.accel_weight * self.accel_velocity)
                         else:
                             self.velocity = gps_velocity
-
-                        # Only add distance if we're actually moving
-                        self.distance += dist
 
                         # Reset accelerometer velocity to GPS velocity (drift correction)
                         self.accel_velocity = self.velocity
