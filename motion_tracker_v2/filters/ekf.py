@@ -9,7 +9,8 @@ for 6D state, ~0.08 ms/update for 10D with gyroscope.
 
 State vectors:
 - 6D (GPS + Accel only): [x, y, vx, vy, ax, ay]
-- 10D (GPS + Accel + Gyro): [x, y, vx, vy, ax, ay, q0, q1, q2, q3]
+- 13D (GPS + Accel + Gyro): [x, y, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
+  where bx, by, bz are gyro bias estimates (rad/s drift)
 
 Quaternion representation: q = [q0, q1, q2, q3] where q0 is scalar part
 Quaternion kinematics: dq/dt = 0.5 * q * [0, ωx, ωy, ωz] (non-linear)
@@ -42,7 +43,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
     and quaternion kinematics. Better handles orientation estimation via gyroscope.
 
     6D State: [x, y, vx, vy, ax, ay] (meters, m/s, m/s²)
-    10D State: [x, y, vx, vy, ax, ay, q0, q1, q2, q3] (with quaternion orientation)
+    13D State: [x, y, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz] (with quaternion + gyro bias)
 
     GPS measurements: Non-linear transformation from lat/lon
     Accel measurements: Forward acceleration magnitude (non-linear)
@@ -65,12 +66,14 @@ class ExtendedKalmanFilter(SensorFusionBase):
         self.dt = dt
 
         # Determine state dimension
-        self.n_state = 10 if enable_gyro else 6
+        self.n_state = 13 if enable_gyro else 6  # 13D: add gyro bias [bx, by, bz] at indices 10-12
 
-        # State vector: [x, y, vx, vy, ax, ay] or [x, y, vx, vy, ax, ay, q0, q1, q2, q3]
+        # State vector: [x, y, vx, vy, ax, ay] or [x, y, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
         self.state = np.zeros(self.n_state)
         if enable_gyro:
             self.state[6] = 1.0  # q0 (scalar part of identity quaternion)
+            # Gyro bias starts at zero (will be learned during operation)
+            self.state[10:13] = 0.0  # [bx, by, bz]
 
         self.P = np.eye(self.n_state) * 1000  # State covariance (high initial uncertainty)
 
@@ -85,13 +88,19 @@ class ExtendedKalmanFilter(SensorFusionBase):
         self.Q[4, 4] = q_accel**2                       # ax
         self.Q[5, 5] = q_accel**2                       # ay
 
-        # Quaternion process noise (if enabled)
+        # Quaternion and gyro bias process noise (if enabled)
         if enable_gyro:
-            q_gyro = 0.01  # rad/s process noise std dev
+            q_gyro = 0.01  # rad/s process noise std dev for quaternion
             self.Q[6, 6] = q_gyro**2  # q0
             self.Q[7, 7] = q_gyro**2  # q1
             self.Q[8, 8] = q_gyro**2  # q2
             self.Q[9, 9] = q_gyro**2  # q3
+
+            # Gyro bias random walk: slow drift model (very small process noise)
+            q_bias = 0.001  # rad/s² - very slow bias drift rate
+            self.Q[10, 10] = q_bias**2  # bx (bias X)
+            self.Q[11, 11] = q_bias**2  # by (bias Y)
+            self.Q[12, 12] = q_bias**2  # bz (bias Z)
 
         # Measurement noise covariance
         self.gps_noise_std = gps_noise_std
@@ -120,6 +129,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
         # Gyroscope state tracking (if enabled)
         self.last_gyro_time = None
+        self.last_gyro_measurement = None  # Store latest gyro sample for use in prediction step
 
         # Output state
         self.distance = 0.0
@@ -231,14 +241,16 @@ class ExtendedKalmanFilter(SensorFusionBase):
         State transition: x_k+1 = F*x_k + w
         For constant acceleration model, F is linear for position/velocity/accel.
         For quaternion part (if enabled), kinematics are non-linear but we use
-        approximate Jacobian here.
+        approximate Jacobian here. Bias states stay constant (identity).
 
         Returns:
-            F: nxn Jacobian matrix (6x6 or 10x10 depending on enable_gyro)
+            F: nxn Jacobian matrix (6x6 or 13x13 depending on enable_gyro)
+            - 6D: [x, y, vx, vy, ax, ay]
+            - 13D: [x, y, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
         """
         if self.enable_gyro:
-            # 10D state transition
-            F = np.eye(10)
+            # 13D state transition (includes gyro bias)
+            F = np.eye(13)
             # Position and velocity transitions
             F[0, 2] = self.dt  # x += vx*dt
             F[0, 4] = 0.5*self.dt**2  # x += 0.5*ax*dt²
@@ -247,8 +259,9 @@ class ExtendedKalmanFilter(SensorFusionBase):
             F[2, 4] = self.dt  # vx += ax*dt
             F[3, 5] = self.dt  # vy += ay*dt
             # Acceleration stays constant (F[4,4] = 1, F[5,5] = 1)
-            # Quaternion stays approximately constant (approximate Jacobian)
-            # F[6:10, 6:10] = I (identity, quaternion updated via kinematics in predict)
+            # Quaternion stays approximately constant (updated via kinematics in predict)
+            # F[6:10, 6:10] = I (identity, quaternion updated via gyro integration)
+            # Gyro bias stays constant (F[10:13, 10:13] = I, updated via measurements)
         else:
             # 6D state transition
             F = np.array([
@@ -310,11 +323,29 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
         # Predict state for position/velocity/acceleration
         if self.enable_gyro:
-            # For 10D state, apply kinematics separately for quaternion
-            self.state[:6] = F[:6, :6] @ self.state[:6] + F[:6, 6:10] @ self.state[6:10]
-            # Quaternion stays roughly constant during prediction
-            # (will be updated by gyro measurements)
-            # self.state[6:10] stays unchanged
+            # For 13D state [x, y, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
+            # Update position/velocity/accel normally
+            self.state[:6] = F[:6, :6] @ self.state[:6]
+
+            # NEW: Integrate quaternion using bias-corrected gyroscope measurement
+            if self.last_gyro_measurement is not None:
+                q = self.state[6:10]
+                bias = self.state[10:13]
+                gyro = self.last_gyro_measurement
+
+                # Bias-corrected angular velocity (remove gyro bias)
+                omega = gyro - bias
+                omega_norm = np.linalg.norm(omega)
+
+                if omega_norm > 1e-6:
+                    # Quaternion rate: dq/dt = 0.5 * q * [0, ωx, ωy, ωz]
+                    # First-order integration: q_new = q + dq
+                    dq = 0.5 * self.dt * self.quaternion_multiply(q, [0, omega[0], omega[1], omega[2]])
+                    q_new = q + dq
+                    self.state[6:10] = self.quaternion_normalize(q_new)
+
+            # Gyro bias stays constant during prediction (updated by measurements)
+            # self.state[10:13] unchanged
         else:
             # For 6D state, standard linear transition
             self.state = F @ self.state
@@ -519,15 +550,19 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
     def update_gyroscope(self, gyro_x, gyro_y, gyro_z):
         """
-        Update EKF with gyroscope measurement (angular velocity).
+        Update EKF with gyroscope measurement using gyro bias estimation model.
 
-        Only available when enable_gyro=True. Updates quaternion state via
-        quaternion kinematics: dq/dt = 0.5 * q * [0, ωx, ωy, ωz]
+        FIXED MODEL (Oct 30 session):
+        - Gyroscope measures: ω_measured = ω_true + bias + noise
+        - Bias is estimated state (bx, by, bz) that slowly drifts
+        - This allows the filter to learn and correct for gyro drift over time
+        - Much more reliable than treating gyro as direct orientation measurement
+
+        When stationary: gyro ≈ 0 + bias, so we learn bias
+        When moving: gyro = true_rotation + bias, bias correction gives true rotation
 
         Args:
-            gyro_x (float): Angular velocity around X-axis (rad/s)
-            gyro_y (float): Angular velocity around Y-axis (rad/s)
-            gyro_z (float): Angular velocity around Z-axis (rad/s)
+            gyro_x, gyro_y, gyro_z (float): Angular velocity measurements (rad/s)
 
         Returns:
             tuple: (velocity, distance) for consistency with other update methods
@@ -540,48 +575,41 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
             if self.last_gyro_time is None:
                 self.last_gyro_time = current_time
+                self.last_gyro_measurement = np.array([gyro_x, gyro_y, gyro_z])
                 return self.velocity, self.distance
 
             dt = current_time - self.last_gyro_time
             if dt <= 0:
+                self.last_gyro_measurement = np.array([gyro_x, gyro_y, gyro_z])
                 return self.velocity, self.distance
 
-            # Predict step
+            # Store measurement for use in prediction step (quaternion integration)
+            self.last_gyro_measurement = np.array([gyro_x, gyro_y, gyro_z])
+
+            # Predict step (will integrate quaternion using this gyro measurement)
             self.predict()
 
-            # Gyroscope measurement: [ωx, ωy, ωz]
+            # GYRO BIAS ESTIMATION MODEL
+            # Measurement: gyroscope angular velocity [ωx, ωy, ωz]
             z = np.array([[gyro_x], [gyro_y], [gyro_z]])
 
-            # Measurement Jacobian (non-linear) - relating angular velocity to quaternion
-            # This is simplified: angular velocity affects quaternion kinematics
-            # H_gyro maps state changes to angular velocity measurements
-            q0, q1, q2, q3 = self.state[6:10]
-            H = np.zeros((3, self.n_state))
+            # Predicted measurement: current gyro bias estimate
+            # When stationary: gyro_measured = gyro_bias + noise (gyro_true = 0)
+            # When moving: gyro_measured = gyro_true + gyro_bias + noise
+            # So predicted measurement is just the bias states
+            bias_pred = self.state[10:13].reshape(-1, 1)
+            z_pred = bias_pred
 
-            # Quaternion kinematics Jacobian: d(ω)/d(q)
-            # dq/dt = 0.5 * q * [0, ω] gives us relationship
-            # We measure ω directly, so H relates quaternion to measured angular velocity
-            # Simplified linear approximation:
-            H[0, 6] = -0.5 * q1  # ωx w.r.t. q0, q1
-            H[0, 7] = 0.5 * q0
-            H[0, 8] = -0.5 * q3
-            H[0, 9] = 0.5 * q2
-
-            H[1, 6] = -0.5 * q2  # ωy w.r.t. q0, q2
-            H[1, 7] = 0.5 * q3
-            H[1, 8] = 0.5 * q0
-            H[1, 9] = -0.5 * q1
-
-            H[2, 6] = -0.5 * q3  # ωz w.r.t. q0, q3
-            H[2, 7] = -0.5 * q2
-            H[2, 8] = 0.5 * q1
-            H[2, 9] = 0.5 * q0
-
-            # Predicted measurement: angular velocity from quaternion kinematics
-            # dq/dt = 0.5 * q * [0, ω] means ω can be recovered from quaternion rate
-            # For now, assume perfect match (z_pred = 0 for quaternion at equilibrium)
-            z_pred = np.zeros((3, 1))
+            # Innovation (measurement residual)
             y = z - z_pred
+
+            # Measurement Jacobian: H = ∂h/∂x
+            # h(x) = [bx, by, bz] - gyro directly observes bias states
+            # No effect on position, velocity, accel, or quaternion
+            H = np.zeros((3, self.n_state))
+            H[0, 10] = 1  # ωx measurement observes bias bx (state[10])
+            H[1, 11] = 1  # ωy measurement observes bias by (state[11])
+            H[2, 12] = 1  # ωz measurement observes bias bz (state[12])
 
             # Innovation covariance
             S = H @ self.P @ H.T + self.R_gyro
@@ -592,12 +620,11 @@ class ExtendedKalmanFilter(SensorFusionBase):
             except np.linalg.LinAlgError:
                 K = self.P @ H.T @ np.linalg.pinv(S)
 
-            # Update state
+            # Update state (primarily corrects bias estimates)
             self.state = (self.state.reshape(-1, 1) + K @ y).flatten()
 
-            # Normalize quaternion to prevent drift
-            if self.enable_gyro:
-                self.state[6:10] = self.quaternion_normalize(self.state[6:10])
+            # Normalize quaternion after update (ensure q0² + q1² + q2² + q3² = 1)
+            self.state[6:10] = self.quaternion_normalize(self.state[6:10])
 
             # Update covariance using Joseph form for numerical stability
             I_KH = np.eye(self.n_state) - K @ H
@@ -622,12 +649,15 @@ class ExtendedKalmanFilter(SensorFusionBase):
                 'is_stationary': self.is_stationary
             }
 
-            # Add quaternion state if gyro is enabled
+            # Add quaternion and gyro bias state if gyro is enabled
             if self.enable_gyro:
                 q0, q1, q2, q3 = self.state[6:10]
+                bx, by, bz = self.state[10:13]  # Gyro bias estimates
                 state_dict.update({
                     'quaternion': [q0, q1, q2, q3],
-                    'quaternion_norm': np.linalg.norm([q0, q1, q2, q3])
+                    'quaternion_norm': np.linalg.norm([q0, q1, q2, q3]),
+                    'gyro_bias': [bx, by, bz],  # Estimated gyro bias in rad/s
+                    'gyro_bias_magnitude': np.linalg.norm([bx, by, bz])
                 })
 
             return state_dict
