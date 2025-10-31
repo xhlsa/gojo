@@ -2,6 +2,7 @@
 # ⚠️  MANDATORY: SHELL SCRIPT FOR SENSOR INITIALIZATION
 #
 # Test EKF vs Complementary Filter - Real-time comparison with ROBUST sensor initialization
+# WITH CRASH LOGGING AND SESSION TRACKING
 #
 # Usage (CORRECT):
 #   ./test_ekf.sh 10              # Run 10-minute test
@@ -16,6 +17,11 @@
 #   3. Pre-flight sensor validation before starting Python
 #   4. Proper signal handling and cleanup on exit
 #   5. Retry mechanism if sensor not immediately available
+#   6. Crash logging with context preservation
+#
+# CRASH ANALYSIS:
+#   Show recent crashes: python3 crash_logger.py show
+#   All logs in: crash_logs/
 #
 # LESSONS LEARNED (Oct 29 session):
 #   - Direct Python execution bypasses sensor initialization → fails
@@ -30,6 +36,17 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR" || exit 1
 
+# Initialize crash logging
+CRASH_LOGGER_FILE="crash_logs/active_session.log"
+mkdir -p crash_logs
+LOG_FILE="crash_logs/test_ekf_$(date +%Y-%m-%d_%H-%M-%S).log"
+
+# Log function that writes to both stdout and crash log
+log_event() {
+    local msg="$1"
+    echo "$msg" | tee -a "$LOG_FILE" >&2
+}
+
 # Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -38,7 +55,8 @@ NC='\033[0m' # No Color
 
 # Cleanup function - kills ONLY sensor-related processes (NOT GPS/Location API)
 cleanup_sensors() {
-    echo -e "${YELLOW}Cleaning up sensor processes...${NC}"
+    echo -e "${YELLOW}Cleaning up sensor processes...${NC}" >&2
+    echo "[cleanup_sensors] Starting" >> "$LOG_FILE" 2>/dev/null || true
 
     # Kill ONLY sensor wrapper processes (specific patterns to avoid collateral damage)
     pkill -9 -f "termux-sensor -s ACCELEROMETER" 2>/dev/null || true
@@ -55,7 +73,8 @@ cleanup_sensors() {
     # 3 seconds was insufficient, 5 seconds is more reliable
     sleep 5
 
-    echo -e "${GREEN}✓ Sensor cleanup complete${NC}"
+    echo -e "${GREEN}✓ Sensor cleanup complete${NC}" >&2
+    echo "[cleanup_sensors] Complete" >> "$LOG_FILE" 2>/dev/null || true
 }
 
 # Pre-flight validation - verify accelerometer is accessible
@@ -137,7 +156,20 @@ initialize_sensor_with_retry() {
 # Cleanup handler for script exit
 cleanup_on_exit() {
     local exit_code=$?
-    echo -e "\n${YELLOW}Test finished, performing final cleanup...${NC}"
+    local signal_name=""
+
+    # Detect signal number from exit code (128 + signal_num)
+    if [ $exit_code -gt 128 ]; then
+        signal_num=$((exit_code - 128))
+        case $signal_num in
+            9) signal_name="SIGKILL (9)" ;;
+            15) signal_name="SIGTERM (15)" ;;
+            2) signal_name="SIGINT (2)" ;;
+            *) signal_name="Signal $signal_num" ;;
+        esac
+    fi
+
+    echo -e "\n${YELLOW}Test finished, performing final cleanup...${NC}" | tee -a "$LOG_FILE"
 
     # Kill Python test process if still running
     if [ ! -z "$TEST_PID" ]; then
@@ -148,6 +180,36 @@ cleanup_on_exit() {
     # Final sensor cleanup
     cleanup_sensors
 
+    # Log crash information
+    if [ $exit_code -ne 0 ]; then
+        {
+            echo "==================================================================="
+            echo "CRASH/ERROR DETECTED"
+            echo "==================================================================="
+            echo "Exit code: $exit_code"
+            if [ ! -z "$signal_name" ]; then
+                echo "Signal: $signal_name"
+            fi
+            echo "Test: test_ekf.sh $@"
+            echo "Timestamp: $(date -u)"
+            echo "Log file: $LOG_FILE"
+            echo ""
+            echo "LAST 50 LINES OF OUTPUT:"
+            tail -50 "$LOG_FILE" 2>/dev/null || echo "(Log file unavailable)"
+            echo "==================================================================="
+        } | tee -a "$LOG_FILE"
+
+        # Print to stdout for visibility
+        echo -e "\n${RED}✗ TEST CRASHED - Exit code $exit_code${NC}"
+        if [ ! -z "$signal_name" ]; then
+            echo -e "${RED}  Signal: $signal_name${NC}"
+        fi
+        echo -e "${RED}  Log: $LOG_FILE${NC}"
+        echo -e "${RED}  View all crashes: python3 crash_logger.py show${NC}"
+    else
+        echo -e "${GREEN}✓ Test completed successfully${NC}" | tee -a "$LOG_FILE"
+    fi
+
     exit $exit_code
 }
 
@@ -155,25 +217,34 @@ cleanup_on_exit() {
 trap cleanup_on_exit EXIT SIGINT SIGTERM
 
 # Main execution
-echo "=============================================================================="
-echo "EKF vs Complementary Filter Test - Robust Sensor Initialization"
-echo "=============================================================================="
+{
+    echo "=============================================================================="
+    echo "EKF vs Complementary Filter Test - Robust Sensor Initialization"
+    echo "Session started: $(date -u)"
+    echo "Test arguments: $@"
+    echo "Log file: $LOG_FILE"
+    echo "=============================================================================="
+} | tee "$LOG_FILE"
 
 # Step 1: Initialize sensor with retry
-if ! initialize_sensor_with_retry; then
+if ! initialize_sensor_with_retry 2>&1 | tee -a "$LOG_FILE"; then
     exit 1
 fi
 
 # Step 1.5: Validate GPS API (warn but don't fail if unavailable)
-validate_gps_api || echo -e "${YELLOW}  → Test will continue without GPS${NC}"
+if ! validate_gps_api 2>&1 | tee -a "$LOG_FILE"; then
+    echo -e "${YELLOW}  → Test will continue without GPS${NC}" | tee -a "$LOG_FILE"
+fi
 
 # Step 2: Brief pause to ensure sensor resources are stable
-echo -e "\n${GREEN}✓ Sensor ready, starting test in 2 seconds...${NC}"
+echo -e "\n${GREEN}✓ Sensor ready, starting test in 2 seconds...${NC}" | tee -a "$LOG_FILE"
 sleep 2
 
 # Step 3: Launch Python test process in background
-echo -e "${GREEN}Starting Python test...${NC}\n"
-python3 motion_tracker_v2/test_ekf_vs_complementary.py "$@" &
+echo -e "${GREEN}Starting Python test...${NC}\n" | tee -a "$LOG_FILE"
+
+# Capture both stdout and stderr from Python process
+python3 motion_tracker_v2/test_ekf_vs_complementary.py "$@" 2>&1 | tee -a "$LOG_FILE" &
 TEST_PID=$!
 
 # Step 4: Monitor Python process

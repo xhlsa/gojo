@@ -90,17 +90,32 @@ class PersistentSensorDaemon:
     def _read_loop(self):
         import sys
         packets_received = 0
+        last_packet_time = time.time()
+        watchdog_timeout = 5.0  # 5 seconds - if no data, restart daemon
+
         try:
             json_buffer = ""
             brace_depth = 0
 
             for line in self.process.stdout:
+                # WATCHDOG: Detect data stall (subprocess hung but not dead)
+                if time.time() - last_packet_time > watchdog_timeout:
+                    print(f"[{self.sensor_type}] ⚠ WATCHDOG: No data for {watchdog_timeout}s, daemon stalled", file=sys.stderr)
+                    break  # Exit loop so daemon can be restarted
+
+                # INTERRUPTIBLE: Check for graceful shutdown
+                if self.stop_event.is_set():
+                    print(f"[{self.sensor_type}] Stop event received, exiting loop", file=sys.stderr)
+                    break
+
                 # line is already a string (text=True mode)
                 json_buffer += line
                 brace_depth += line.count('{') - line.count('}')
 
                 if brace_depth == 0 and json_buffer.strip():
                     packets_received += 1
+                    last_packet_time = time.time()  # Reset watchdog on valid packet
+
                     try:
                         data = json.loads(json_buffer)
 
@@ -112,14 +127,19 @@ class PersistentSensorDaemon:
                                 values = sensor_data['values']
                                 # values is an array [x, y, z]
                                 if isinstance(values, list) and len(values) >= 3:
-                                    self.data_queue.put({
-                                        'x': values[0],
-                                        'y': values[1],
-                                        'z': values[2],
-                                        'timestamp': time.time()
-                                    }, block=False)
-                                    if packets_received <= 3:
-                                        print(f"[{self.sensor_type}] Queued packet {packets_received}", file=sys.stderr)
+                                    try:
+                                        self.data_queue.put({
+                                            'x': values[0],
+                                            'y': values[1],
+                                            'z': values[2],
+                                            'timestamp': time.time()
+                                        }, block=False)
+                                        if packets_received <= 3:
+                                            print(f"[{self.sensor_type}] Queued packet {packets_received}", file=sys.stderr)
+                                    except Exception as q_err:
+                                        # Queue full or other queue error - skip this packet but continue
+                                        if packets_received <= 3:
+                                            print(f"[{self.sensor_type}] Queue error on packet {packets_received}: {str(q_err)[:50]}", file=sys.stderr)
                                     break  # Only process first sensor
                         if packets_received <= 3 and not any(isinstance(v, dict) and 'values' in v for v in data.values()):
                             print(f"[{self.sensor_type}] Packet {packets_received} had no valid sensor data: {list(data.keys())}", file=sys.stderr)
@@ -127,9 +147,24 @@ class PersistentSensorDaemon:
                         if packets_received <= 3:
                             print(f"[{self.sensor_type}] Parse error on packet {packets_received}: {str(e)[:50]}", file=sys.stderr)
                     json_buffer = ""
+                    brace_depth = 0
         except Exception as e:
             import sys
             print(f"[{self.sensor_type}] _read_loop exception: {e}", file=sys.stderr)
+        finally:
+            # CLEANUP: Always terminate subprocess (prevents zombies)
+            if self.process:
+                try:
+                    self.process.terminate()
+                    self.process.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    try:
+                        self.process.kill()
+                    except:
+                        pass
+                except:
+                    pass
+            print(f"[{self.sensor_type}] Daemon loop exited (packets={packets_received})", file=sys.stderr)
 
     def get_data(self, timeout=0.1):
         try:
