@@ -36,18 +36,19 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
-# Cleanup function - kills ALL sensor-related processes
+# Cleanup function - kills ONLY sensor-related processes (NOT GPS/Location API)
 cleanup_sensors() {
     echo -e "${YELLOW}Cleaning up sensor processes...${NC}"
 
-    # Kill termux-sensor wrapper processes
-    pkill -9 -f "termux-sensor" 2>/dev/null || true
+    # Kill ONLY sensor wrapper processes (specific patterns to avoid collateral damage)
+    pkill -9 -f "termux-sensor -s ACCELEROMETER" 2>/dev/null || true
+    pkill -9 -f "termux-sensor -s GYROSCOPE" 2>/dev/null || true
 
-    # CRITICAL: Kill termux-api backend processes (the actual sensor daemons)
-    pkill -9 -f "termux-api.*Sensor" 2>/dev/null || true
-    pkill -9 -f "termux-api-broadcast.*Sensor" 2>/dev/null || true
+    # Kill sensor backend SPECIFICALLY (pattern MUST include "Sensor" to avoid matching "Location")
+    # Original pattern "termux-api-broadcast.*Sensor" was too broad and killed GPS backend
+    pkill -9 -f "termux-api Sensor" 2>/dev/null || true
 
-    # Also kill any stale Python processes that might be holding sensors
+    # Also kill any stale Python test processes that might be holding sensors
     pkill -9 -f "test_ekf_vs_complementary.py" 2>/dev/null || true
 
     # Extended delay: Android needs time to fully release sensor HAL resources
@@ -81,6 +82,25 @@ validate_sensor() {
     fi
     rm -f "$HOME/.sensor_test.json"
     return 1
+}
+
+# Validate GPS API service (warn but don't fail if unavailable)
+validate_gps_api() {
+    echo -e "${YELLOW}Validating GPS API service...${NC}"
+
+    # Quick GPS test with timeout
+    if timeout 10 termux-location -p gps > "$HOME/.gps_test.json" 2>&1; then
+        # Check for valid GPS data (latitude field indicates success)
+        if grep -q "latitude" "$HOME/.gps_test.json" 2>/dev/null; then
+            echo -e "${GREEN}✓ GPS API responding correctly${NC}"
+            rm -f "$HOME/.gps_test.json"
+            return 0
+        fi
+    fi
+
+    echo -e "${YELLOW}⚠ GPS API not responding (test will continue with accelerometer only)${NC}"
+    rm -f "$HOME/.gps_test.json"
+    return 1  # Non-fatal warning
 }
 
 # Retry mechanism for sensor initialization
@@ -143,6 +163,9 @@ echo "==========================================================================
 if ! initialize_sensor_with_retry; then
     exit 1
 fi
+
+# Step 1.5: Validate GPS API (warn but don't fail if unavailable)
+validate_gps_api || echo -e "${YELLOW}  → Test will continue without GPS${NC}"
 
 # Step 2: Brief pause to ensure sensor resources are stable
 echo -e "\n${GREEN}✓ Sensor ready, starting test in 2 seconds...${NC}"

@@ -172,6 +172,9 @@ import json
 import sys
 import time
 
+consecutive_failures = 0
+max_failures = 5
+
 while True:
     try:
         result = subprocess.run(
@@ -182,9 +185,23 @@ while True:
         )
         if result.returncode == 0:
             print(result.stdout, flush=True)
+            consecutive_failures = 0  # Reset on success
+        else:
+            consecutive_failures += 1
+            if consecutive_failures >= max_failures:
+                sys.stderr.write(f"GPS API failed {max_failures} times consecutively, backing off...\\n")
+                time.sleep(10)  # Longer backoff if API keeps failing
+                consecutive_failures = 0
+    except subprocess.TimeoutExpired:
+        sys.stderr.write("GPS timeout\\n")
+        consecutive_failures += 1
     except Exception as e:
-        pass
-    time.sleep(1.0)  # 1 second between calls to avoid overloading Termux:API
+        sys.stderr.write(f"GPS error: {e}\\n")
+        consecutive_failures += 1
+
+    # Adaptive sleep: longer if we\'ve had failures
+    sleep_time = 5.0 if consecutive_failures > 0 else 1.0
+    time.sleep(sleep_time)
 '''
 
             self.gps_process = subprocess.Popen(
@@ -362,8 +379,11 @@ class FilterComparison:
         if not self.gps_daemon.start():
             print(f"  ⚠ WARNING: GPS daemon failed to start")
             print(f"  ⚠ Continuing test WITHOUT GPS (EKF will use Accel only)")
+            self.gps_daemon = None  # Mark as unavailable for graceful degradation
         else:
             print(f"  ✓ GPS daemon started (polling termux-location continuously)")
+            print(f"  ⏱ Allowing GPS backend 3 seconds to stabilize...")
+            time.sleep(3)  # CRITICAL FIX: Allow API service to recover from cleanup
 
         # OPTIONAL: Initialize gyroscope if requested (uses shared IMU stream from accel_daemon)
         if self.enable_gyro:
@@ -424,7 +444,10 @@ class FilterComparison:
     def _gps_loop(self):
         """Read GPS data from daemon queue continuously (no blocking)"""
         while not self.stop_event.is_set():
-            # Non-blocking read from GPS daemon queue
+            # Non-blocking read from GPS daemon queue (skip if daemon failed to start)
+            if not self.gps_daemon:
+                time.sleep(0.5)
+                continue
             gps = self.gps_daemon.get_data(timeout=0.1)
 
             if gps:
