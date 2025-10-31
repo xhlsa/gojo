@@ -45,6 +45,7 @@ except ImportError:
 
 from filters import get_filter
 from motion_tracker_v2 import PersistentAccelDaemon, PersistentGyroDaemon
+from metrics_collector import MetricsCollector
 
 
 class PersistentSensorDaemon:
@@ -335,6 +336,11 @@ class FilterComparison:
         # Auto-save configuration
         self.auto_save_interval = 120  # Save every 2 minutes
 
+        # Metrics collector (for gyro-EKF validation)
+        self.metrics = None
+        if enable_gyro:
+            self.metrics = MetricsCollector(max_history=600)
+
     def start(self):
         print("\n" + "="*100)
         print("REAL-TIME FILTER COMPARISON: EKF vs Complementary")
@@ -537,6 +543,14 @@ class FilterComparison:
                     # (Complementary filter does NOT support gyroscope)
                     v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
 
+                    # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
+                    if self.metrics:
+                        ekf_state = self.ekf.get_state()
+                        self.metrics.update(
+                            ekf_state=ekf_state,
+                            gyro_measurement=[gyro_x, gyro_y, gyro_z]
+                        )
+
                     # Store gyroscope sample for analysis
                     self.gyro_samples.append({
                         'timestamp': time.time() - self.start_time,
@@ -601,6 +615,10 @@ class FilterComparison:
 
         sys.stderr.write(status_msg + "\n")
         sys.stderr.flush()
+
+        # Print gyro-EKF validation metrics every 30 seconds (if enabled)
+        if self.enable_gyro and self.metrics:
+            self.metrics.print_dashboard(interval=30)
 
     def _display_metrics(self):
         """Show side-by-side comparison"""
@@ -697,6 +715,12 @@ class FilterComparison:
 
         with open(filename, 'w') as f:
             json.dump(results, f, indent=2)
+
+        # Export gyro-EKF validation metrics (if enabled)
+        if self.enable_gyro and self.metrics and not auto_save:
+            metrics_filename = filename.replace('comparison_', 'metrics_')
+            self.metrics.export_metrics(metrics_filename)
+            print(f"✓ Validation metrics saved to: {metrics_filename}")
 
         if auto_save:
             print(f"✓ Auto-saved: {filename}")
