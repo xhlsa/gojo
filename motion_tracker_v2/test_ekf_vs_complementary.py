@@ -546,9 +546,23 @@ class FilterComparison:
                     # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
                     if self.metrics:
                         ekf_state = self.ekf.get_state()
+                        # Get latest GPS heading if available
+                        gps_heading = None
+                        if self.gps_samples:
+                            latest_gps = self.gps_samples[-1]
+                            if 'bearing' in latest_gps or 'heading' in latest_gps:
+                                gps_heading = latest_gps.get('bearing', latest_gps.get('heading'))
+
+                        # Get latest accelerometer magnitude for incident detection
+                        accel_magnitude = 0
+                        if self.accel_samples:
+                            accel_magnitude = self.accel_samples[-1]['magnitude']
+
                         self.metrics.update(
                             ekf_state=ekf_state,
-                            gyro_measurement=[gyro_x, gyro_y, gyro_z]
+                            gyro_measurement=[gyro_x, gyro_y, gyro_z],
+                            gps_heading=gps_heading,
+                            accel_magnitude=accel_magnitude
                         )
 
                     # Store gyroscope sample for analysis

@@ -259,7 +259,8 @@ class MetricsCollector:
         roll = math.atan2(2*(q0*q1 + q2*q3), 1 - 2*(q1**2 + q2**2))
 
         # Pitch (Y-axis rotation)
-        pitch = math.asin(2*(q0*q2 - q3*q1))
+        pitch_arg = max(-1.0, min(1.0, 2*(q0*q2 - q3*q1)))  # Clamp to [-1, 1]
+        pitch = math.asin(pitch_arg)
 
         # Yaw (Z-axis rotation)
         yaw = math.atan2(2*(q0*q3 + q1*q2), 1 - 2*(q2**2 + q3**2))
