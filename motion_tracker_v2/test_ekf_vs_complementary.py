@@ -292,9 +292,13 @@ while True:
                             pass  # Queue full, drop oldest
                         json_buffer = ""
                     except Exception as e:
+                        # Log malformed JSON but continue (don't crash)
                         pass  # Invalid JSON, skip
-        except:
-            pass
+        except Exception as e:
+            # Log any errors in the read loop (but don't crash - subprocess will exit)
+            print(f"⚠️  [GPSDaemon] Reader thread error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def get_data(self, timeout=0.1):
         """Non-blocking read from GPS queue"""
@@ -302,6 +306,23 @@ while True:
             return self.data_queue.get(timeout=timeout)
         except Empty:
             return None
+
+    def is_alive(self):
+        """Check if GPS daemon subprocess is still running"""
+        if not self.gps_process:
+            return False
+        poll_result = self.gps_process.poll()
+        # poll() returns None if process is still running, non-None if it has exited
+        return poll_result is None
+
+    def get_status(self):
+        """Get daemon status for debugging"""
+        if not self.gps_process:
+            return "NOT_STARTED"
+        if not self.is_alive():
+            exit_code = self.gps_process.poll()
+            return f"DEAD (exit_code={exit_code})"
+        return "ALIVE"
 
     def stop(self):
         """Stop GPS daemon"""
@@ -661,9 +682,13 @@ class FilterComparison:
         accel_count = len(self.accel_samples)
         gyro_count = len(self.gyro_samples)
 
+        # ⚠️ CRITICAL: Check daemon health every 30 seconds
+        accel_status = self.accel_daemon.get_status()
+        gps_status = self.gps_daemon.get_status() if self.gps_daemon else "DISABLED"
+
         status_msg = (
             f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
-            f"GPS={gps_count:4d} | Accel={accel_count:5d}"
+            f"GPS={gps_count:4d} ({gps_status}) | Accel={accel_count:5d} ({accel_status})"
         )
 
         if self.enable_gyro:
@@ -671,6 +696,30 @@ class FilterComparison:
 
         sys.stderr.write(status_msg + "\n")
         sys.stderr.flush()
+
+        # 🚨 FATAL: If accelerometer daemon dies, test cannot continue
+        if accel_status.startswith("DEAD"):
+            error_msg = (
+                f"\n🚨 FATAL ERROR: Accelerometer daemon died at {mins:02d}:{secs:02d}\n"
+                f"   Status: {accel_status}\n"
+                f"   Samples collected: {accel_count}\n"
+                f"   This indicates a sensor hardware issue or Termux:API failure.\n"
+                f"   Test cannot continue without accelerometer data."
+            )
+            print(error_msg, file=sys.stderr)
+            self.stop_event.set()  # Signal main loop to exit
+            return
+
+        # ⚠️ WARNING: GPS daemon died (test can continue with accel only, but log it)
+        if gps_status.startswith("DEAD") and self.gps_daemon:
+            warning_msg = (
+                f"\n⚠️  WARNING: GPS daemon died at {mins:02d}:{secs:02d}\n"
+                f"   Status: {gps_status}\n"
+                f"   Samples collected: {gps_count}\n"
+                f"   Continuing with accelerometer-only fusion."
+            )
+            print(warning_msg, file=sys.stderr)
+            self.gps_daemon = None  # Mark as unavailable
 
         # Print gyro-EKF validation metrics every 30 seconds (if enabled)
         if self.enable_gyro and self.metrics:

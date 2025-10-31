@@ -250,7 +250,9 @@ class PersistentAccelDaemon:
                         brace_depth = 0
 
         except Exception as e:
-            print(f"⚠ [AccelDaemon] Reader thread error: {e}", file=sys.stderr)
+            print(f"⚠️  [AccelDaemon] Reader thread error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
         finally:
             # Clean up process
             if self.sensor_process:
@@ -281,6 +283,23 @@ class PersistentAccelDaemon:
         # Wait for reader thread
         if self.reader_thread:
             self.reader_thread.join(timeout=2)
+
+    def is_alive(self):
+        """Check if daemon subprocess is still running"""
+        if not self.sensor_process:
+            return False
+        poll_result = self.sensor_process.poll()
+        # poll() returns None if process is still running, non-None if it has exited
+        return poll_result is None
+
+    def get_status(self):
+        """Get daemon status for debugging"""
+        if not self.sensor_process:
+            return "NOT_STARTED"
+        if not self.is_alive():
+            exit_code = self.sensor_process.poll()
+            return f"DEAD (exit_code={exit_code})"
+        return "ALIVE"
 
     def __del__(self):
         """Ensure cleanup if daemon is garbage collected without explicit stop()"""
