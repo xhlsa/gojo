@@ -30,6 +30,7 @@ import time
 import sys
 import json
 import os
+import gzip
 import psutil
 from queue import Queue, Empty
 from datetime import datetime
@@ -46,6 +47,11 @@ except ImportError:
 from filters import get_filter
 from motion_tracker_v2 import PersistentAccelDaemon, PersistentGyroDaemon
 from metrics_collector import MetricsCollector
+
+# Session directory for organized data storage (matches motion_tracker_v2.py pattern)
+SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "motion_tracker_sessions")
+if not os.path.exists(SESSIONS_DIR):
+    os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 
 class PersistentSensorDaemon:
@@ -438,7 +444,7 @@ class FilterComparison:
                     # Check if time to auto-save
                     if time.time() - self.last_auto_save_time > self.auto_save_interval:
                         print(f"\n✓ Auto-saving data ({len(self.gps_samples)} GPS, {len(self.accel_samples)} accel samples)...")
-                        self._save_results(auto_save=True)
+                        self._save_results(auto_save=True, clear_after_save=True)
                         self.last_auto_save_time = time.time()
             else:
                 time.sleep(self.duration_minutes * 60)
@@ -704,16 +710,10 @@ class FilterComparison:
 
         self._save_results()
 
-    def _save_results(self, auto_save=False):
-        """Save results to JSON file (with auto-save support)"""
-        timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-
-        # Auto-save files include "autosave_" prefix and don't overwrite each other
-        if auto_save:
-            save_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-            filename = f"comparison_autosave_{save_time}.json"
-        else:
-            filename = f"comparison_{timestamp}.json"
+    def _save_results(self, auto_save=False, clear_after_save=False):
+        """Save results to JSON file (with auto-save and clear support)"""
+        timestamp = self.start_time.strftime("%Y%m%d_%H%M%S") if hasattr(self, 'start_time') else datetime.now().strftime("%Y%m%d_%H%M%S")
+        base_filename = os.path.join(SESSIONS_DIR, f"comparison_{timestamp}")
 
         results = {
             'test_duration': self.duration_minutes,
@@ -729,19 +729,51 @@ class FilterComparison:
             }
         }
 
-        with open(filename, 'w') as f:
-            json.dump(results, f, indent=2)
-
-        # Export gyro-EKF validation metrics (if enabled)
-        if self.enable_gyro and self.metrics and not auto_save:
-            metrics_filename = filename.replace('comparison_', 'metrics_')
-            self.metrics.export_metrics(metrics_filename)
-            print(f"✓ Validation metrics saved to: {metrics_filename}")
-
         if auto_save:
-            print(f"✓ Auto-saved: {filename}")
+            # Compressed auto-save with atomic operation
+            filename = f"{base_filename}.json.gz"
+            temp_filename = f"{filename}.tmp"
+
+            with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
+                # Use compact JSON format for compressed files
+                json.dump(results, f, separators=(',', ':'))
+
+            # Atomic rename
+            os.rename(temp_filename, filename)
+
+            # Clear samples after saving to free memory
+            if clear_after_save:
+                self.gps_samples.clear()
+                self.accel_samples.clear()
+                self.gyro_samples.clear()
+                print(f"✓ Auto-saved (gzip): {filename} | Deques cleared")
+            else:
+                print(f"✓ Auto-saved (gzip): {filename}")
         else:
-            print(f"\n✓ Final results saved to: {filename}")
+            # Final save - both compressed and uncompressed
+            # Uncompressed JSON for easy inspection
+            filename_json = f"{base_filename}.json"
+            temp_filename = f"{filename_json}.tmp"
+
+            with open(temp_filename, 'w') as f:
+                json.dump(results, f, indent=2)
+
+            os.rename(temp_filename, filename_json)
+
+            # Compressed for storage efficiency
+            filename_gz = f"{base_filename}.json.gz"
+            with gzip.open(filename_gz, 'wt', encoding='utf-8') as f:
+                json.dump(results, f, separators=(',', ':'))
+
+            # Export gyro-EKF validation metrics (if enabled)
+            if self.enable_gyro and self.metrics:
+                metrics_filename = filename_json.replace('comparison_', 'metrics_')
+                self.metrics.export_metrics(metrics_filename)
+                print(f"✓ Validation metrics saved to: {metrics_filename}")
+
+            print(f"\n✓ Final results saved:")
+            print(f"  {filename_json}")
+            print(f"  {filename_gz}")
             print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
             # Print summary only on final save
             self._print_summary()
