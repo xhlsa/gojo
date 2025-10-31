@@ -437,17 +437,16 @@ class FilterComparison:
 
         # Wait for duration with periodic auto-save
         try:
-            if self.duration_minutes is None:
-                # Run continuously until interrupted, auto-save every 2 minutes
-                while not self.stop_event.is_set():
-                    time.sleep(1)
-                    # Check if time to auto-save
-                    if time.time() - self.last_auto_save_time > self.auto_save_interval:
-                        print(f"\n✓ Auto-saving data ({len(self.gps_samples)} GPS, {len(self.accel_samples)} accel samples)...")
-                        self._save_results(auto_save=True, clear_after_save=True)
-                        self.last_auto_save_time = time.time()
-            else:
-                time.sleep(self.duration_minutes * 60)
+            end_time = time.time() + (self.duration_minutes * 60 if self.duration_minutes else float('inf'))
+
+            # Run with periodic auto-save for both timed and continuous modes
+            while not self.stop_event.is_set() and time.time() < end_time:
+                time.sleep(1)
+                # Check if time to auto-save
+                if time.time() - self.last_auto_save_time > self.auto_save_interval:
+                    print(f"\n✓ Auto-saving data ({len(self.gps_samples)} GPS, {len(self.accel_samples)} accel samples)...")
+                    self._save_results(auto_save=True, clear_after_save=True)
+                    self.last_auto_save_time = time.time()
         except KeyboardInterrupt:
             print("\n\nInterrupted by user")
         finally:
@@ -712,7 +711,12 @@ class FilterComparison:
 
     def _save_results(self, auto_save=False, clear_after_save=False):
         """Save results to JSON file (with auto-save and clear support)"""
-        timestamp = self.start_time.strftime("%Y%m%d_%H%M%S") if hasattr(self, 'start_time') else datetime.now().strftime("%Y%m%d_%H%M%S")
+        if hasattr(self, 'start_time') and isinstance(self.start_time, float):
+            timestamp = datetime.fromtimestamp(self.start_time).strftime("%Y%m%d_%H%M%S")
+        elif hasattr(self, 'start_time'):
+            timestamp = self.start_time.strftime("%Y%m%d_%H%M%S")
+        else:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base_filename = os.path.join(SESSIONS_DIR, f"comparison_{timestamp}")
 
         results = {
