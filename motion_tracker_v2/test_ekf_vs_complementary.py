@@ -405,6 +405,14 @@ class FilterComparison:
         if enable_gyro:
             self.metrics = MetricsCollector(max_history=600)
 
+        # Daemon restart tracking
+        self.restart_counts = {
+            'accel': 0,
+            'gps': 0
+        }
+        self.max_restart_attempts = 3
+        self.restart_cooldown = 5  # seconds between restart attempts
+
     def start(self):
         print("\n" + "="*100)
         print("REAL-TIME FILTER COMPARISON: EKF vs Complementary")
@@ -666,6 +674,64 @@ class FilterComparison:
 
             time.sleep(0.1)
 
+    def _restart_accel_daemon(self):
+        """Attempt to restart the accelerometer daemon"""
+        print(f"\n🔄 Attempting to restart accelerometer daemon (attempt {self.restart_counts['accel'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+
+        # Stop old daemon
+        try:
+            self.accel_daemon.stop()
+            time.sleep(1)  # Brief pause for cleanup
+        except Exception as e:
+            print(f"  Warning during accel daemon stop: {e}", file=sys.stderr)
+
+        # Create new daemon instance
+        self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+
+        # Wait for cooldown
+        time.sleep(self.restart_cooldown)
+
+        # Start new daemon
+        if self.accel_daemon.start():
+            # Validate it's actually working
+            test_data = self.accel_daemon.get_data(timeout=2.0)
+            if test_data:
+                print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
+                self.restart_counts['accel'] += 1
+                return True
+            else:
+                print(f"  ✗ Accelerometer daemon started but not receiving data", file=sys.stderr)
+                return False
+        else:
+            print(f"  ✗ Failed to restart accelerometer daemon", file=sys.stderr)
+            return False
+
+    def _restart_gps_daemon(self):
+        """Attempt to restart the GPS daemon"""
+        print(f"\n🔄 Attempting to restart GPS daemon (attempt {self.restart_counts['gps'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+
+        # Stop old daemon
+        try:
+            self.gps_daemon.stop()
+            time.sleep(1)  # Brief pause for cleanup
+        except Exception as e:
+            print(f"  Warning during GPS daemon stop: {e}", file=sys.stderr)
+
+        # Create new daemon instance
+        self.gps_daemon = PersistentGPSDaemon()
+
+        # Wait for cooldown
+        time.sleep(self.restart_cooldown)
+
+        # Start new daemon
+        if self.gps_daemon.start():
+            print(f"  ✓ GPS daemon restarted successfully", file=sys.stderr)
+            self.restart_counts['gps'] += 1
+            return True
+        else:
+            print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
+            return False
+
     def _log_status(self):
         """Log status update to stderr (won't clutter display)"""
         elapsed = time.time() - self.start_time
@@ -694,32 +760,80 @@ class FilterComparison:
         if self.enable_gyro:
             status_msg += f" | Gyro={gyro_count:5d}"
 
+        # Add restart counts if any restarts occurred
+        if self.restart_counts['accel'] > 0 or self.restart_counts['gps'] > 0:
+            status_msg += f" | Restarts: Accel={self.restart_counts['accel']}, GPS={self.restart_counts['gps']}"
+
         sys.stderr.write(status_msg + "\n")
         sys.stderr.flush()
 
-        # 🚨 FATAL: If accelerometer daemon dies, test cannot continue
+        # 🔄 AUTO-RESTART: If accelerometer daemon dies, attempt restart
         if accel_status.startswith("DEAD"):
-            error_msg = (
-                f"\n🚨 FATAL ERROR: Accelerometer daemon died at {mins:02d}:{secs:02d}\n"
-                f"   Status: {accel_status}\n"
-                f"   Samples collected: {accel_count}\n"
-                f"   This indicates a sensor hardware issue or Termux:API failure.\n"
-                f"   Test cannot continue without accelerometer data."
-            )
-            print(error_msg, file=sys.stderr)
-            self.stop_event.set()  # Signal main loop to exit
-            return
+            if self.restart_counts['accel'] < self.max_restart_attempts:
+                warning_msg = (
+                    f"\n⚠️  WARNING: Accelerometer daemon died at {mins:02d}:{secs:02d}\n"
+                    f"   Status: {accel_status}\n"
+                    f"   Samples collected: {accel_count}\n"
+                    f"   Attempting automatic restart..."
+                )
+                print(warning_msg, file=sys.stderr)
 
-        # ⚠️ WARNING: GPS daemon died (test can continue with accel only, but log it)
+                if self._restart_accel_daemon():
+                    print(f"   ✓ Accelerometer daemon recovered, test continues\n", file=sys.stderr)
+                else:
+                    self.restart_counts['accel'] += 1  # Count failed attempt
+                    print(f"   ✗ Restart attempt {self.restart_counts['accel']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
+
+                    # If we've hit max retries, fail the test
+                    if self.restart_counts['accel'] >= self.max_restart_attempts:
+                        error_msg = (
+                            f"\n🚨 FATAL ERROR: Accelerometer daemon failed after {self.max_restart_attempts} restart attempts\n"
+                            f"   This indicates a persistent sensor hardware issue or Termux:API failure.\n"
+                            f"   Test cannot continue without accelerometer data."
+                        )
+                        print(error_msg, file=sys.stderr)
+                        self.stop_event.set()  # Signal main loop to exit
+                        return
+            else:
+                # Already hit max retries
+                error_msg = (
+                    f"\n🚨 FATAL ERROR: Accelerometer daemon still dead (max retries exceeded)\n"
+                    f"   Test cannot continue without accelerometer data."
+                )
+                print(error_msg, file=sys.stderr)
+                self.stop_event.set()  # Signal main loop to exit
+                return
+
+        # 🔄 AUTO-RESTART: GPS daemon died (test can continue with accel only, but try to recover)
         if gps_status.startswith("DEAD") and self.gps_daemon:
-            warning_msg = (
-                f"\n⚠️  WARNING: GPS daemon died at {mins:02d}:{secs:02d}\n"
-                f"   Status: {gps_status}\n"
-                f"   Samples collected: {gps_count}\n"
-                f"   Continuing with accelerometer-only fusion."
-            )
-            print(warning_msg, file=sys.stderr)
-            self.gps_daemon = None  # Mark as unavailable
+            if self.restart_counts['gps'] < self.max_restart_attempts:
+                warning_msg = (
+                    f"\n⚠️  WARNING: GPS daemon died at {mins:02d}:{secs:02d}\n"
+                    f"   Status: {gps_status}\n"
+                    f"   Samples collected: {gps_count}\n"
+                    f"   Attempting automatic restart..."
+                )
+                print(warning_msg, file=sys.stderr)
+
+                if self._restart_gps_daemon():
+                    print(f"   ✓ GPS daemon recovered, test continues\n", file=sys.stderr)
+                else:
+                    self.restart_counts['gps'] += 1  # Count failed attempt
+                    print(f"   ✗ Restart attempt {self.restart_counts['gps']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
+
+                    # If we've hit max retries, disable GPS but continue test
+                    if self.restart_counts['gps'] >= self.max_restart_attempts:
+                        warning_msg = (
+                            f"\n⚠️  GPS daemon failed after {self.max_restart_attempts} restart attempts\n"
+                            f"   Disabling GPS, continuing with accelerometer-only fusion."
+                        )
+                        print(warning_msg, file=sys.stderr)
+                        self.gps_daemon = None  # Mark as unavailable
+            else:
+                # Already hit max retries, disable if not already done
+                if self.gps_daemon:
+                    print(f"\n⚠️  GPS daemon still dead (max retries exceeded), disabling GPS\n", file=sys.stderr)
+                    self.gps_daemon = None  # Mark as unavailable
 
         # Print gyro-EKF validation metrics every 30 seconds (if enabled)
         if self.enable_gyro and self.metrics:
