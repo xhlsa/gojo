@@ -314,14 +314,16 @@ class FilterComparison:
         self.gps_daemon = PersistentGPSDaemon()  # Continuous GPS polling daemon
         self.gyro_daemon = None  # Will be initialized if enable_gyro=True
 
-        # Data storage - BOUNDED to prevent OOM but large enough for long sessions
-        # GPS: 100,000 fixes @ 1 Hz = ~27 hours of data
-        # Accel: 1,000,000 samples @ 50 Hz = ~5.5 hours of data (larger to capture all)
-        # Gyro: 1,000,000 samples @ 20 Hz = ~13.8 hours of data
-        self.gps_samples = deque(maxlen=100000)
-        self.accel_samples = deque(maxlen=1000000)
-        self.gyro_samples = deque(maxlen=1000000)
-        self.comparison_samples = deque(maxlen=1000)
+        # Data storage - OPTIMIZED for memory efficiency
+        # All data still saved to disk via auto-save, this is just in-memory history
+        # GPS: 2,000 fixes @ 1 Hz = ~33 minutes (sufficient for single drive)
+        # Accel: 10,000 samples @ 50 Hz = 200 seconds (captures full incident window)
+        # Gyro: 10,000 samples @ 50 Hz = 200 seconds (paired with accel)
+        # Comparison: 500 summaries (last 5 seconds at ~100Hz comparison rate)
+        self.gps_samples = deque(maxlen=2000)
+        self.accel_samples = deque(maxlen=10000)
+        self.gyro_samples = deque(maxlen=10000)
+        self.comparison_samples = deque(maxlen=500)
 
         # Metrics
         self.last_gps_time = None
