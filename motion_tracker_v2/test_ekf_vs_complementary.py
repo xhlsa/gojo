@@ -205,6 +205,12 @@ class PersistentGPSDaemon:
             # Instead, we poll in a loop. Even though each call has ~3.7s overhead due to DalvikVM init,
             # keeping ONE persistent process is better than spawning new processes repeatedly.
             #
+            # CRITICAL FIX for "Connection refused" errors:
+            # - Use aggressive exponential backoff (5→10→15→20→30s) on connection failures
+            # - "Connection refused" = socket exhaustion in Termux:API backend
+            # - Too frequent polling overwhelms the backend during long runs (30+ minutes)
+            # - Solution: Significantly increase sleep time between polls to ~10s baseline
+            #
             # Why this is better than one-shot calls:
             # - One-shot: new subprocess each time → new DalvikVM → 3.7s per call
             # - Polling: one subprocess with repeated calls → DalvikVM reused → ~0.5s per call + padding
@@ -216,6 +222,8 @@ import time
 
 consecutive_failures = 0
 max_failures = 5
+failure_backoff_stages = [5, 10, 15, 20, 30]  # Seconds to wait per failure stage
+current_backoff_stage = 0
 
 while True:
     try:
@@ -223,27 +231,36 @@ while True:
             ['termux-location', '-p', 'gps'],
             capture_output=True,
             text=True,
-            timeout=5
+            timeout=8  # Increased from 5s → 8s to allow more processing time
         )
         if result.returncode == 0:
             print(result.stdout, flush=True)
             consecutive_failures = 0  # Reset on success
+            current_backoff_stage = 0
         else:
             consecutive_failures += 1
             if consecutive_failures >= max_failures:
-                sys.stderr.write(f"GPS API failed {max_failures} times consecutively, backing off...\\n")
-                time.sleep(10)  # Longer backoff if API keeps failing
+                # Move to next backoff stage, capped at max
+                current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
+                backoff = failure_backoff_stages[current_backoff_stage]
+                sys.stderr.write(f"GPS API failed {max_failures} times, backoff={backoff}s (stage {current_backoff_stage + 1})\\n")
+                time.sleep(backoff)
                 consecutive_failures = 0
     except subprocess.TimeoutExpired:
-        sys.stderr.write("GPS timeout\\n")
+        sys.stderr.write("GPS timeout (8s exceeded)\\n")
         consecutive_failures += 1
+        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
+        time.sleep(failure_backoff_stages[current_backoff_stage])
     except Exception as e:
         sys.stderr.write(f"GPS error: {e}\\n")
         consecutive_failures += 1
+        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
+        time.sleep(failure_backoff_stages[current_backoff_stage])
 
-    # Adaptive sleep: longer if we\'ve had failures
-    sleep_time = 5.0 if consecutive_failures > 0 else 1.0
-    time.sleep(sleep_time)
+    # Baseline sleep: 10s between polls (reduced from 5s only on consecutive failures)
+    # This prevents hammering the GPS API backend during normal operation
+    baseline_sleep = 10.0 if consecutive_failures == 0 else 1.0
+    time.sleep(baseline_sleep)
 '''
 
             self.gps_process = subprocess.Popen(
