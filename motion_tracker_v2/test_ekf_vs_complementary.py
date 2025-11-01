@@ -411,7 +411,42 @@ class FilterComparison:
             'gps': 0
         }
         self.max_restart_attempts = 3
-        self.restart_cooldown = 5  # seconds between restart attempts
+        self.restart_cooldown = 10  # INCREASED from 5s → 10s (termux-sensor needs full resource release)
+
+        # Gravity calibration - CRITICAL for complementary filter
+        # Must subtract gravity magnitude from raw acceleration to detect true motion
+        self.gravity = 9.81  # Default value, will be calibrated from first samples
+        self.calibration_samples = []
+        self.calibration_complete = False
+
+    def _calibrate_gravity(self):
+        """Collect initial stationary samples to calibrate gravity magnitude"""
+        print(f"\n✓ Calibrating accelerometer (collecting 20 stationary samples)...")
+
+        calibration_mags = []
+        attempts = 0
+        max_attempts = 300  # 30 seconds at ~10 Hz
+
+        while len(calibration_mags) < 20 and attempts < max_attempts:
+            test_data = self.accel_daemon.get_data(timeout=0.2)
+            if test_data:
+                x = float(test_data.get('x', 0))
+                y = float(test_data.get('y', 0))
+                z = float(test_data.get('z', 0))
+                mag = (x**2 + y**2 + z**2) ** 0.5
+                calibration_mags.append(mag)
+            attempts += 1
+
+        if calibration_mags:
+            # Use median to filter outliers
+            self.gravity = sorted(calibration_mags)[len(calibration_mags) // 2]
+            print(f"  ✓ Gravity calibrated: {self.gravity:.2f} m/s²")
+            print(f"    (collected {len(calibration_mags)} samples, range: {min(calibration_mags):.2f}-{max(calibration_mags):.2f})")
+            self.calibration_complete = True
+            return True
+        else:
+            print(f"  ⚠ Calibration failed, using default 9.81 m/s²")
+            return False
 
     def start(self):
         print("\n" + "="*100)
@@ -448,6 +483,11 @@ class FilterComparison:
             print(f"  Check: termux-sensor -s ACCELEROMETER works manually")
             self.accel_daemon.stop()
             return False
+
+        # CRITICAL: Calibrate gravity magnitude before starting filters
+        if not self._calibrate_gravity():
+            print(f"  ⚠ WARNING: Gravity calibration failed, using default value")
+            print(f"  ⚠ Complementary filter may show velocity drift if device is not level")
 
         print(f"\n✓ EKF filter initialized")
         print(f"✓ Complementary filter initialized")
@@ -556,25 +596,45 @@ class FilterComparison:
 
     def _accel_loop(self):
         """Process accelerometer samples"""
+        accel_sample_count = 0  # PROACTIVE RESTART: track total samples from daemon
+        max_samples_before_proactive_restart = 1900  # Restart before natural termux-sensor timeout (~2145 samples @ ~23 min)
+
         while not self.stop_event.is_set():
             accel_data = self.accel_daemon.get_data(timeout=0.1)
 
             if accel_data:
+                accel_sample_count += 1
+
+                # PROACTIVE RESTART: Prevent daemon from hitting termux-sensor's ~23 minute natural timeout
+                # termux-sensor exits cleanly after ~2145 samples; we restart before reaching that limit
+                if accel_sample_count >= max_samples_before_proactive_restart:
+                    print(f"\n[Accel] Proactive restart at {accel_sample_count} samples (preventing timeout at ~2145)", file=sys.stderr)
+                    if self._restart_accel_daemon():
+                        print(f"[Accel] Restart successful, continuing test...", file=sys.stderr)
+                        accel_sample_count = 0  # Reset counter for new daemon instance
+                    else:
+                        print(f"[Accel] Restart failed, attempting to continue...", file=sys.stderr)
+
                 try:
                     # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
                     x = float(accel_data.get('x', 0))
                     y = float(accel_data.get('y', 0))
                     z = float(accel_data.get('z', 0))
 
-                    magnitude = (x**2 + y**2 + z**2) ** 0.5
+                    raw_magnitude = (x**2 + y**2 + z**2) ** 0.5
 
-                    # Update both filters
-                    v1, d1 = self.ekf.update_accelerometer(magnitude)
-                    v2, d2 = self.complementary.update_accelerometer(magnitude)
+                    # CRITICAL FIX: Subtract gravity magnitude to get true motion magnitude
+                    # This prevents infinite velocity accumulation during stationary periods
+                    # Raw magnitude is always ~9.81 when device is level (gravity)
+                    motion_magnitude = max(0, raw_magnitude - self.gravity)
+
+                    # Update both filters with gravity-corrected magnitude
+                    v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
+                    v2, d2 = self.complementary.update_accelerometer(motion_magnitude)
 
                     self.accel_samples.append({
                         'timestamp': time.time() - self.start_time,
-                        'magnitude': magnitude,
+                        'magnitude': motion_magnitude,
                         'ekf_velocity': v1,
                         'ekf_distance': d1,
                         'comp_velocity': v2,
@@ -693,8 +753,8 @@ class FilterComparison:
 
         # Start new daemon
         if self.accel_daemon.start():
-            # Validate it's actually working
-            test_data = self.accel_daemon.get_data(timeout=2.0)
+            # Validate it's actually working (INCREASED timeout: termux-sensor needs full init on restart)
+            test_data = self.accel_daemon.get_data(timeout=10.0)
             if test_data:
                 print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
                 self.restart_counts['accel'] += 1

@@ -77,6 +77,28 @@ cleanup_sensors() {
     echo "[cleanup_sensors] Complete" >> "$LOG_FILE" 2>/dev/null || true
 }
 
+# Cleanup function - kills GPS-related processes (separate from sensors)
+# REASON: GPS backend (termux-api Location) socket exhaustion causes "Connection refused" errors
+# Each termux-location call opens a socket that doesn't get released without explicit cleanup
+cleanup_gps() {
+    echo -e "${YELLOW}Cleaning up GPS processes...${NC}" >&2
+    echo "[cleanup_gps] Starting" >> "$LOG_FILE" 2>/dev/null || true
+
+    # Kill termux-location wrapper processes
+    pkill -9 -f "termux-location" 2>/dev/null || true
+
+    # CRITICAL: Kill GPS backend process (NOT Sensor, specifically Location)
+    # Root cause of "Connection refused" error: these processes accumulate sockets
+    pkill -9 -f "termux-api Location" 2>/dev/null || true
+
+    # Extended delay: Android LocationManager needs time to fully release socket resources
+    # Same 5-second delay as accelerometer, applied to GPS backend
+    sleep 5
+
+    echo -e "${GREEN}✓ GPS cleanup complete${NC}" >&2
+    echo "[cleanup_gps] Complete" >> "$LOG_FILE" 2>/dev/null || true
+}
+
 # Pre-flight validation - verify accelerometer is accessible
 validate_sensor() {
     echo -e "${YELLOW}Validating accelerometer access...${NC}"
@@ -120,6 +142,35 @@ validate_gps_api() {
     echo -e "${YELLOW}⚠ GPS API not responding (test will continue with accelerometer only)${NC}"
     rm -f "$HOME/.gps_test.json"
     return 1  # Non-fatal warning
+}
+
+# Retry mechanism for GPS initialization (matches accelerometer retry pattern)
+initialize_gps_with_retry() {
+    local max_attempts=3
+    local attempt=1
+
+    while [ $attempt -le $max_attempts ]; do
+        echo -e "\n${YELLOW}GPS initialization attempt $attempt/$max_attempts${NC}"
+
+        # Clean up GPS backend before attempting connection
+        cleanup_gps
+
+        # Try to validate GPS
+        if validate_gps_api; then
+            return 0
+        fi
+
+        if [ $attempt -lt $max_attempts ]; then
+            echo -e "${YELLOW}Retrying in 3 seconds...${NC}"
+            sleep 3
+        fi
+
+        attempt=$((attempt + 1))
+    done
+
+    # Non-fatal: GPS optional, test continues without it
+    echo -e "${YELLOW}⚠ GPS unavailable after $max_attempts attempts, test will continue with accelerometer only${NC}"
+    return 1
 }
 
 # Retry mechanism for sensor initialization
@@ -231,10 +282,9 @@ if ! initialize_sensor_with_retry 2>&1 | tee -a "$LOG_FILE"; then
     exit 1
 fi
 
-# Step 1.5: Validate GPS API (warn but don't fail if unavailable)
-if ! validate_gps_api 2>&1 | tee -a "$LOG_FILE"; then
-    echo -e "${YELLOW}  → Test will continue without GPS${NC}" | tee -a "$LOG_FILE"
-fi
+# Step 1.5: Initialize GPS with retry (non-fatal if GPS unavailable)
+initialize_gps_with_retry 2>&1 | tee -a "$LOG_FILE"
+# GPS is optional - test continues regardless of result
 
 # Step 2: Brief pause to ensure sensor resources are stable
 echo -e "\n${GREEN}✓ Sensor ready, starting test in 2 seconds...${NC}" | tee -a "$LOG_FILE"

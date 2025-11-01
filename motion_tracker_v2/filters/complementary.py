@@ -53,7 +53,9 @@ class ComplementaryFilter(SensorFusionBase):
 
         # Drift correction
         self.velocity_history = deque(maxlen=10)
-        self.stationary_threshold = 0.20  # m/s² (filters sensor noise effectively)
+        # Stationary threshold: acceleration is magnitude after gravity is subtracted
+        # So 0.20 m/s² represents small vibrations, not gravity
+        self.stationary_threshold = 0.20  # m/s² (gravity-corrected motion magnitude)
 
         # Stationary tracking (for dynamic recalibration)
         self.is_stationary = False
