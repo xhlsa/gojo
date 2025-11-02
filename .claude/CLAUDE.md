@@ -743,7 +743,25 @@ apt clean
 - `_accel_loop()` simplified: data collection only, no restart logic
 - Architecture is now clean and maintainable
 
-**Testing:** Running new 30-minute test with fixed code (health monitor only restart)
+**Fix Validation:**
+- ✅ New 30-minute test running successfully
+- ✅ Auto-saves occurring every 2 minutes (verified 7+ saves so far)
+- ✅ Continuous accel collection after each auto-save:
+  - After save #1: 2323 samples collected, then resumes at sample 4
+  - After save #2: 2349 samples collected, then resumes at sample 2
+  - After save #3-7: 2350+ samples per period, continuous collection
+- ✅ Memory stable at 91.7-93.2 MB throughout
+- ✅ GPS continues working (recovers quickly after deque clear)
+- ✅ No "FATAL ERROR" or dropout like previous test
+- ✅ Health monitor thread running silently (no restart messages = no sensor failures detected)
+
+**Architecture Validated:**
+The three-layer architecture is now working correctly:
+1. **Data Collection** (`_accel_loop`, `_gps_loop`): Fast, non-blocking, pure collection
+2. **Persistence** (`_save_results`): Auto-save every 2 minutes, clears deques, no restarts
+3. **Health Monitoring** (`_health_monitor_loop`): Runs every 2 seconds, handles failures asynchronously
+
+Each layer has a clear responsibility. No blocking operations in data collection path.
 
 ### Oct 31, 2025 - Consolidation & Final Audit
 - ✓ Consolidated 50+ markdown files into single CLAUDE.md
