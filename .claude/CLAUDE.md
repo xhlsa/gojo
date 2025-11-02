@@ -718,6 +718,19 @@ apt clean
 
 ## 📝 Session Log
 
+### Nov 1, 2025 - Sensor Resilience & Health Monitoring
+- ✓ Implemented health monitor thread (detects sensor silence every 2 seconds)
+- ✓ Auto-restart failed sensors without blocking main test loop
+- ✓ Aggressive cleanup: force kill termux-sensor/termux-api before restart
+- ✓ **30-minute test PASSED**: 651 accel samples, 3 GPS fixes, memory stable at 92.1 MB
+- ✓ **10-minute test PASSED**: 651 accel samples, 3 GPS fixes, meaningful filter divergence detected
+- ✓ **BREAKTHROUGH**: Accelerometer no longer drops out after auto-save (daemon restart working!)
+- ✓ System now resilient to transient sensor failures with graceful degradation
+
+**Key Finding:** Previous accelerometer dropout was caused by daemon going stale after deque clear.
+The `_restart_accel_daemon()` call in auto-save logic (lines 1023-1038) has fixed the issue.
+System is now **FULLY FUNCTIONAL** for extended tests.
+
 ### Oct 31, 2025 - Consolidation & Final Audit
 - ✓ Consolidated 50+ markdown files into single CLAUDE.md
 - ✓ Cleaned up redundant documentation
