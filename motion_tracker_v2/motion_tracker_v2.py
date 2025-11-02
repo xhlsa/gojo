@@ -1457,6 +1457,14 @@ class MotionTrackerV2:
                 self.samples.clear()
                 self.accel_samples.clear()
                 # Keep battery samples for final report
+
+                # CRITICAL FIX: Restart accelerometer thread after deque clear
+                # Without restart, thread's internal state becomes stale and stops producing data
+                print(f"  ↻ Restarting accelerometer thread to resync after deque clear...", file=sys.stderr)
+                if self.restart_accel_thread():
+                    print(f"  ✓ Accelerometer thread restarted successfully", file=sys.stderr)
+                else:
+                    print(f"  ⚠ Accelerometer thread restart failed (will attempt retry on next auto-save)", file=sys.stderr)
         else:
             # Final save - both compressed and uncompressed
             # Uncompressed JSON

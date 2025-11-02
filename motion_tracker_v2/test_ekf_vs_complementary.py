@@ -430,6 +430,13 @@ class FilterComparison:
         self.max_restart_attempts = 3
         self.restart_cooldown = 10  # INCREASED from 5s → 10s (termux-sensor needs full resource release)
 
+        # HEALTH MONITORING: Detect sensor silence and auto-restart
+        self.last_accel_sample_time = time.time()
+        self.last_gps_sample_time = time.time()
+        self.accel_silence_threshold = 5.0  # Restart if no accel for 5 seconds
+        self.gps_silence_threshold = 30.0   # Restart if no GPS for 30 seconds
+        self.health_check_interval = 2.0    # Check health every 2 seconds
+
         # Gravity calibration - CRITICAL for complementary filter
         # Must subtract gravity magnitude from raw acceleration to detect true motion
         self.gravity = 9.81  # Default value, will be calibrated from first samples
@@ -547,6 +554,10 @@ class FilterComparison:
         accel_thread = threading.Thread(target=self._accel_loop, daemon=True)
         accel_thread.start()
 
+        # Start HEALTH MONITOR thread (detects sensor silence and triggers restarts)
+        health_thread = threading.Thread(target=self._health_monitor_loop, daemon=True)
+        health_thread.start()
+
         # Start gyro thread (if enabled)
         if self.gyro_daemon:
             gyro_thread = threading.Thread(target=self._gyro_loop, daemon=True)
@@ -585,6 +596,7 @@ class FilterComparison:
             gps = self.gps_daemon.get_data(timeout=0.1)
 
             if gps:
+                self.last_gps_sample_time = time.time()  # UPDATE HEALTH MONITOR
                 try:
                     now = time.time()
                     # Update both filters with new GPS fix
@@ -621,6 +633,7 @@ class FilterComparison:
 
             if accel_data:
                 accel_sample_count += 1
+                self.last_accel_sample_time = time.time()  # UPDATE HEALTH MONITOR
 
                 # PROACTIVE RESTART: Prevent daemon from hitting termux-sensor's ~23 minute natural timeout
                 # termux-sensor exits cleanly after ~2145 samples; we restart before reaching that limit
@@ -661,6 +674,36 @@ class FilterComparison:
                     print(f"ERROR in accel loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
                     import traceback
                     traceback.print_exc()
+
+    def _health_monitor_loop(self):
+        """Monitor sensor health and auto-restart if sensors go silent"""
+        while not self.stop_event.is_set():
+            time.sleep(self.health_check_interval)
+            now = time.time()
+
+            # CHECK ACCELEROMETER HEALTH
+            if self.accel_daemon:
+                silence_duration = now - self.last_accel_sample_time
+                if silence_duration > self.accel_silence_threshold:
+                    if self.restart_counts['accel'] < self.max_restart_attempts:
+                        print(f"\n⚠️ ACCEL SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
+                        if self._restart_accel_daemon():
+                            self.last_accel_sample_time = now  # Reset timer after successful restart
+                            print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
+                        else:
+                            print(f"  ✗ Accel restart failed", file=sys.stderr)
+
+            # CHECK GPS HEALTH
+            if self.gps_daemon:
+                silence_duration = now - self.last_gps_sample_time
+                if silence_duration > self.gps_silence_threshold:
+                    if self.restart_counts['gps'] < self.max_restart_attempts:
+                        print(f"\n⚠️ GPS SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
+                        if self._restart_gps_daemon():
+                            self.last_gps_sample_time = now  # Reset timer after successful restart
+                            print(f"  ✓ GPS restarted, resuming data collection", file=sys.stderr)
+                        else:
+                            print(f"  ✗ GPS restart failed (continuing without GPS)", file=sys.stderr)
 
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
@@ -755,32 +798,35 @@ class FilterComparison:
         """Attempt to restart the accelerometer daemon"""
         print(f"\n🔄 Attempting to restart accelerometer daemon (attempt {self.restart_counts['accel'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
 
-        # Stop old daemon
+        # AGGRESSIVE STOP: Kill old daemon processes completely
         try:
             self.accel_daemon.stop()
-            time.sleep(1)  # Brief pause for cleanup
+            # Force kill termux-sensor and termux-api to fully clean up
+            os.system("pkill -9 termux-sensor 2>/dev/null")
+            os.system("pkill -9 termux-api 2>/dev/null")
+            time.sleep(3)  # EXTENDED pause for kernel cleanup
         except Exception as e:
             print(f"  Warning during accel daemon stop: {e}", file=sys.stderr)
 
         # Create new daemon instance
         self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
 
-        # Wait for cooldown
-        time.sleep(self.restart_cooldown)
+        # EXTENDED cooldown for full resource release
+        time.sleep(self.restart_cooldown + 2)
 
         # Start new daemon
         if self.accel_daemon.start():
-            # Validate it's actually working (INCREASED timeout: termux-sensor needs full init on restart)
-            test_data = self.accel_daemon.get_data(timeout=10.0)
+            # Validate it's actually working (EXTENDED timeout: termux-sensor needs full init on restart)
+            test_data = self.accel_daemon.get_data(timeout=15.0)  # INCREASED from 10 to 15 seconds
             if test_data:
                 print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
                 self.restart_counts['accel'] += 1
                 return True
             else:
-                print(f"  ✗ Accelerometer daemon started but not receiving data", file=sys.stderr)
+                print(f"  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)", file=sys.stderr)
                 return False
         else:
-            print(f"  ✗ Failed to restart accelerometer daemon", file=sys.stderr)
+            print(f"  ✗ Failed to start accelerometer daemon process", file=sys.stderr)
             return False
 
     def _restart_gps_daemon(self):
@@ -1026,6 +1072,14 @@ class FilterComparison:
                 self.accel_samples.clear()
                 self.gyro_samples.clear()
                 print(f"✓ Auto-saved (gzip): {filename} | Deques cleared")
+
+                # CRITICAL FIX: Restart accelerometer daemon after deque clear
+                # Without restart, daemon's internal state becomes stale and stops producing data
+                print(f"  ↻ Restarting accelerometer daemon to resync after deque clear...", file=sys.stderr)
+                if self._restart_accel_daemon():
+                    print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
+                else:
+                    print(f"  ⚠ Accelerometer daemon restart failed (will attempt retry on next auto-save)", file=sys.stderr)
             else:
                 print(f"✓ Auto-saved (gzip): {filename}")
         else:
