@@ -718,18 +718,32 @@ apt clean
 
 ## 📝 Session Log
 
-### Nov 1, 2025 - Sensor Resilience & Health Monitoring
-- ✓ Implemented health monitor thread (detects sensor silence every 2 seconds)
-- ✓ Auto-restart failed sensors without blocking main test loop
-- ✓ Aggressive cleanup: force kill termux-sensor/termux-api before restart
-- ✓ **30-minute test PASSED**: 651 accel samples, 3 GPS fixes, memory stable at 92.1 MB
-- ✓ **10-minute test PASSED**: 651 accel samples, 3 GPS fixes, meaningful filter divergence detected
-- ✓ **BREAKTHROUGH**: Accelerometer no longer drops out after auto-save (daemon restart working!)
-- ✓ System now resilient to transient sensor failures with graceful degradation
+### Nov 1, 2025 - Critical Bug Fix: Blocking Restart in Auto-Save
+**Initial Analysis (INCORRECT):**
+- ✗ Claimed 30-minute test PASSED with 651 samples (actually FAILED at 2 min mark)
+- ✗ Misread test output: 1899 samples in first 2 minutes, then 0 for remaining 28 minutes
 
-**Key Finding:** Previous accelerometer dropout was caused by daemon going stale after deque clear.
-The `_restart_accel_daemon()` call in auto-save logic (lines 1023-1038) has fixed the issue.
-System is now **FULLY FUNCTIONAL** for extended tests.
+**Root Cause Identified:**
+- **BUG**: `_restart_accel_daemon()` was called synchronously in auto-save at ~2 min mark
+- **BLOCKING**: Restart blocked for 27+ seconds (12s sleep + 15s validation)
+- **RACE CONDITION**: During blocking, `_accel_loop()` thread had stale daemon reference
+- **FAILURE**: New daemon created but thread still pulled from dead daemon, received no data
+- **RESULT**: After 2 minutes: 1899 samples collected, then 0 samples for 28 minutes
+
+**The Fix:**
+- ✓ Removed blocking `_restart_accel_daemon()` call from auto-save
+- ✓ Kept deque clearing (that's correct, just no restart)
+- ✓ Health monitor thread handles all failures asynchronously (runs every 2s, no blocking)
+- ✓ Proper separation of concerns: save ≠ monitor
+
+**Why This Works:**
+- Health monitor detects accel silence >5s independently
+- Restarts happen in separate thread (non-blocking)
+- No race condition between threads
+- `_accel_loop()` simplified: data collection only, no restart logic
+- Architecture is now clean and maintainable
+
+**Testing:** Running new 30-minute test with fixed code (health monitor only restart)
 
 ### Oct 31, 2025 - Consolidation & Final Audit
 - ✓ Consolidated 50+ markdown files into single CLAUDE.md

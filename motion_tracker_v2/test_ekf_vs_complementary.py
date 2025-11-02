@@ -625,25 +625,11 @@ class FilterComparison:
 
     def _accel_loop(self):
         """Process accelerometer samples"""
-        accel_sample_count = 0  # PROACTIVE RESTART: track total samples from daemon
-        max_samples_before_proactive_restart = 1900  # Restart before natural termux-sensor timeout (~2145 samples @ ~23 min)
-
         while not self.stop_event.is_set():
             accel_data = self.accel_daemon.get_data(timeout=0.1)
 
             if accel_data:
-                accel_sample_count += 1
                 self.last_accel_sample_time = time.time()  # UPDATE HEALTH MONITOR
-
-                # PROACTIVE RESTART: Prevent daemon from hitting termux-sensor's ~23 minute natural timeout
-                # termux-sensor exits cleanly after ~2145 samples; we restart before reaching that limit
-                if accel_sample_count >= max_samples_before_proactive_restart:
-                    print(f"\n[Accel] Proactive restart at {accel_sample_count} samples (preventing timeout at ~2145)", file=sys.stderr)
-                    if self._restart_accel_daemon():
-                        print(f"[Accel] Restart successful, continuing test...", file=sys.stderr)
-                        accel_sample_count = 0  # Reset counter for new daemon instance
-                    else:
-                        print(f"[Accel] Restart failed, attempting to continue...", file=sys.stderr)
 
                 try:
                     # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
@@ -1072,14 +1058,7 @@ class FilterComparison:
                 self.accel_samples.clear()
                 self.gyro_samples.clear()
                 print(f"✓ Auto-saved (gzip): {filename} | Deques cleared")
-
-                # CRITICAL FIX: Restart accelerometer daemon after deque clear
-                # Without restart, daemon's internal state becomes stale and stops producing data
-                print(f"  ↻ Restarting accelerometer daemon to resync after deque clear...", file=sys.stderr)
-                if self._restart_accel_daemon():
-                    print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
-                else:
-                    print(f"  ⚠ Accelerometer daemon restart failed (will attempt retry on next auto-save)", file=sys.stderr)
+                # Note: Health monitor thread will detect any sensor silence and restart asynchronously
             else:
                 print(f"✓ Auto-saved (gzip): {filename}")
         else:
