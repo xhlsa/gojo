@@ -1389,7 +1389,7 @@ def main():
     enable_gyro = False
 
     for arg in sys.argv[1:]:
-        if arg == '--gyro':
+        if arg == '--gyro' or arg == '--enable-gyro':
             enable_gyro = True
         elif arg.isdigit():
             duration = int(arg)
