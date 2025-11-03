@@ -463,7 +463,8 @@ class FilterComparison:
         # Daemon restart tracking
         self.restart_counts = {
             'accel': 0,
-            'gps': 0
+            'gps': 0,
+            'gyro': 0
         }
         self.max_restart_attempts = 3
         self.restart_cooldown = 10  # INCREASED from 5s → 10s (termux-sensor needs full resource release)
@@ -471,6 +472,7 @@ class FilterComparison:
         # HEALTH MONITORING: Detect sensor silence and auto-restart
         self.last_accel_sample_time = time.time()
         self.last_gps_sample_time = time.time()
+        self.last_gyro_sample_time = time.time()
         self.accel_silence_threshold = 5.0  # Restart if no accel for 5 seconds
         self.gps_silence_threshold = 30.0   # Restart if no GPS for 30 seconds
         self.health_check_interval = 2.0    # Check health every 2 seconds
@@ -760,6 +762,30 @@ class FilterComparison:
                             else:
                                 print(f"  ✗ GPS restart failed (continuing without GPS)", file=sys.stderr)
 
+            # CHECK GYROSCOPE HEALTH (if enabled)
+            if self.gyro_daemon and self.enable_gyro:
+                # First check: Has the subprocess died?
+                if not self.gyro_daemon.is_alive():
+                    exit_code = self.gyro_daemon.sensor_process.poll() if self.gyro_daemon.sensor_process else None
+                    print(f"\n⚠️ GYRO DAEMON DIED (exit_code={exit_code}) - triggering immediate restart", file=sys.stderr)
+                    if self.restart_counts.get('gyro', 0) < self.max_restart_attempts:
+                        if self._restart_gyro_daemon():
+                            self.last_gyro_sample_time = now
+                            print(f"  ✓ Gyro restarted after daemon death", file=sys.stderr)
+                        else:
+                            print(f"  ✗ Gyro restart failed after daemon death", file=sys.stderr)
+                else:
+                    # Second check: Is there data silence?
+                    silence_duration = now - getattr(self, 'last_gyro_sample_time', now)
+                    if silence_duration > self.accel_silence_threshold:  # Use same threshold as accel
+                        if self.restart_counts.get('gyro', 0) < self.max_restart_attempts:
+                            print(f"\n⚠️ GYRO SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
+                            if self._restart_gyro_daemon():
+                                self.last_gyro_sample_time = now
+                                print(f"  ✓ Gyro restarted, resuming data collection", file=sys.stderr)
+                            else:
+                                print(f"  ✗ Gyro restart failed (continuing with EKF accel+GPS only)", file=sys.stderr)
+
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
         import sys
@@ -908,6 +934,38 @@ class FilterComparison:
             return True
         else:
             print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
+            return False
+
+    def _restart_gyro_daemon(self):
+        """Attempt to restart the gyroscope daemon"""
+        print(f"\n🔄 Attempting to restart gyroscope daemon (attempt {self.restart_counts.get('gyro', 0) + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+
+        # Stop old daemon
+        try:
+            self.gyro_daemon.stop()
+            time.sleep(1)  # Brief pause for cleanup
+        except Exception as e:
+            print(f"  Warning during gyro daemon stop: {e}", file=sys.stderr)
+
+        # Create new daemon instance (gyro is paired with accel, so get from accel daemon's gyro_queue)
+        self.gyro_daemon = PersistentGyroDaemon(self.accel_daemon)
+
+        # Wait for cooldown
+        time.sleep(self.restart_cooldown)
+
+        # Start new daemon
+        if self.gyro_daemon.start():
+            # Validate it's actually working
+            test_data = self.gyro_daemon.get_data(timeout=10.0)
+            if test_data:
+                print(f"  ✓ Gyroscope daemon restarted successfully", file=sys.stderr)
+                self.restart_counts['gyro'] = self.restart_counts.get('gyro', 0) + 1
+                return True
+            else:
+                print(f"  ✗ Gyroscope daemon started but not receiving data after 10s", file=sys.stderr)
+                return False
+        else:
+            print(f"  ✗ Failed to start gyroscope daemon process", file=sys.stderr)
             return False
 
     def _log_status(self):
