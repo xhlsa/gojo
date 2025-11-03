@@ -718,6 +718,41 @@ apt clean
 
 ## 📝 Session Log
 
+### Nov 3, 2025 - Comprehensive Architecture Fixes & Accel Recovery
+**Session Goal:** Fix critical bugs found in comprehensive architecture review + restore accel reliability
+
+**6 Critical Bugs Fixed:**
+1. **Final save data loss (80-90%)** - Now uses accumulated_data instead of cleared deques
+2. **Race conditions** - Added threading.Lock around all accumulated_data operations
+3. **Deque overflow** - Increased accel/gyro buffers: 10k → 30k (25 min @ 20Hz actual)
+4. **Physics violation** - Removed mid-test filter resets that created fake acceleration
+5. **Health monitor restart race** - Disabled restart in health_monitor, then re-enabled properly
+6. **GPS counter misleading** - Now shows cumulative total + recent window
+
+**GPS Polling Improvement:**
+- Changed baseline interval: 10s → 2s (faster response to GPS signal changes)
+- Maintains exponential backoff on failures (5→10→15→20→30s)
+
+**Accel Regression & Fix:**
+- FIX 5 disabled accel restart entirely (too aggressive)
+- Root cause: termux-sensor watchdog exits cleanly (exit_code=0) after 5s silence, expected to recover
+- Solution: Re-enabled accel restart logic in health_monitor (matches GPS behavior)
+- **Result:** Accel now recovers reliably - tested with 2308 accel samples + 1 GPS fix through auto-save cycle
+
+**Test Results:**
+- ✅ 5-minute test accumulating data successfully
+- ✅ Auto-save at 2-min mark: preserved 2308 accel + 1 GPS
+- ✅ Deques cleared, filters maintained state (no reset), collection resumed
+- ✅ Memory bounded at 93.3 MB (peak)
+- ✅ Accel samples accumulating (1779+ after 3 minutes)
+
+**Commits:**
+- `0a700ea` - Fix 6 critical bugs (data loss, thread safety, physics, monitoring)
+- `2374156` - Re-enable accel restart logic (FIX 5 was regression)
+
+**Key Learning:** Disabling recovery mechanisms to prevent race conditions was wrong approach.
+Instead: keep recovery but ensure it happens from single source (health_monitor only, not auto-save).
+
 ### Nov 1, 2025 - Critical Bug Fix: Blocking Restart in Auto-Save
 **Initial Analysis (INCORRECT):**
 - ✗ Claimed 30-minute test PASSED with 651 samples (actually FAILED at 2 min mark)
