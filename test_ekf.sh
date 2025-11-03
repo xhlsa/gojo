@@ -294,7 +294,8 @@ sleep 2
 echo -e "${GREEN}Starting Python test...${NC}\n" | tee -a "$LOG_FILE"
 
 # Capture both stdout and stderr from Python process
-python3 motion_tracker_v2/test_ekf_vs_complementary.py "$@" 2>&1 | tee -a "$LOG_FILE" &
+# Enable gyro by default (since we now have GPS and accel data flowing reliably)
+python3 motion_tracker_v2/test_ekf_vs_complementary.py --enable-gyro "$@" 2>&1 | tee -a "$LOG_FILE" &
 TEST_PID=$!
 
 # Step 4: Monitor Python process
