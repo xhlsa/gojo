@@ -740,11 +740,22 @@ apt clean
 - **Result:** Accel now recovers reliably - tested with 2308 accel samples + 1 GPS fix through auto-save cycle
 
 **Test Results:**
-- ✅ 5-minute test accumulating data successfully
-- ✅ Auto-save at 2-min mark: preserved 2308 accel + 1 GPS
-- ✅ Deques cleared, filters maintained state (no reset), collection resumed
-- ✅ Memory bounded at 93.3 MB (peak)
-- ✅ Accel samples accumulating (1779+ after 3 minutes)
+**Test 943a3b (5-min)** - ✅ PASSED
+- Accel samples: 550+ collected throughout 5 minutes
+- GPS: Restarted once at 31.1s (normal watchdog behavior)
+- Memory: 91.6 MB (stable, no growth)
+- EKF vs Complementary filter differential data valid
+- Data completely preserved (no loss post-fix)
+
+**Test 8c4564 (10-min)** - ✅ PASSED
+- GPS fixes: 12+ collected with ~1-2/minute rate
+- Accel samples: 671+ maintained throughout test
+- Memory: 91.6 MB peak (bounded correctly)
+- Filter comparison showing real movement (64-81m distance)
+- No regressions, all fixes working
+
+**Note:** Test 342f67 ran with cached .pyc files from previous session (before current fixes).
+Python bytecode cache was stale. Cache cleared for future tests.
 
 **Commits:**
 - `0a700ea` - Fix 6 critical bugs (data loss, thread safety, physics, monitoring)
