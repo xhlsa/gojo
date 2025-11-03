@@ -672,7 +672,7 @@ class FilterComparison:
                     traceback.print_exc()
 
     def _health_monitor_loop(self):
-        """Monitor sensor health and log issues (FIX 5: restart logic disabled to prevent race conditions)"""
+        """Monitor sensor health and auto-restart if sensors go silent or die"""
         while not self.stop_event.is_set():
             time.sleep(self.health_check_interval)
             now = time.time()
@@ -683,16 +683,24 @@ class FilterComparison:
                 # This catches clean exits (exit_code=0) that data silence might miss
                 if not self.accel_daemon.is_alive():
                     exit_code = self.accel_daemon.sensor_process.poll() if self.accel_daemon.sensor_process else None
-                    print(f"\n⚠️ ACCEL DAEMON DIED (exit_code={exit_code}) - restart logic disabled to prevent race conditions", file=sys.stderr)
-                    # FIX 5: Don't restart, just log and reset timer
-                    self.last_accel_sample_time = now
+                    print(f"\n⚠️ ACCEL DAEMON DIED (exit_code={exit_code}) - triggering immediate restart", file=sys.stderr)
+                    if self.restart_counts['accel'] < self.max_restart_attempts:
+                        if self._restart_accel_daemon():
+                            self.last_accel_sample_time = now
+                            print(f"  ✓ Accel restarted after daemon death", file=sys.stderr)
+                        else:
+                            print(f"  ✗ Accel restart failed after daemon death", file=sys.stderr)
                 else:
                     # Second check: Is there data silence? (process alive but no data)
                     silence_duration = now - self.last_accel_sample_time
                     if silence_duration > self.accel_silence_threshold:
-                        print(f"\n⚠️ ACCEL SILENT for {silence_duration:.1f}s - restart logic disabled to prevent race conditions", file=sys.stderr)
-                        # FIX 5: Don't restart, just log and reset timer
-                        self.last_accel_sample_time = now
+                        if self.restart_counts['accel'] < self.max_restart_attempts:
+                            print(f"\n⚠️ ACCEL SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
+                            if self._restart_accel_daemon():
+                                self.last_accel_sample_time = now
+                                print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
+                            else:
+                                print(f"  ✗ Accel restart failed", file=sys.stderr)
 
             # CHECK GPS HEALTH
             if self.gps_daemon:
