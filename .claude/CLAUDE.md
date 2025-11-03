@@ -757,12 +757,27 @@ apt clean
 **Note:** Test 342f67 ran with cached .pyc files from previous session (before current fixes).
 Python bytecode cache was stale. Cache cleared for future tests.
 
+**Improvements Added (After Main Fixes):**
+- Added stderr capture for PersistentSensorDaemon to log Termux API errors
+- Added stderr capture for PersistentGPSDaemon to detect connection failures
+- All error messages logged with component prefix for diagnostics
+- Helps identify intermittent API failures in future test runs
+
+**Observation on Intermittent Failures:**
+- 2 successful tests (943a3b 5min, 8c4564 10min) with 550+/671+ samples
+- Subsequent test (9b2a68) encountered early daemon failure (0 samples)
+- Likely cause: Resource exhaustion from repeated test runs (residual processes/sockets)
+- **Mitigation:** Added stderr capture to diagnose root cause when it recurs
+- Solution: May need longer delays between tests or more aggressive cleanup
+
 **Commits:**
+- `bb1b509` - Add stderr capture for Termux API error diagnostics
 - `0a700ea` - Fix 6 critical bugs (data loss, thread safety, physics, monitoring)
 - `2374156` - Re-enable accel restart logic (FIX 5 was regression)
 
 **Key Learning:** Disabling recovery mechanisms to prevent race conditions was wrong approach.
 Instead: keep recovery but ensure it happens from single source (health_monitor only, not auto-save).
+Also: Transient resource issues need diagnostic logging (stderr capture) to identify root cause.
 
 ### Nov 1, 2025 - Critical Bug Fix: Blocking Restart in Auto-Save
 **Initial Analysis (INCORRECT):**
