@@ -54,151 +54,6 @@ if not os.path.exists(SESSIONS_DIR):
     os.makedirs(SESSIONS_DIR, exist_ok=True)
 
 
-class PersistentSensorDaemon:
-    """Read from persistent termux-sensor stream"""
-
-    def __init__(self, sensor_type='ACCELEROMETER', delay_ms=50):
-        self.sensor_type = sensor_type
-        self.delay_ms = delay_ms
-        self.data_queue = Queue(maxsize=1000)
-        self.process = None
-        self.stop_event = threading.Event()
-
-    def start(self):
-        try:
-            # Use stdbuf with line buffering for consistent output streaming
-            # This ensures data is flushed line-by-line for reliable Python iteration
-            # NOTE: Gyroscope support is limited on Termux - sensor HAL may not stream
-            # data to Python subprocesses even though direct termux-sensor calls work
-            cmd = ['stdbuf', '-oL', 'termux-sensor', '-s', self.sensor_type, '-d', str(self.delay_ms)]
-
-            # Use text=True for consistent line-by-line iteration and automatic UTF-8 decoding
-            self.process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
-            )
-
-            # Start separate thread to capture stderr from Termux API
-            stderr_reader = threading.Thread(target=self._capture_stderr, daemon=True)
-            stderr_reader.start()
-
-            reader = threading.Thread(target=self._read_loop, daemon=True)
-            reader.start()
-            return True
-        except Exception as e:
-            import sys
-            print(f"Failed to start {self.sensor_type} daemon: {e}", file=sys.stderr)
-            return False
-
-    def _capture_stderr(self):
-        """Capture stderr from termux-sensor to detect API errors"""
-        import sys
-        try:
-            for line in self.process.stderr:
-                line = line.strip()
-                if line and line.lower() not in ['', 'null']:
-                    # Log any non-empty stderr output (likely error messages)
-                    print(f"[{self.sensor_type}] API stderr: {line}", file=sys.stderr)
-        except:
-            pass
-
-    def _read_loop(self):
-        import sys
-        packets_received = 0
-        last_packet_time = time.time()
-        watchdog_timeout = 5.0  # 5 seconds - if no data, restart daemon
-
-        try:
-            json_buffer = ""
-            brace_depth = 0
-
-            for line in self.process.stdout:
-                # WATCHDOG: Detect data stall (subprocess hung but not dead)
-                if time.time() - last_packet_time > watchdog_timeout:
-                    print(f"[{self.sensor_type}] ⚠ WATCHDOG: No data for {watchdog_timeout}s, daemon stalled", file=sys.stderr)
-                    break  # Exit loop so daemon can be restarted
-
-                # INTERRUPTIBLE: Check for graceful shutdown
-                if self.stop_event.is_set():
-                    print(f"[{self.sensor_type}] Stop event received, exiting loop", file=sys.stderr)
-                    break
-
-                # line is already a string (text=True mode)
-                json_buffer += line
-                brace_depth += line.count('{') - line.count('}')
-
-                if brace_depth == 0 and json_buffer.strip():
-                    packets_received += 1
-                    last_packet_time = time.time()  # Reset watchdog on valid packet
-
-                    try:
-                        data = json.loads(json_buffer)
-
-                        # termux-sensor returns nested structure:
-                        # {"sensor_name": {"values": [x, y, z]}}
-                        # Extract and flatten for easier consumption
-                        for sensor_key, sensor_data in data.items():
-                            if isinstance(sensor_data, dict) and 'values' in sensor_data:
-                                values = sensor_data['values']
-                                # values is an array [x, y, z]
-                                if isinstance(values, list) and len(values) >= 3:
-                                    try:
-                                        self.data_queue.put({
-                                            'x': values[0],
-                                            'y': values[1],
-                                            'z': values[2],
-                                            'timestamp': time.time()
-                                        }, block=False)
-                                        if packets_received <= 3:
-                                            print(f"[{self.sensor_type}] Queued packet {packets_received}", file=sys.stderr)
-                                    except Exception as q_err:
-                                        # Queue full or other queue error - skip this packet but continue
-                                        if packets_received <= 3:
-                                            print(f"[{self.sensor_type}] Queue error on packet {packets_received}: {str(q_err)[:50]}", file=sys.stderr)
-                                    break  # Only process first sensor
-                        if packets_received <= 3 and not any(isinstance(v, dict) and 'values' in v for v in data.values()):
-                            print(f"[{self.sensor_type}] Packet {packets_received} had no valid sensor data: {list(data.keys())}", file=sys.stderr)
-                    except Exception as e:
-                        if packets_received <= 3:
-                            print(f"[{self.sensor_type}] Parse error on packet {packets_received}: {str(e)[:50]}", file=sys.stderr)
-                    json_buffer = ""
-                    brace_depth = 0
-        except Exception as e:
-            import sys
-            print(f"[{self.sensor_type}] _read_loop exception: {e}", file=sys.stderr)
-        finally:
-            # CLEANUP: Always terminate subprocess (prevents zombies)
-            if self.process:
-                try:
-                    self.process.terminate()
-                    self.process.wait(timeout=2)
-                except subprocess.TimeoutExpired:
-                    try:
-                        self.process.kill()
-                    except:
-                        pass
-                except:
-                    pass
-            print(f"[{self.sensor_type}] Daemon loop exited (packets={packets_received})", file=sys.stderr)
-
-    def get_data(self, timeout=0.1):
-        try:
-            return self.data_queue.get(timeout=timeout)
-        except Empty:
-            return None
-
-    def stop(self):
-        self.stop_event.set()
-        if self.process:
-            try:
-                self.process.terminate()
-                self.process.wait(timeout=2)
-            except:
-                pass
-
-
 class PersistentGPSDaemon:
     """
     Persistent GPS daemon - continuously polls termux-location and queues results
@@ -762,29 +617,9 @@ class FilterComparison:
                             else:
                                 print(f"  ✗ GPS restart failed (continuing without GPS)", file=sys.stderr)
 
-            # CHECK GYROSCOPE HEALTH (if enabled)
-            if self.gyro_daemon and self.enable_gyro:
-                # First check: Has the subprocess died?
-                if not self.gyro_daemon.is_alive():
-                    exit_code = self.gyro_daemon.sensor_process.poll() if self.gyro_daemon.sensor_process else None
-                    print(f"\n⚠️ GYRO DAEMON DIED (exit_code={exit_code}) - triggering immediate restart", file=sys.stderr)
-                    if self.restart_counts.get('gyro', 0) < self.max_restart_attempts:
-                        if self._restart_gyro_daemon():
-                            self.last_gyro_sample_time = now
-                            print(f"  ✓ Gyro restarted after daemon death", file=sys.stderr)
-                        else:
-                            print(f"  ✗ Gyro restart failed after daemon death", file=sys.stderr)
-                else:
-                    # Second check: Is there data silence?
-                    silence_duration = now - getattr(self, 'last_gyro_sample_time', now)
-                    if silence_duration > self.accel_silence_threshold:  # Use same threshold as accel
-                        if self.restart_counts.get('gyro', 0) < self.max_restart_attempts:
-                            print(f"\n⚠️ GYRO SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
-                            if self._restart_gyro_daemon():
-                                self.last_gyro_sample_time = now
-                                print(f"  ✓ Gyro restarted, resuming data collection", file=sys.stderr)
-                            else:
-                                print(f"  ✗ Gyro restart failed (continuing with EKF accel+GPS only)", file=sys.stderr)
+            # NOTE: Gyroscope data comes from accel daemon's shared gyro_queue
+            # No separate health checks needed since gyro shares the accel subprocess
+            # If accel is alive, gyro data is available when it arrives from hardware
 
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
@@ -934,38 +769,6 @@ class FilterComparison:
             return True
         else:
             print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
-            return False
-
-    def _restart_gyro_daemon(self):
-        """Attempt to restart the gyroscope daemon"""
-        print(f"\n🔄 Attempting to restart gyroscope daemon (attempt {self.restart_counts.get('gyro', 0) + 1}/{self.max_restart_attempts})...", file=sys.stderr)
-
-        # Stop old daemon
-        try:
-            self.gyro_daemon.stop()
-            time.sleep(1)  # Brief pause for cleanup
-        except Exception as e:
-            print(f"  Warning during gyro daemon stop: {e}", file=sys.stderr)
-
-        # Create new daemon instance (gyro is paired with accel, so get from accel daemon's gyro_queue)
-        self.gyro_daemon = PersistentGyroDaemon(self.accel_daemon)
-
-        # Wait for cooldown
-        time.sleep(self.restart_cooldown)
-
-        # Start new daemon
-        if self.gyro_daemon.start():
-            # Validate it's actually working
-            test_data = self.gyro_daemon.get_data(timeout=10.0)
-            if test_data:
-                print(f"  ✓ Gyroscope daemon restarted successfully", file=sys.stderr)
-                self.restart_counts['gyro'] = self.restart_counts.get('gyro', 0) + 1
-                return True
-            else:
-                print(f"  ✗ Gyroscope daemon started but not receiving data after 10s", file=sys.stderr)
-                return False
-        else:
-            print(f"  ✗ Failed to start gyroscope daemon process", file=sys.stderr)
             return False
 
     def _log_status(self):
