@@ -80,12 +80,29 @@ class PersistentSensorDaemon:
                 text=True
             )
 
+            # Start separate thread to capture stderr from Termux API
+            stderr_reader = threading.Thread(target=self._capture_stderr, daemon=True)
+            stderr_reader.start()
+
             reader = threading.Thread(target=self._read_loop, daemon=True)
             reader.start()
             return True
         except Exception as e:
-            print(f"Failed to start {self.sensor_type} daemon: {e}")
+            import sys
+            print(f"Failed to start {self.sensor_type} daemon: {e}", file=sys.stderr)
             return False
+
+    def _capture_stderr(self):
+        """Capture stderr from termux-sensor to detect API errors"""
+        import sys
+        try:
+            for line in self.process.stderr:
+                line = line.strip()
+                if line and line.lower() not in ['', 'null']:
+                    # Log any non-empty stderr output (likely error messages)
+                    print(f"[{self.sensor_type}] API stderr: {line}", file=sys.stderr)
+        except:
+            pass
 
     def _read_loop(self):
         import sys
@@ -271,12 +288,29 @@ while True:
                 bufsize=1
             )
 
+            # Start separate thread to capture stderr from GPS daemon (includes Termux API errors)
+            stderr_reader = threading.Thread(target=self._capture_stderr, daemon=True)
+            stderr_reader.start()
+
             reader = threading.Thread(target=self._read_loop, daemon=True)
             reader.start()
             return True
         except Exception as e:
-            print(f"Failed to start GPS daemon: {e}")
+            import sys
+            print(f"Failed to start GPS daemon: {e}", file=sys.stderr)
             return False
+
+    def _capture_stderr(self):
+        """Capture stderr from GPS daemon to detect API/connection errors"""
+        import sys
+        try:
+            for line in self.gps_process.stderr:
+                line = line.strip()
+                if line:
+                    # Log any stderr output - likely error messages or connection issues
+                    print(f"[GPSDaemon] stderr: {line}", file=sys.stderr)
+        except:
+            pass
 
     def _read_loop(self):
         """Read GPS JSON objects from continuous stream (handles pretty-printed JSON)"""
