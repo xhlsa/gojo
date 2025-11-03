@@ -45,12 +45,17 @@ cd "$SCRIPT_DIR" || exit 1
 cleanup_sensors() {
     echo -e "${YELLOW}Cleaning up sensor processes...${NC}"
 
-    # Kill stale processes
-    pkill -9 -f "termux-sensor" 2>/dev/null || true
-    pkill -9 -f "termux-api.*Sensor" 2>/dev/null || true
+    # Kill stale processes (both old generic names and new LSM6DSO-specific names)
+    pkill -9 -f "termux-sensor.*ACCELEROMETER" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Accelerometer" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*GYROSCOPE" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Gyroscope" 2>/dev/null || true
+    pkill -9 -f "stdbuf.*termux-sensor" 2>/dev/null || true
+    pkill -9 -f "termux-api Sensor" 2>/dev/null || true
+    pkill -9 -f "termux-api Location" 2>/dev/null || true
     pkill -9 -f "motion_tracker_v2.py" 2>/dev/null || true
 
-    # Wait for Android to release sensor resources
+    # Wait for Android to release sensor resources (5 seconds required)
     sleep 5
 
     echo -e "${GREEN}✓ Sensor cleanup complete${NC}"
@@ -61,7 +66,8 @@ validate_sensor() {
     echo -e "${YELLOW}Validating accelerometer access...${NC}"
 
     # Use $HOME instead of /tmp for Termux permissions
-    if timeout 5 termux-sensor -s ACCELEROMETER -d 50 -n 2 > "$HOME/.sensor_test.json" 2>&1; then
+    # Using specific LSM6DSO sensor ID for reliable activation
+    if timeout 5 termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup" -d 50 -n 2 > "$HOME/.sensor_test.json" 2>&1; then
         if grep -q "values" "$HOME/.sensor_test.json" 2>/dev/null; then
             echo -e "${GREEN}✓ Accelerometer responding${NC}"
             rm -f "$HOME/.sensor_test.json"

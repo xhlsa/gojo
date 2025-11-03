@@ -425,9 +425,11 @@ class FilterComparison:
             print(f"  ⏱ Allowing GPS backend 3 seconds to stabilize...")
             time.sleep(3)  # CRITICAL FIX: Allow API service to recover from cleanup
 
-        # OPTIONAL: Initialize gyroscope if requested (uses shared IMU stream from accel_daemon)
+        # OPTIONAL: Initialize gyroscope if requested (shared IMU stream from accel daemon)
         if self.enable_gyro:
             print(f"\n✓ Initializing gyroscope (optional, will fallback if unavailable)...")
+            # CRITICAL: Pass accel_daemon to share the same IMU hardware stream
+            # Accelerometer and Gyroscope are paired sensors on LSM6DSO chip
             self.gyro_daemon = PersistentGyroDaemon(accel_daemon=self.accel_daemon, delay_ms=50)
 
             if not self.gyro_daemon.start():

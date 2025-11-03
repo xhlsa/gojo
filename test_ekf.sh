@@ -58,19 +58,25 @@ cleanup_sensors() {
     echo -e "${YELLOW}Cleaning up sensor processes...${NC}" >&2
     echo "[cleanup_sensors] Starting" >> "$LOG_FILE" 2>/dev/null || true
 
-    # Kill ONLY sensor wrapper processes (specific patterns to avoid collateral damage)
-    pkill -9 -f "termux-sensor -s ACCELEROMETER" 2>/dev/null || true
-    pkill -9 -f "termux-sensor -s GYROSCOPE" 2>/dev/null || true
+    # Kill ONLY sensor wrapper processes (updated to match new LSM6DSO-specific sensor names)
+    # Both old generic names and new specific names for backwards compatibility
+    pkill -9 -f "termux-sensor.*ACCELEROMETER" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Accelerometer" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*GYROSCOPE" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Gyroscope" 2>/dev/null || true
 
     # Kill sensor backend SPECIFICALLY (pattern MUST include "Sensor" to avoid matching "Location")
     # Original pattern "termux-api-broadcast.*Sensor" was too broad and killed GPS backend
     pkill -9 -f "termux-api Sensor" 2>/dev/null || true
 
+    # Kill stdbuf wrapper processes that may be running sensor commands
+    pkill -9 -f "stdbuf.*termux-sensor" 2>/dev/null || true
+
     # Also kill any stale Python test processes that might be holding sensors
     pkill -9 -f "test_ekf_vs_complementary.py" 2>/dev/null || true
 
     # Extended delay: Android needs time to fully release sensor HAL resources
-    # 3 seconds was insufficient, 5 seconds is more reliable
+    # 5 seconds is required for reliable cleanup and daemon restart
     sleep 5
 
     echo -e "${GREEN}✓ Sensor cleanup complete${NC}" >&2
@@ -106,7 +112,8 @@ validate_sensor() {
     # Try to get TWO samples from accelerometer with 5-second timeout
     # First sample is often empty {}, second has real data
     # Use $HOME instead of /tmp for Termux permissions
-    if timeout 5 termux-sensor -s ACCELEROMETER -d 50 -n 2 > "$HOME/.sensor_test.json" 2>&1; then
+    # Using specific LSM6DSO sensor ID for reliable activation
+    if timeout 5 termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup" -d 50 -n 2 > "$HOME/.sensor_test.json" 2>&1; then
         # Check if we got valid JSON output with "values" field
         if grep -q "values" "$HOME/.sensor_test.json" 2>/dev/null; then
             echo -e "${GREEN}✓ Accelerometer responding correctly${NC}"

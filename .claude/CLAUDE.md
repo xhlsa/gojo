@@ -832,6 +832,103 @@ The three-layer architecture is now working correctly:
 
 Each layer has a clear responsibility. No blocking operations in data collection path.
 
+### Nov 3, 2025 - Sensor Configuration: All Hardware Using Specific LSM6DSO IDs
+**Session Goal:** Configure all sensors (accel, gyro, GPS) with specific hardware IDs for reliability
+
+**Problem:** Generic sensor names (`ACCELEROMETER`, `GYROSCOPE`) were inconsistent
+**Solution:** Use specific sensor IDs for accel & gyro, keep GPS via termux-location
+
+**Changes Made:**
+
+**1. Accelerometer (motion_tracker_v2.py:line159)**
+- Changed from: `-s 'ACCELEROMETER'`
+- Changed to: `-s 'lsm6dso LSM6DSO Accelerometer Non-wakeup'`
+- Updated debug output at line 177
+
+**2. Gyroscope (motion_tracker_v2.py:line335)**
+- Changed from: `-s 'GYROSCOPE'`
+- Changed to: `-s 'lsm6dso LSM6DSO Gyroscope Non-wakeup'`
+- Updated debug output at line 354
+
+**3. GPS (motion_tracker_v2.py:line522)**
+- Already using `termux-location -p gps` (no change needed)
+- GPS API doesn't use sensor selection syntax
+- Provides lat/lon/altitude/speed/bearing/accuracy
+
+**Verification (All Tested & Working):**
+```bash
+# Accelerometer
+termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup" -d 50
+# Output: x, y, z acceleration in m/s²
+
+# Gyroscope
+termux-sensor -s "lsm6dso LSM6DSO Gyroscope Non-wakeup" -d 50
+# Output: x, y, z angular velocity in rad/s
+
+# GPS
+termux-location -p gps
+# Output: JSON with lat/lon/altitude/speed/bearing/accuracy
+```
+
+**Impact on Code:**
+- `PersistentAccelDaemon` now uses LSM6DSO accel ID
+- `PersistentGyroDaemon` now uses LSM6DSO gyro ID
+- `GPSThread` unchanged (already using correct API)
+- `test_ekf_vs_complementary.py` imports these classes - **automatically uses updated sensors**
+- All shell scripts work without changes (use classes via Python imports)
+
+**Test Commands (Ready to Use):**
+```bash
+# Standard tracking
+./motion_tracker_v2.sh 5                    # Accel + GPS
+./motion_tracker_v2.sh --enable-gyro 5      # Accel + Gyro + GPS (EKF mode)
+./motion_tracker_v2.sh --filter=complementary 5  # Accel + GPS (complementary)
+
+# Validation tests
+./test_ekf.sh 5                             # EKF vs Complementary (accel+GPS)
+./test_ekf.sh 5 --gyro                      # With gyroscope included
+```
+
+**Hardware Confirmation:**
+- Device: Samsung Galaxy S24 (Termux on Android 14)
+- Sensors:
+  - LSM6DSO IMU (accel + gyro paired)
+  - AK09918 Magnetometer
+  - GPS (via LocationAPI)
+- All three sensors now with explicit IDs for maximum reliability
+
+**Shell Script Updates (Cleanup & Validation):**
+
+**test_ekf.sh** - Updated cleanup_sensors() & validate_sensor()
+- Cleanup: Now matches both old generic AND new specific sensor names
+  - Kills: `termux-sensor.*ACCELEROMETER`, `termux-sensor.*Accelerometer`
+  - Kills: `termux-sensor.*GYROSCOPE`, `termux-sensor.*Gyroscope`
+  - Kills: `stdbuf.*termux-sensor` (wrapper process)
+  - Kills: `termux-api Sensor` (backend)
+  - Result: Prevents zombie/stale sensor processes
+- Validation: Uses new LSM6DSO Accel ID in test command
+  - Command: `termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup"`
+  - Ensures validation matches actual runtime sensor requests
+
+**motion_tracker_v2.sh** - Updated cleanup_sensors() & validate_sensor()
+- Same cleanup improvements as test_ekf.sh
+- Same validation using LSM6DSO Accel ID
+- GPS cleanup added (termux-api Location) to prevent socket exhaustion
+
+**Why These Changes Matter:**
+1. **Zombie Prevention** - Old cleanup patterns killed stale GENERIC sensor names but now code uses SPECIFIC LSM6DSO names → cleanup was orphaning processes
+2. **Validation Matching** - Validation was testing ACCELEROMETER but Python code uses specific LSM6DSO ID → mismatched conditions
+3. **Comprehensive Cleanup** - Now kills both old and new process names for backwards compatibility
+4. **stdbuf Wrapper** - Added cleanup for stdbuf processes that wrap termux-sensor commands
+5. **GPS Socket Release** - Added Location API cleanup to prevent "Connection refused" errors from socket exhaustion
+
+**Result:**
+- Shell script cleanup now properly terminates all sensor-related processes
+- No orphaned/zombie processes from old generic sensor names
+- Validation matches actual sensor initialization in Python code
+- Signal handling (trap EXIT SIGINT SIGTERM) ensures cleanup even on interruption
+- 5-second delay sufficient for Android HAL resource release
+
 ### Oct 31, 2025 - Consolidation & Final Audit
 - ✓ Consolidated 50+ markdown files into single CLAUDE.md
 - ✓ Cleaned up redundant documentation
