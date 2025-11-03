@@ -634,6 +634,22 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
             return self.velocity, self.distance
 
+    def reset(self):
+        """Reset filter state (velocities, position, and distance) after auto-save."""
+        with self.lock:
+            # Reset all accumulated state to prevent unbounded drift
+            self.velocity = 0.0
+            self.distance = 0.0
+
+            # Reset state vector position/velocity components
+            # State: [px, py, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
+            self.state[0:2] = 0.0  # Position
+            self.state[2:4] = 0.0  # Velocity
+
+            # Reset sensor timing
+            self.last_gps_time = None
+            self.last_accel_time = None
+
     def get_state(self):
         """Get current state in SensorFusion-compatible format."""
         with self.lock:

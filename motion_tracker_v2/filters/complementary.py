@@ -181,6 +181,20 @@ class ComplementaryFilter(SensorFusionBase):
 
             return self.velocity, self.distance
 
+    def reset(self):
+        """Reset filter state - called after auto-save to prevent unbounded drift"""
+        with self.lock:
+            # Reset velocities and distance to prevent pure acceleration integration
+            # from growing unbounded when GPS is unavailable
+            self.velocity = 0.0
+            self.accel_velocity = 0.0
+            self.distance = 0.0  # Reset accumulated distance to prevent drift accumulation
+            self.last_accel_time = None
+            self.last_gps_time = None
+            self.last_gps_position = None
+            self.last_gps_speed = None
+            self.velocity_history.clear()
+
     def get_state(self):
         """Get current state - thread safe"""
         with self.lock:

@@ -257,9 +257,9 @@ while True:
         current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
         time.sleep(failure_backoff_stages[current_backoff_stage])
 
-    # Baseline sleep: 10s between polls (reduced from 5s only on consecutive failures)
-    # This prevents hammering the GPS API backend during normal operation
-    baseline_sleep = 10.0 if consecutive_failures == 0 else 1.0
+    # Baseline sleep: 2s between polls for responsive GPS tracking
+    # On consecutive failures, back off to avoid hammering the API
+    baseline_sleep = 2.0 if consecutive_failures == 0 else 1.0
     time.sleep(baseline_sleep)
 '''
 
@@ -396,13 +396,17 @@ class FilterComparison:
         # Data storage - OPTIMIZED for memory efficiency
         # All data still saved to disk via auto-save, this is just in-memory history
         # GPS: 2,000 fixes @ 1 Hz = ~33 minutes (sufficient for single drive)
-        # Accel: 10,000 samples @ 50 Hz = 200 seconds (captures full incident window)
-        # Gyro: 10,000 samples @ 50 Hz = 200 seconds (paired with accel)
+        # Accel: 30,000 samples @ 20 Hz actual = 25 minutes (increased buffer for auto-save delays)
+        # Gyro: 30,000 samples @ 20 Hz actual = 25 minutes (paired with accel)
         # Comparison: 500 summaries (last 5 seconds at ~100Hz comparison rate)
+        # Note: Hardware delivers ~20Hz not theoretical 50Hz, so buffer sized accordingly
         self.gps_samples = deque(maxlen=2000)
-        self.accel_samples = deque(maxlen=10000)
-        self.gyro_samples = deque(maxlen=10000)
+        self.accel_samples = deque(maxlen=30000)
+        self.gyro_samples = deque(maxlen=30000)
         self.comparison_samples = deque(maxlen=500)
+
+        # FIX 2: Thread lock for accumulated_data and deque operations
+        self._save_lock = threading.Lock()
 
         # Metrics
         self.last_gps_time = None
@@ -442,6 +446,9 @@ class FilterComparison:
         self.gravity = 9.81  # Default value, will be calibrated from first samples
         self.calibration_samples = []
         self.calibration_complete = False
+
+        # FIX 6: Total GPS counter (cumulative across auto-saves)
+        self.total_gps_fixes = 0
 
     def _calibrate_gravity(self):
         """Collect initial stationary samples to calibrate gravity magnitude"""
@@ -605,6 +612,9 @@ class FilterComparison:
                     v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
                                                             gps['speed'], gps['accuracy'])
 
+                    # FIX 6: Increment cumulative GPS counter
+                    self.total_gps_fixes += 1
+
                     self.gps_samples.append({
                         'timestamp': now - self.start_time,
                         'latitude': gps['latitude'],
@@ -662,34 +672,51 @@ class FilterComparison:
                     traceback.print_exc()
 
     def _health_monitor_loop(self):
-        """Monitor sensor health and auto-restart if sensors go silent"""
+        """Monitor sensor health and log issues (FIX 5: restart logic disabled to prevent race conditions)"""
         while not self.stop_event.is_set():
             time.sleep(self.health_check_interval)
             now = time.time()
 
             # CHECK ACCELEROMETER HEALTH
             if self.accel_daemon:
-                silence_duration = now - self.last_accel_sample_time
-                if silence_duration > self.accel_silence_threshold:
-                    if self.restart_counts['accel'] < self.max_restart_attempts:
-                        print(f"\n⚠️ ACCEL SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
-                        if self._restart_accel_daemon():
-                            self.last_accel_sample_time = now  # Reset timer after successful restart
-                            print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
-                        else:
-                            print(f"  ✗ Accel restart failed", file=sys.stderr)
+                # First check: Has the subprocess died? (not just silent data)
+                # This catches clean exits (exit_code=0) that data silence might miss
+                if not self.accel_daemon.is_alive():
+                    exit_code = self.accel_daemon.sensor_process.poll() if self.accel_daemon.sensor_process else None
+                    print(f"\n⚠️ ACCEL DAEMON DIED (exit_code={exit_code}) - restart logic disabled to prevent race conditions", file=sys.stderr)
+                    # FIX 5: Don't restart, just log and reset timer
+                    self.last_accel_sample_time = now
+                else:
+                    # Second check: Is there data silence? (process alive but no data)
+                    silence_duration = now - self.last_accel_sample_time
+                    if silence_duration > self.accel_silence_threshold:
+                        print(f"\n⚠️ ACCEL SILENT for {silence_duration:.1f}s - restart logic disabled to prevent race conditions", file=sys.stderr)
+                        # FIX 5: Don't restart, just log and reset timer
+                        self.last_accel_sample_time = now
 
             # CHECK GPS HEALTH
             if self.gps_daemon:
-                silence_duration = now - self.last_gps_sample_time
-                if silence_duration > self.gps_silence_threshold:
+                # First check: Has the subprocess died?
+                if not self.gps_daemon.is_alive():
+                    exit_code = self.gps_daemon.gps_process.poll() if self.gps_daemon.gps_process else None
+                    print(f"\n⚠️ GPS DAEMON DIED (exit_code={exit_code}) - triggering immediate restart", file=sys.stderr)
                     if self.restart_counts['gps'] < self.max_restart_attempts:
-                        print(f"\n⚠️ GPS SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
                         if self._restart_gps_daemon():
-                            self.last_gps_sample_time = now  # Reset timer after successful restart
-                            print(f"  ✓ GPS restarted, resuming data collection", file=sys.stderr)
+                            self.last_gps_sample_time = now
+                            print(f"  ✓ GPS restarted after daemon death", file=sys.stderr)
                         else:
-                            print(f"  ✗ GPS restart failed (continuing without GPS)", file=sys.stderr)
+                            print(f"  ✗ GPS restart failed after daemon death", file=sys.stderr)
+                else:
+                    # Second check: Is there data silence?
+                    silence_duration = now - self.last_gps_sample_time
+                    if silence_duration > self.gps_silence_threshold:
+                        if self.restart_counts['gps'] < self.max_restart_attempts:
+                            print(f"\n⚠️ GPS SILENT for {silence_duration:.1f}s - triggering auto-restart", file=sys.stderr)
+                            if self._restart_gps_daemon():
+                                self.last_gps_sample_time = now
+                                print(f"  ✓ GPS restarted, resuming data collection", file=sys.stderr)
+                            else:
+                                print(f"  ✗ GPS restart failed (continuing without GPS)", file=sys.stderr)
 
     def _gyro_loop(self):
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
@@ -996,7 +1023,8 @@ class FilterComparison:
 
         # Sensor info
         print("-" * 100)
-        sensor_info = f"GPS fixes: {len(self.gps_samples)} | Accel samples: {len(self.accel_samples)}"
+        # FIX 6: Show total GPS fixes (cumulative), not just recent window
+        sensor_info = f"GPS fixes: {self.total_gps_fixes} (recent: {len(self.gps_samples)}) | Accel samples: {len(self.accel_samples)}"
         if self.enable_gyro:
             sensor_info += f" | Gyro samples: {len(self.gyro_samples)}"
         print(sensor_info)
@@ -1007,7 +1035,13 @@ class FilterComparison:
         self.gps_daemon.stop()
 
         # CRITICAL: Verify accelerometer data was collected
-        if len(self.accel_samples) == 0:
+        # FIX 1: Check both accumulated_data and current deques
+        total_accel_samples = 0
+        if hasattr(self, '_accumulated_data'):
+            total_accel_samples = len(self._accumulated_data['accel_samples'])
+        total_accel_samples += len(self.accel_samples)
+
+        if total_accel_samples == 0:
             print(f"\n✗ FATAL ERROR: Test completed but NO accelerometer samples were collected")
             print(f"  This indicates a sensor hardware or configuration problem")
             print(f"  Verify: termux-sensor -s ACCELEROMETER produces output")
@@ -1041,27 +1075,84 @@ class FilterComparison:
         }
 
         if auto_save:
-            # Compressed auto-save with atomic operation
-            filename = f"{base_filename}.json.gz"
-            temp_filename = f"{filename}.tmp"
+            # FIX 2: Acquire lock before accessing shared data structures
+            with self._save_lock:
+                # Auto-save appends to file to preserve all historical data
+                # Initialize accumulated data on first auto-save
+                if not hasattr(self, '_accumulated_data'):
+                    self._accumulated_data = {
+                        'gps_samples': [],
+                        'accel_samples': [],
+                        'gyro_samples': [],
+                        'autosave_count': 0
+                    }
 
-            with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
-                # Use compact JSON format for compressed files
-                json.dump(results, f, separators=(',', ':'))
+                # Append current samples to accumulated history (don't overwrite)
+                self._accumulated_data['gps_samples'].extend(list(self.gps_samples))
+                self._accumulated_data['accel_samples'].extend(list(self.accel_samples))
+                if self.enable_gyro:
+                    self._accumulated_data['gyro_samples'].extend(list(self.gyro_samples))
+                self._accumulated_data['autosave_count'] += 1
 
-            # Atomic rename
-            os.rename(temp_filename, filename)
+                # Write accumulated data with current metrics
+                accumulated_results = {
+                    'test_duration': self.duration_minutes,
+                    'actual_duration': time.time() - self.start_time,
+                    'peak_memory_mb': self.peak_memory,
+                    'auto_save': auto_save,
+                    'autosave_number': self._accumulated_data['autosave_count'],
+                    'gps_samples': self._accumulated_data['gps_samples'],
+                    'accel_samples': self._accumulated_data['accel_samples'],
+                    'gyro_samples': self._accumulated_data['gyro_samples'],
+                    'final_metrics': {
+                        'ekf': self.ekf.get_state(),
+                        'complementary': self.complementary.get_state()
+                    }
+                }
 
-            # Clear samples after saving to free memory
-            if clear_after_save:
-                self.gps_samples.clear()
-                self.accel_samples.clear()
-                self.gyro_samples.clear()
-                print(f"✓ Auto-saved (gzip): {filename} | Deques cleared")
-                # Note: Health monitor thread will detect any sensor silence and restart asynchronously
-            else:
-                print(f"✓ Auto-saved (gzip): {filename}")
+                filename = f"{base_filename}.json.gz"
+                temp_filename = f"{filename}.tmp"
+
+                with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
+                    json.dump(accumulated_results, f, separators=(',', ':'))
+
+                # Atomic rename
+                os.rename(temp_filename, filename)
+
+                # Clear samples after saving to free memory (deques stay bounded)
+                if clear_after_save:
+                    self.gps_samples.clear()
+                    self.accel_samples.clear()
+                    self.gyro_samples.clear()
+
+                    # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
+                    # Resetting velocity to 0 mid-test creates fake physics
+
+                    gps_count = len(self._accumulated_data['gps_samples'])
+                    accel_count = len(self._accumulated_data['accel_samples'])
+                    print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel | Deques cleared")
+                else:
+                    gps_count = len(self._accumulated_data['gps_samples'])
+                    accel_count = len(self._accumulated_data['accel_samples'])
+                    print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel")
         else:
+            # FIX 1: Final save should use accumulated_data if it exists
+            # (deques may be empty after auto-saves)
+            with self._save_lock:
+                if hasattr(self, '_accumulated_data') and self._accumulated_data['autosave_count'] > 0:
+                    # Use accumulated data from all auto-saves + current deque contents
+                    final_gps = self._accumulated_data['gps_samples'] + list(self.gps_samples)
+                    final_accel = self._accumulated_data['accel_samples'] + list(self.accel_samples)
+                    final_gyro = self._accumulated_data['gyro_samples'] + list(self.gyro_samples)
+
+                    results['gps_samples'] = final_gps
+                    results['accel_samples'] = final_accel
+                    results['gyro_samples'] = final_gyro
+                    results['total_autosaves'] = self._accumulated_data['autosave_count']
+                else:
+                    # No auto-saves occurred, use current deques (already set in results dict above)
+                    pass
+
             # Final save - both compressed and uncompressed
             # Uncompressed JSON for easy inspection
             filename_json = f"{base_filename}.json"

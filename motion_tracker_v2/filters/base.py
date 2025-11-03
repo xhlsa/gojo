@@ -63,3 +63,13 @@ class SensorFusionBase(ABC):
                 - 'last_gps_time': timestamp of last GPS update or None
         """
         pass
+
+    @abstractmethod
+    def reset(self):
+        """
+        Reset filter state (velocities only, not distance history).
+
+        Called after auto-save to prevent unbounded drift when GPS is unavailable.
+        Keeps distance history but zeros velocities to restart integration.
+        """
+        pass

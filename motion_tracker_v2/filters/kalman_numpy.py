@@ -297,6 +297,16 @@ class KalmanFilterNumpy(SensorFusionBase):
 
             return self.velocity, self.distance
 
+    def reset(self):
+        """Reset filter state (velocities, position, and distance) after auto-save."""
+        with self.lock:
+            self.velocity = 0.0
+            self.distance = 0.0
+            self.x[0:2] = 0.0  # px, py (position)
+            self.x[2:4] = 0.0  # vx, vy (velocity)
+            self.last_gps_time = None
+            self.last_accel_time = None
+
     def get_state(self):
         """Get current state in SensorFusion-compatible format."""
         with self.lock:
