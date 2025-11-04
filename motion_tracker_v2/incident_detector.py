@@ -12,9 +12,9 @@ including GPS location, acceleration, and gyroscope data.
 
 Usage:
     detector = IncidentDetector(session_dir='incidents/')
-    detector.check_acceleration(magnitude=0.85)  # Logs hard braking
+    detector.check_hard_braking(magnitude=0.85)  # Logs hard braking
     detector.check_impact(magnitude=1.6)         # Logs impact
-    detector.check_swerving(angular_velocity=75) # Logs swerving
+    detector.check_swerving(angular_velocity=1.2) # Logs swerving (rad/s)
 """
 
 import json
@@ -37,7 +37,7 @@ class IncidentDetector:
     THRESHOLDS = {
         'hard_braking': 0.8,      # g-forces (m/s²/9.81)
         'impact': 1.5,            # g-forces
-        'swerving': 60.0,         # degrees/second (°/s)
+        'swerving': 1.047,        # radians/second (60°/s = 1.047 rad/s)
     }
 
     # Data context window
@@ -253,8 +253,8 @@ if __name__ == '__main__':
     # Simulate swerving
     print("\n4. Simulating swerving event...")
     swerve_time = base_time + 300
-    detector.add_gyroscope_sample(angular_velocity=65.0, timestamp=swerve_time)
-    detector.check_swerving(65.0)
+    detector.add_gyroscope_sample(angular_velocity=1.2, timestamp=swerve_time)
+    detector.check_swerving(1.2)
 
     # Get summary
     print("\n" + "="*60)

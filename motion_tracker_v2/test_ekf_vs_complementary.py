@@ -47,6 +47,7 @@ except ImportError:
 from filters import get_filter
 from motion_tracker_v2 import PersistentAccelDaemon, PersistentGyroDaemon
 from metrics_collector import MetricsCollector
+from incident_detector import IncidentDetector
 
 # Session directory for organized data storage (matches motion_tracker_v2.py pattern)
 SESSIONS_DIR = os.path.join(os.path.dirname(__file__), "..", "motion_tracker_sessions")
@@ -315,6 +316,11 @@ class FilterComparison:
         if enable_gyro:
             self.metrics = MetricsCollector(max_history=600)
 
+        # Incident detector (for swerving and hard braking detection)
+        incident_dir = os.path.join(SESSIONS_DIR, 'incidents')
+        os.makedirs(incident_dir, exist_ok=True)
+        self.incident_detector = IncidentDetector(session_dir=incident_dir, sensor_sample_rate=20)
+
         # Daemon restart tracking
         self.restart_counts = {
             'accel': 0,
@@ -505,6 +511,11 @@ class FilterComparison:
                     v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
                                                             gps['speed'], gps['accuracy'])
 
+                    # Add GPS sample for incident context (30s before/after events)
+                    self.incident_detector.add_gps_sample(
+                        gps['latitude'], gps['longitude'], gps['speed'], gps['accuracy'], timestamp=now
+                    )
+
                     # FIX 6: Increment cumulative GPS counter
                     self.total_gps_fixes += 1
 
@@ -546,6 +557,15 @@ class FilterComparison:
                     # This prevents infinite velocity accumulation during stationary periods
                     # Raw magnitude is always ~9.81 when device is level (gravity)
                     motion_magnitude = max(0, raw_magnitude - self.gravity)
+
+                    # Check for hard braking incident (deceleration > 0.8g)
+                    # Convert to g-forces for incident detector
+                    accel_g = motion_magnitude / 9.81
+                    self.incident_detector.add_accelerometer_sample(accel_g)
+                    self.incident_detector.check_hard_braking(accel_g)
+
+                    # Check for impact incident (acceleration > 1.5g)
+                    self.incident_detector.check_impact(accel_g)
 
                     # Update both filters with gravity-corrected magnitude
                     v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
@@ -648,6 +668,13 @@ class FilterComparison:
 
                     magnitude = (gyro_x**2 + gyro_y**2 + gyro_z**2) ** 0.5
 
+                    # Add gyro sample for incident context (30s before/after events)
+                    self.incident_detector.add_gyroscope_sample(magnitude)
+
+                    # Check for swerving incident (yaw rotation rate)
+                    # Using yaw-only (gyro_z) for driving context, not magnitude (avoids phone tilt)
+                    self.incident_detector.check_swerving(abs(gyro_z))
+
                     # Update EKF filter with gyroscope data
                     # (Complementary filter does NOT support gyroscope)
                     v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
@@ -675,6 +702,11 @@ class FilterComparison:
                         )
 
                     # Store gyroscope sample for analysis
+                    ekf_heading_deg = None
+                    if self.ekf.enable_gyro:
+                        ekf_state = self.ekf.get_state()
+                        ekf_heading_deg = ekf_state.get('heading_deg')
+
                     self.gyro_samples.append({
                         'timestamp': time.time() - self.start_time,
                         'gyro_x': gyro_x,
@@ -682,7 +714,8 @@ class FilterComparison:
                         'gyro_z': gyro_z,
                         'magnitude': magnitude,
                         'ekf_velocity': v1,
-                        'ekf_distance': d1
+                        'ekf_distance': d1,
+                        'ekf_heading': ekf_heading_deg
                     })
                 except Exception as e:
                     print(f"ERROR in gyro loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)

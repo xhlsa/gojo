@@ -669,11 +669,19 @@ class ExtendedKalmanFilter(SensorFusionBase):
             if self.enable_gyro:
                 q0, q1, q2, q3 = self.state[6:10]
                 bx, by, bz = self.state[10:13]  # Gyro bias estimates
+
+                # Calculate heading (yaw) from quaternion
+                # Formula: atan2(2*(q0*q3 + q1*q2), 1 - 2*(q2^2 + q3^2))
+                heading_rad = math.atan2(2*(q0*q3 + q1*q2), 1 - 2*(q2**2 + q3**2))
+                heading_deg = math.degrees(heading_rad)
+
                 state_dict.update({
                     'quaternion': [q0, q1, q2, q3],
                     'quaternion_norm': np.linalg.norm([q0, q1, q2, q3]),
                     'gyro_bias': [bx, by, bz],  # Estimated gyro bias in rad/s
-                    'gyro_bias_magnitude': np.linalg.norm([bx, by, bz])
+                    'gyro_bias_magnitude': np.linalg.norm([bx, by, bz]),
+                    'heading_deg': float(heading_deg),
+                    'heading_rad': float(heading_rad)
                 })
 
             return state_dict
