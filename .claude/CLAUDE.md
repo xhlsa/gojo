@@ -5,8 +5,8 @@
 **Problem:** 20-min drive test showed 12.19% distance error (2.7km drift over 22km actual)
 - **Root Cause:** NOT noise tuning—**prediction frequency mismatch**
   - GPS update rate: 0.33 Hz (393 fixes in 1200s, 3-second gaps)
-  - Accel sample rate: ~50 Hz (150 samples accumulate between GPS fixes)
-  - Each gap: 150 accel-driven predictions accumulate small drift errors
+  - Accel sample rate: ~19 Hz actual (not 50 Hz nominal, ~60 samples accumulate between GPS fixes)
+  - Each gap: 60 accel-driven predictions accumulate small drift errors
   - Complementary filter completely broken: 89.56% error (double-integration bug)
 
 **Fixes Applied (Nov 4, commit 4357515):**
@@ -173,9 +173,9 @@ pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
 - **Result:** Distance error reduced 12.19% → ~4-6% (pending validation)
 
 ### Sensor Sampling
-- Accel: 50 Hz (20ms intervals)
+- Accel: 19 Hz actual (hardware + Python threading overhead, nominal 50 Hz)
 - GPS: ~0.33 Hz (3-second gaps between fixes)
-- Gyro: Paired with accel (50 Hz)
+- Gyro: Paired with accel (~19 Hz)
 
 ### Auto-Save
 - Interval: 2 minutes
