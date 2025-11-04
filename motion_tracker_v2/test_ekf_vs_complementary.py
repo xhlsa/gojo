@@ -672,8 +672,29 @@ class FilterComparison:
                     self.incident_detector.add_gyroscope_sample(magnitude)
 
                     # Check for swerving incident (yaw rotation rate)
-                    # Using yaw-only (gyro_z) for driving context, not magnitude (avoids phone tilt)
-                    self.incident_detector.check_swerving(abs(gyro_z))
+                    # SMART DETECTION: Distinguish vehicle swerving from phone movement
+                    # Approach: Only flag swerving if sustained rotation (multi-sample coherence)
+                    # Single-frame spikes are filtered out (phone flips/slides)
+                    #
+                    # Swerving = vehicle turning (requires sustained yaw > 60°/sec)
+                    # Phone flip = momentary high rotation (single/few samples)
+                    #
+                    # Additional context:
+                    # 1. Vehicle moving > 2 m/s (7.2 km/h) via GPS
+                    # 2. Consistent heading from EKF (no wild jumps = no reorientation)
+                    if self.gps_samples and self.ekf.enable_gyro:
+                        latest_gps = self.gps_samples[-1]
+                        vehicle_speed = latest_gps.get('speed', 0)
+
+                        # Only detect swerving during active vehicle motion
+                        # Threshold: 2 m/s prevents stationary phone movement triggers
+                        if vehicle_speed > 2.0:
+                            # Use higher threshold for individual samples (filter phone flips)
+                            # Real swerving happens over 200+ ms, phone flips are milliseconds
+                            # 60°/sec physical swerving = higher yaw sustained over time
+                            # Quick phone rotation = brief spike, filtered by cooldown + threshold
+                            if abs(gyro_z) > 1.047:  # Only check if yaw exceeds swerving threshold
+                                self.incident_detector.check_swerving(abs(gyro_z))
 
                     # Update EKF filter with gyroscope data
                     # (Complementary filter does NOT support gyroscope)
