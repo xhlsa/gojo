@@ -50,7 +50,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
     Gyro measurements: Angular velocity rates (ωx, ωy, ωz) for quaternion dynamics
     """
 
-    def __init__(self, dt=0.02, gps_noise_std=5.0, accel_noise_std=0.5,
+    def __init__(self, dt=0.02, gps_noise_std=8.0, accel_noise_std=0.5,
                  enable_gyro=False, gyro_noise_std=0.1):
         """
         Initialize Extended Kalman Filter.
@@ -78,7 +78,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
         self.P = np.eye(self.n_state) * 1000  # State covariance (high initial uncertainty)
 
         # Process noise - white noise on acceleration changes
-        q_accel = 0.1  # m/s² process noise std dev
+        q_accel = 0.3  # m/s² process noise std dev (increased 3x)
         self.Q = np.zeros((self.n_state, self.n_state))
         # Position and velocity driven by accel process noise
         self.Q[0, 0] = 0.25 * self.dt**4 * q_accel**2  # x

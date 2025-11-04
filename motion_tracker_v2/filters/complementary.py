@@ -170,8 +170,9 @@ class ComplementaryFilter(SensorFusionBase):
             # Prevent negative velocity
             self.accel_velocity = max(0, self.accel_velocity)
 
-            # Update distance (simple integration)
-            self.distance += self.accel_velocity * dt
+            # NOTE: Distance is ONLY updated by GPS in update_gps() method (Haversine)
+            # Removing accel-based distance updates prevents double-integration error
+            # (was: self.distance += self.accel_velocity * dt)
 
             # If we don't have recent GPS, use accelerometer velocity
             if self.last_gps_time is None or (current_time - self.last_gps_time) > 5.0:
