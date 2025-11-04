@@ -5,8 +5,8 @@
 # WITH CRASH LOGGING AND SESSION TRACKING
 #
 # Usage (CORRECT):
-#   ./test_ekf.sh 10              # Run 10-minute test
-#   ./test_ekf.sh 5 --gyro        # 5 minutes with gyroscope
+#   ./test_ekf.sh 10              # Run 10-minute test (gyro enabled by default)
+#   ./test_ekf.sh 5               # 5 minutes with gyroscope (always enabled)
 #
 # DO NOT use:
 #   python motion_tracker_v2/test_ekf_vs_complementary.py   # ❌ WRONG - sensor fails
@@ -18,6 +18,15 @@
 #   4. Proper signal handling and cleanup on exit
 #   5. Retry mechanism if sensor not immediately available
 #   6. Crash logging with context preservation
+#
+# METRICS CAPTURED (always):
+#   Real-time filter comparison (EKF vs Complementary)
+#   Distance accuracy vs GPS ground truth
+#   Velocity smoothness analysis
+#   Gyroscope data collection status
+#   Memory usage and sensor health
+#   Results saved to: motion_tracker_sessions/comparison_*.json
+#   Analysis: python3 motion_tracker_v2/analyze_comparison.py comparison_*.json
 #
 # CRASH ANALYSIS:
 #   Show recent crashes: python3 crash_logger.py show
