@@ -93,7 +93,7 @@ def compute_distance_accuracy(data):
 
 
 def compute_velocity_smoothness(data):
-    """Analyze velocity stability"""
+    """Analyze velocity stability and filter divergence"""
     gps_samples = data['gps_samples']
 
     if len(gps_samples) < 2:
@@ -110,12 +110,19 @@ def compute_velocity_smoothness(data):
     ekf_mean = np.mean(ekf_velocities)
     comp_mean = np.mean(comp_velocities)
 
+    # Velocity divergence: how different are the filters?
+    velocity_differences = [abs(ekf_velocities[i] - comp_velocities[i]) for i in range(len(ekf_velocities))]
+    max_velocity_diff = max(velocity_differences) if velocity_differences else 0
+    mean_velocity_diff = np.mean(velocity_differences) if velocity_differences else 0
+
     return {
         'ekf_mean': ekf_mean,
         'ekf_std': ekf_std,
         'comp_mean': comp_mean,
         'comp_std': comp_std,
-        'ekf_smoother': ekf_std < comp_std
+        'ekf_smoother': ekf_std < comp_std,
+        'max_velocity_divergence': max_velocity_diff,
+        'mean_velocity_divergence': mean_velocity_diff
     }
 
 
@@ -217,6 +224,11 @@ def print_report(data):
         print(f"\n  Complementary Filter:")
         print(f"    Mean Velocity: {smoothness_data['comp_mean']:.3f} m/s")
         print(f"    Std Dev: {smoothness_data['comp_std']:.3f} m/s")
+
+        print(f"\n  Filter Divergence (How Different They Are):")
+        print(f"    Mean Difference: {smoothness_data['mean_velocity_divergence']:.3f} m/s")
+        print(f"    Max Difference:  {smoothness_data['max_velocity_divergence']:.3f} m/s")
+        print(f"    → Higher divergence = filters responding differently to motion (good)")
 
         if smoothness_data['ekf_smoother']:
             smoothness_improvement = ((smoothness_data['comp_std'] - smoothness_data['ekf_std']) /

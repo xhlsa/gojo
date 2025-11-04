@@ -270,11 +270,13 @@ df -h | grep "storage/emulated"  # Should show 250+ GB free
 - Velocity smoothness: ±10.5 m/s std dev (smooth)
 - Memory: 100 MB stable (no growth)
 
-**Why Filters Match:**
-- Distance calculation is GPS-Haversine only (identical in both)
-- Gyroscope data collected but used only for orientation (not distance)
-- Accelerometer used for velocity detail between GPS fixes
-- This is **correct design** — GPS is ground truth to prevent drift
+**Why Filters Match on Distance (Intentional Design):**
+- Distance: GPS-Haversine only (identical in both, ground truth)
+- Velocity: DIFFERENT (Kalman vs 70/30 weighted average) - max 12.9 m/s divergence
+- Gyroscope: Used for orientation tracking, not distance
+- Accelerometer: Used for velocity refinement between GPS fixes
+- **Design rationale:** Double-integration of accel over 30+ minutes → unbounded drift
+- **Result:** Filters differ on velocity (what matters for incident detection), synchronized on distance (session truth)
 
 **Validation Completed:**
 - ✅ 15-min continuous operation with tuned EKF
