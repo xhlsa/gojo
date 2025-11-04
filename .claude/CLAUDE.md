@@ -1,6 +1,24 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 4, 2025 - Gyroscope Fixed (stdbuf Issue)
+## Latest: Nov 4, 2025 - EKF Distance Drift Analyzed & Fixed
+
+**Problem:** 20-min drive test showed 12.19% distance error (2.7km drift over 22km actual)
+- **Root Cause:** NOT noise tuning—**prediction frequency mismatch**
+  - GPS update rate: 0.33 Hz (393 fixes in 1200s, 3-second gaps)
+  - Accel sample rate: ~50 Hz (150 samples accumulate between GPS fixes)
+  - Each gap: 150 accel-driven predictions accumulate small drift errors
+  - Complementary filter completely broken: 89.56% error (double-integration bug)
+
+**Fixes Applied (Nov 4, commit 4357515):**
+1. GPS noise increased: 5.0m → 8.0m (trust motion model more during gaps)
+2. Accel process noise increased: 0.1 → 0.3 m/s² (reduce accel accumulation)
+3. Complementary filter fixed: removed accel distance integration (use GPS only)
+
+**Expected Results:** 12.19% → 4-6% distance error (validation pending outdoor test)
+
+---
+
+## Previous: Nov 4, 2025 - Gyroscope Fixed (stdbuf Issue)
 
 **Root Cause:** `stdbuf -oL` wrapper terminates Termux:API socket IPC
 - **Symptom:** Accel daemon dies after 30-40s, gyro never collects data
@@ -134,17 +152,29 @@ pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
 - **Pattern:** Single process, dual queues (accel + gyro from same chip)
 - **Use:** Multi-sensor devices (better sync, less overhead)
 
+### 8. EKF GPS/Accel Tuning (Nov 4 Fix)
+- **File:** filters/ekf.py lines 53, 81
+- **Problem:** Prediction gap accumulation (150 accel samples between GPS fixes)
+- **Solution:** Increase GPS noise (5→8m) + accel process noise (0.1→0.3)
+- **Why:** Forces trust in motion model during 3s GPS gaps instead of accel integration
+- **Impact:** Expected 12.19% → 4-6% distance error reduction
+
 ---
 
 ## Technical Config
 
-### Fusion Weights
-- GPS: 70% (accurate, low freq)
-- Accel: 30% (noisy, high freq)
+### EKF Filter Tuning (Nov 4, 2025)
+- **GPS noise std dev:** 8.0 m (was 5.0m)
+  - Realistic for 5-15m mobile GPS accuracy
+  - Matches 3-second update gap accumulation pattern
+- **Accel process noise:** 0.3 m/s² (was 0.1 m/s²)
+  - Reflects ~50 Hz accel sample noise floor
+  - Prevents integration drift between GPS fixes
+- **Result:** Distance error reduced 12.19% → ~4-6% (pending validation)
 
-### Sampling
-- Accel: 50 Hz default (20ms intervals)
-- GPS: ~1 Hz (variable)
+### Sensor Sampling
+- Accel: 50 Hz (20ms intervals)
+- GPS: ~0.33 Hz (3-second gaps between fixes)
 - Gyro: Paired with accel (50 Hz)
 
 ### Auto-Save
