@@ -349,11 +349,11 @@ class PersistentGyroDaemon:
         self.accel_daemon = accel_daemon
         self.delay_ms = delay_ms
 
-        # If sharing accel daemon, use its gyro queue; otherwise create independent queue
-        if accel_daemon:
-            self.data_queue = accel_daemon.gyro_queue if hasattr(accel_daemon, 'gyro_queue') else Queue(maxsize=max_queue_size)
-        else:
-            self.data_queue = Queue(maxsize=max_queue_size)
+        # ALWAYS create own output queue (never reuse accel daemon's queue directly)
+        # In shared mode: accel._read_loop -> accel.gyro_queue -> this reader -> self.data_queue
+        # Queue aliasing bug: if self.data_queue = accel_daemon.gyro_queue, the reader thread
+        # consumes data from the same queue it's writing to, leaving nothing for test to read
+        self.data_queue = Queue(maxsize=max_queue_size)
 
         self.sensor_process = None
         self.reader_thread = None
