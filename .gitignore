@@ -30,6 +30,9 @@ dist/
 # Test artifacts
 test_*.py
 
+# Crash logs (keep locally for debugging, don't commit)
+crash_logs/
+
 # Large data files (keep locally, don't commit)
 *.json
 *.json.gz
