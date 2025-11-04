@@ -1,984 +1,330 @@
-# Gojo Project Overview & Session Notes
+# Gojo Motion Tracker V2 - Project Reference
 
-## Latest Session: Nov 4, 2025 - Gyroscope Activation Fix (stdbuf Root Cause)
+## Latest: Nov 4, 2025 - Gyroscope Fixed (stdbuf Issue)
 
-**🎯 Mission Accomplished:** Fixed gyroscope data collection in long-running tests
+**Root Cause:** `stdbuf -oL` wrapper terminates Termux:API socket IPC
+- **Symptom:** Accel daemon dies after 30-40s, gyro never collects data
+- **Fix:** Removed stdbuf from subprocess calls in PersistentAccelDaemon/PersistentGyroDaemon
+- **Result:** 5964 accel + 5985 gyro samples in 5.1 min (stable)
 
-**Root Cause Found:** `stdbuf -oL` wrapper was terminating termux-api Sensor backend
-- **Symptom:** Accel daemon died after 30-40s with exit_code=0
-- **Investigation:** Direct termux-sensor works fine, but with stdbuf wrapper subprocess received 0 lines
-- **Fix:** Removed stdbuf from PersistentAccelDaemon.start() and PersistentGyroDaemon.start()
-
-**Impact:** Test now runs stably for 5+ minutes
-- Before: Accel daemon crashed mid-test, gyro never collected
-- After: 5964 accel + 5985 gyro samples in 5.1 minutes ✅
-
-**Key Insight:** The paired sensor initialization (comma-separated in termux-sensor -s) was already correct:
-```
+**Paired sensor init (correct pattern):**
+```bash
 termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup"
 ```
-The problem was the `stdbuf -oL` wrapper killing the backend before it could stream any data.
 
-**Gyro Data Structure (Now Saved to JSON):**
-```json
-{
-  "timestamp": 5.138,
-  "gyro_x": 0.01588,  // rad/s
-  "gyro_y": 0.04260,  // rad/s
-  "gyro_z": 0.00824,  // rad/s
-  "magnitude": 0.04621,
-  "ekf_velocity": 0,
-  "ekf_distance": 0.0
-}
-```
+**Termux:API Socket IPC Rule:**
+- ✅ Direct bash: `stdbuf -oL termux-sensor ... | filter` (works)
+- ❌ Python subprocess: `subprocess.Popen(['stdbuf', '-oL', 'termux-sensor', ...])` (BREAKS)
+- 🎯 Use `bufsize=1` instead, no stdbuf wrapper
 
 ---
 
-## Project Status
-**General Playground:** Various sensor fusion, motion tracking, and system monitoring experiments. Single Termux working directory with multiple tools.
+## Termux-Specific Quirks
 
-**Philosophy:** Keep related projects in one workspace. Each tool independent, can be developed/tested in separate Claude Code sessions.
-
-**Current Priority:** Motion Tracker V2 (production-ready sensor fusion)
+- **`/tmp/` files don't persist** - Use `~/gojo/logs/` for persistent logging
+- **stdbuf breaks socket IPC** - Never use in subprocess wrappers
+- **Sensor cleanup mandatory** - Use shell scripts, not direct Python (`./test_ekf.sh` not `python test_ekf_vs_...`)
 
 ---
 
-## 👤 Working Style & Process
+## Working Style (Non-Programmer Director)
 
-**I am not a programmer.** I direct complex technical projects by:
-- Understanding problem domains deeply (what needs solving, not how to code it)
-- Asking detailed questions about technical tradeoffs and architecture
-- Catching logical and system-level errors (not syntax errors)
-- Testing rigorously to validate requirements are met
-- Making decisions based on system goals and constraints
+**I guide through:**
+- Understanding problem domains (what, not how)
+- Asking about tradeoffs and architecture
+- Catching logical/system errors (not syntax)
+- Rigorous testing before accepting solutions
+- Making decisions based on system goals
 
-**How I work with AI (Claude Code):**
-1. Describe the goal/problem clearly
-2. Ask clarifying questions if proposals don't make sense
-3. Guide solutions through feedback and direction (not implementation details)
-4. Validate through testing before accepting work as done
-5. Commit explicitly when goals are achieved
-
-**What helps in sessions:**
-- Explain *why* technical choices matter (tradeoffs, not just code)
-- Show test output or demos to validate solutions work
-- Make assumptions explicit (ask "does this match your goal?")
-- Document decisions clearly (helps future sessions)
-- Ask if I understand before proceeding with implementation
-
-**What I expect to understand:**
-- The system architecture (how pieces fit together)
+**Expect me to understand:**
+- System architecture (how pieces fit)
 - Performance metrics (accuracy, speed, reliability)
-- Failure modes (what can go wrong, how we detect it)
-- Testing strategy (how to validate it works)
-- NOT: Detailed math, algorithm internals, or syntax specifics
-
-**Example from Oct 29 session:**
-- Built production-grade Kalman filters (EKF/UKF) by directing the solution
-- Caught critical bugs by understanding system goals (gyro integration, sensor initialization)
-- Designed real-time comparison framework for validation
-- Did NOT need to write code or understand quaternion math - just guided what code should accomplish
+- Failure modes (what breaks, how we detect)
+- Testing strategy (validation approach)
+- NOT: Math details, algorithm internals, syntax specifics
 
 ---
 
-## 🏆 Priority Projects & Wins
+## Motion Tracker V2 - Status
 
-### Motion Tracker V2 - Open Source Incident Logger (ACTIVE)
-**Status:** ✓ Production Ready | Direction: Open-Source Privacy/Insurance Tool
-
-**Mission:** DIY incident detection for privacy-conscious drivers
-- Log hard braking, impacts, swerving with independent sensor data
-- Prove what happened in accident disputes without corporate trackers
-- Open source, community-driven, transparently validated
-
+**Goal:** Open-source privacy-focused incident logger for drivers
+**Status:** Production-ready (stable environment needed)
 **Location:** `motion_tracker_v2/`
-- `motion_tracker_v2.py` - Main application + incident detection
-- `filters/` - Sensor fusion engines (EKF, UKF, Complementary, Kalman)
-- `test_ekf_vs_complementary.py` - Real-time filter comparison framework
-- `analyze_comparison.py` - Post-drive analysis and quality scoring
-- `accel_processor.pyx` - Cython optimization (25x faster)
 
-**Sensor Fusion Stack:**
-- **Extended Kalman Filter (EKF)** - Primary (9.5/10) - handles non-linear GPS + gyro
-- **Unscented Kalman Filter (UKF)** - Alternative (8.0/10) - sigma-point based
-- **Kalman (Pure NumPy)** - Reference (9.0/10) - no external dependencies
-- **Complementary Filter** - Baseline (7.5/10) - fast, simple fusion
-- All use Joseph form covariance for numerical stability
+### Core Features
+- **Sensor fusion:** EKF (primary), Complementary (fallback), UKF, Kalman
+- **Incident detection:** Hard braking >0.8g, impacts >1.5g, swerving >60°/sec
+- **Sensors:** GPS (~1Hz), Accel (50Hz), Gyro (paired with accel)
+- **Memory:** Bounded at 92MB (deque maxlen + auto-save every 2min)
+- **Cython:** 25x speedup (optional, auto-fallback to Python)
+- **Exports:** JSON, CSV, GPX
 
-**Features:**
-- GPS + Accelerometer + Gyroscope sensor fusion (multi-filter comparison)
-- Automatic incident detection (hard braking >0.8g, impacts >1.5g, swerving >60°/sec)
-- Kalman-filtered data (accurate, noise-reduced)
-- 50 Hz accelerometer sampling with optional Cython acceleration
-- Dynamic recalibration during stationary periods (handles phone rotation)
-- Auto-save every 2 minutes with memory management
-- Real-time filter validation framework
-- Battery monitoring and session summaries
-- Exports: JSON (raw + filtered), CSV, GPX formats
+### Hardware
+- Device: Samsung Galaxy S24 (Termux on Android 14)
+- IMU: LSM6DSO (accel + gyro paired)
+- GPS: LocationAPI
 
-**Run:**
+### Run Commands
 ```bash
-# MAIN TRACKER (Standard logging with EKF filter)
-./motion_tracker_v2.sh 5                    # Run for 5 minutes (default: EKF)
-./motion_tracker_v2.sh --filter=complementary 10  # 10 min with complementary filter
-./motion_tracker_v2.sh --enable-gyro 5     # 5 minutes with gyroscope
+# Standard tracking (EKF filter)
+./motion_tracker_v2.sh 5                         # 5 minutes
+./motion_tracker_v2.sh --enable-gyro 5           # With gyroscope
+./motion_tracker_v2.sh --filter=complementary 10 # Complementary filter
 
-# TEST/COMPARISON (EKF vs Complementary real-time validation)
-# ⚠️ CRITICAL: ALWAYS use shell script, NOT direct Python
-./test_ekf.sh 10                           # 10-minute test (EKF vs Complementary)
-./test_ekf.sh 5 --gyro                     # 5 minutes with gyro comparison
+# Test/Comparison (⚠️ MUST use shell script)
+./test_ekf.sh 10        # EKF vs Complementary (10 min)
+./test_ekf.sh 5 --gyro  # With gyro included
 
-# Analysis & Results
+# Analysis
 python motion_tracker_v2/analyze_comparison.py comparison_*.json
 ```
 
-⚠️ **CRITICAL: Shell Script is MANDATORY for test_ekf.sh**
-- Direct Python: `python test_ekf_vs_complementary.py` → Accelerometer sensor fails
-- Shell script: `./test_ekf.sh` → Properly initializes and manages sensor environment
-- Shell script handles:
-  1. Cleanup of stale sensor processes from previous runs
-  2. 3-second delay for sensor resource release
-  3. Clean subprocess initialization with proper signal handling
-  4. Final cleanup after test completion
+### Critical Rules
+**NEVER run direct Python:**
+- ✗ `python test_ekf_vs_complementary.py` (sensor init fails)
+- ✓ `./test_ekf.sh 10` (shell handles cleanup + init)
 
-**Data:** Saves to `motion_tracker_sessions/` (incidents in separate folder)
+**Test validity requires:**
+1. Accel data within 10s of startup
+2. At least 1+ accel sample during run
+3. "Accel samples: 0" = INVALID TEST
 
-**Oct 29 Session Additions:**
-- ✓ Extended Kalman Filter with 10D quaternion state (GPS+Accel+Gyro)
-- ✓ Real-time dual-filter comparison framework
-- ✓ Post-test analysis with accuracy scoring
-- ✓ Startup validation (10-second sensor warmup + MANDATORY accelerometer data check)
-- ✓ Incident detection module (hard braking, impacts, swerving)
-
-**CRITICAL TEST VALIDATION RULE:**
+**Stale sensor recovery:**
+```bash
+pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
+./test_ekf.sh 5
 ```
-🚨 SHELL SCRIPT IS MANDATORY:
-   WRONG: python motion_tracker_v2/test_ekf_vs_complementary.py 10
-   RIGHT: ./test_ekf.sh 10
-
-   Using direct Python will NOT initialize the sensor properly.
-   Always use ./test_ekf.sh instead.
-
-⚠️  A test is ONLY VALID if:
-  1. Accelerometer data is received within 10 seconds of startup
-  2. At least 1+ accelerometer samples collected during entire test run
-  3. If test shows "Accel samples: 0" → TEST IS INVALID, do not declare success
-
-✗ Failure scenarios (DO NOT ignore):
-  - "Accel samples: 0" after test completes = sensor issue, not test success
-  - "No accelerometer data after 10 seconds" at startup = fails immediately
-
-✓ Test passes only with actual accelerometer data in output
-
-⚠️  STALE SENSOR PROCESSES:
-   If test_ekf.sh fails with "No accelerometer data received":
-   1. Script already handles cleanup, but might need manual reset
-   2. Verify: termux-sensor -s ACCELEROMETER (should show JSON output)
-   3. Manual cleanup: pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
-   4. Then retry: ./test_ekf.sh 10
-```
-
-**Test Validation:**
-- ⚠️ **CRITICAL FINDING:** termux-sensor is unstable in this environment
-  - Starts successfully for ~2-5 seconds, then goes silent
-  - Health monitor detects silence and triggers aggressive restarts
-  - Restarts succeed (daemon starts) but termux-sensor never produces data again
-  - This is a Termux:API/hardware issue, not code
-  - System is resilient but can't overcome bad sensor
-
-**Status:** Code is production-ready for stable environments. This device may need:
-- Different ROM/Termux version
-- Hardware-level sensor recalibration
-- Alternative sensor library
-
-**Next Steps (When environment is stable):**
-- Validate EKF on real drive with working accelerometer
-- Create calibration + legal use documentation
-- Prepare for open source release
 
 ---
 
-## 📋 Successful Code Patterns
+## Key Code Patterns (Brief)
 
-### 1. **Complementary Filtering for Sensor Fusion**
-**Pattern Used:** Motion Tracker V2 (lines 75-168)
+### 1. Complementary Filtering
+- **File:** motion_tracker_v2.py:75-128
+- **Pattern:** GPS (70%) corrects accel drift, accel (30%) provides high-freq detail
+- **Use:** Fuse slow/accurate + fast/noisy sensors
 
-```
-Core idea: GPS corrects accel drift, accel provides high-frequency detail
-- GPS: Low frequency (~1/sec), low noise, absolute position truth
-- Accel: High frequency (50 Hz), drifts over time, good for transients
+### 2. Magnitude-Based Calibration
+- **File:** motion_tracker_v2.py:354-433
+- **Pattern:** Remove gravity by magnitude (orientation-independent)
+- **Use:** Accel works at any device orientation
 
-Implementation:
-  1. GPS update → velocity = GPS_velocity (absolute correction)
-  2. Accel samples → velocity += accel_magnitude * dt (temporal detail)
-  3. Weighting: 70% GPS, 30% accel (tunable)
-  4. Drift correction: Reset accel_velocity to fused velocity on each GPS update
-```
+### 3. Cython with Auto-Fallback
+- **File:** motion_tracker_v2.py:25-30, 611-649
+- **Pattern:** Try import FastAccelProcessor, except fallback to Python
+- **Use:** Optional performance boost (25x faster)
 
-**When to use:** Fusing slow/accurate + fast/noisy sensors
-**Reuse file:** motion_tracker_v2.py:75-128 (SensorFusion.update_gps/update_accelerometer)
+### 4. Thread-Safe State
+- **File:** motion_tracker_v2.py:32-180
+- **Pattern:** threading.Lock + get_state() for atomic reads
+- **Use:** Multiple threads accessing shared state
 
----
+### 5. Bounded Memory (Deques)
+- **File:** motion_tracker_v2.py:547-552, 662-670
+- **Pattern:** `deque(maxlen=N)` + clear on auto-save
+- **Use:** Prevent unbounded growth in long sessions
 
-### 2. **Magnitude-Based Calibration (Orientation-Independent)**
-**Pattern Used:** Motion Tracker V2 (lines 354-433)
+### 6. Stationary Detection
+- **File:** motion_tracker_v2.py:101-107
+- **Pattern:** Dual threshold (GPS accuracy + speed)
+- **Use:** Detect stopped state despite GPS noise
 
-```
-Core idea: Remove gravity by magnitude, not axis-by-axis
-- Problem: Device rotates → x/y/z biases become stale
-- Solution: Use magnitude of acceleration vector (gravity is always |g|)
-
-Implementation:
-  1. Calibration: Collect N stationary samples
-     - Per-axis bias: mean of samples (x_bias, y_bias, z_bias)
-     - Gravity magnitude: sqrt(x_bias² + y_bias² + z_bias²) ≈ 9.81
-  2. During tracking:
-     - Raw magnitude = sqrt(x² + y² + z²)
-     - Motion magnitude = raw_magnitude - gravity_magnitude
-     - Result: Works at ANY orientation (no recalibration needed)
-  3. Dynamic recal: If stationary >30sec, recollect samples and update
-```
-
-**When to use:** Accelerometer needs to work in any orientation
-**Reuse files:** motion_tracker_v2.py:354-433 (calibrate, try_recalibrate methods)
+### 7. Paired Sensor Init (IMU)
+- **File:** motion_tracker_v2.py:143-360
+- **Pattern:** Single process, dual queues (accel + gyro from same chip)
+- **Use:** Multi-sensor devices (better sync, less overhead)
 
 ---
 
-### 3. **Cython Optimization with Automatic Fallback**
-**Pattern Used:** Motion Tracker V2 (lines 25-30, 611-649)
+## Technical Config
 
-```
-Core idea: Try fast path first, fallback to pure Python gracefully
-- Problem: Cython .so file may not exist on import
-- Solution: Try/except with feature detection
+### Fusion Weights
+- GPS: 70% (accurate, low freq)
+- Accel: 30% (noisy, high freq)
 
-Implementation:
-  1. At import time:
-     try:
-       from accel_processor import FastAccelProcessor
-       HAS_CYTHON = True
-     except ImportError:
-       HAS_CYTHON = False
+### Sampling
+- Accel: 50 Hz default (20ms intervals)
+- GPS: ~1 Hz (variable)
+- Gyro: Paired with accel (50 Hz)
 
-  2. At runtime, check flag and use appropriate path:
-     if HAS_CYTHON:
-       use FastAccelProcessor (pre-compiled .so)
-     else:
-       use AccelerometerThread (pure Python)
-
-  3. Result: 25x speedup if compiled, no crashes if missing
-```
-
-**When to use:** Need performance but must work without optional deps
-**Reuse files:** motion_tracker_v2.py:25-30, 611-649
-
----
-
-### 4. **Thread-Safe State with Lock + Get State Method**
-**Pattern Used:** Motion Tracker V2 (lines 32-180)
-
-```
-Core idea: Thread-safe read/write with minimal locking
-- Problem: Main thread + GPS thread + Accel thread all modify state
-- Solution: Explicit lock + atomic get_state() method
-
-Implementation:
-  1. Class has self.lock = threading.Lock()
-  2. All writes protected: with self.lock: modify_state()
-  3. All reads go through get_state():
-     def get_state(self):
-       with self.lock:
-         return {
-           'velocity': self.velocity,
-           'distance': self.distance,
-           'is_stationary': self.is_stationary
-         }
-  4. Threads call state = fusion.get_state() (non-blocking read)
-  5. Prevents race conditions on critical data
-```
-
-**When to use:** Multiple threads modifying shared state
-**Reuse file:** motion_tracker_v2.py:32-180 (SensorFusion class)
-
----
-
-### 5. **Bounded Memory with Deques + Auto-Clear**
-**Pattern Used:** Motion Tracker V2 (lines 547-552, 662-670)
-
-```
-Core idea: Prevent unbounded memory growth with fixed-size circular buffers
-- Problem: Long-running app collects infinite samples
-- Solution: Use deque(maxlen=N) + periodic clear after save
-
-Implementation:
-  1. At init:
-     self.samples = deque(maxlen=10000)  # Max 10k GPS samples
-     self.accel_samples = deque(maxlen=50000)  # More for 50 Hz data
-  2. During auto-save:
-     self.save_data(auto_save=True, clear_after_save=True)
-     # This saves to file, then clears in-memory deques
-  3. Result: Memory stays bounded regardless of session length
-
-  Note: For very long sessions, still need manual cleanup but prevents
-        catastrophic runaway memory issues
-```
-
-**When to use:** Streaming data collection with unbounded input
-**Reuse files:** motion_tracker_v2.py:547-552, 662-670
-
----
-
-### 6. **Stationary Detection with Threshold Hysteresis**
-**Pattern Used:** Motion Tracker V2 (lines 101-107)
-
-```
-Core idea: Detect when device stops moving reliably
-- Problem: GPS noise creates false motion signals
-- Solution: Multi-threshold approach
-
-Implementation:
-  1. Two conditions (AND logic):
-     movement_threshold = max(5.0, gps_accuracy * 1.5)
-       # If GPS says ±5m uncertainty, we need >7.5m movement to register
-     speed_threshold = 0.1  # m/s (~0.36 km/h)
-       # If GPS speed <0.1 m/s, likely stopped
-
-  2. is_stationary = (distance_moved < movement_threshold) AND
-                     (gps_velocity < speed_threshold)
-
-  3. Use for:
-     - Dynamic recalibration (collect samples while still)
-     - Zero velocity indication (not just low velocity)
-     - Avoid false positives from GPS jitter
-```
-
-**When to use:** GPS-based motion detection needs to filter noise
-**Reuse file:** motion_tracker_v2.py:101-107
-
----
-
-### 7. **Paired Hardware Sensor Initialization (Shared IMU Stream)**
-**Pattern Used:** Motion Tracker V2 (lines 143-246)
-
-```
-Core idea: Initialize related hardware sensors together from same device
-- Problem: Accelerometer + Gyroscope are from same IMU chip but started separately
-          → 2 processes, independent timing, resource contention
-- Solution: Initialize both as paired stream, single process with dual queues
-
-Implementation:
-  1. Combined sensor request:
-     termux-sensor -s ACCELEROMETER,GYROSCOPE  # Both from same hardware
-
-  2. Single daemon with dual queues:
-     class PersistentAccelDaemon:
-       def __init__(self):
-         self.data_queue = Queue()       # Accel samples
-         self.gyro_queue = Queue()       # Gyro samples (new)
-
-  3. Parse JSON to route to correct queue:
-     for sensor_key, sensor_data in data.items():
-       if 'Accelerometer' in sensor_key:
-         self.data_queue.put(accel_data)
-       elif 'Gyroscope' in sensor_key:
-         self.gyro_queue.put(gyro_data)
-
-  4. Dependent sensors wrap the main daemon:
-     class PersistentGyroDaemon:
-       def __init__(self, accel_daemon):
-         self.data_queue = accel_daemon.gyro_queue  # Share queue
-
-  5. Result:
-     - 1 process instead of 2 (less overhead)
-     - Synchronized timestamps (same hardware clock)
-     - Reduced resource contention
-     - Correct hardware initialization pattern
-```
-
-**When to use:** Multi-sensor devices (IMU = accel + gyro + mag, etc.)
-**Data Validation:** Test showed 100% sync: 493 accel samples + 493 gyro samples in 2 min
-**Reuse file:** motion_tracker_v2.py:143-360, test_ekf_vs_complementary.py:180-241
-
----
-
-## 🔧 Technical Decisions
-
-### GPS + Accel Fusion Weights
-- GPS: 70% weight (accurate but low frequency)
-- Accel: 30% weight (noisy but high frequency)
-- Can tune based on GPS accuracy (auto-weight in future?)
-
-### Accelerometer Sampling
-- Default: 50 Hz (good balance of detail vs CPU load)
-- Cython: 25x faster at same rate (70% CPU reduction)
-- Could go higher (100+ Hz) if CPU permits
-
-### Auto-Save Interval
-- 2 minutes: Good balance for long drives
-- Prevents data loss without excessive disk I/O
-- Memory cleared after each save to prevent overflow
+### Auto-Save
+- Interval: 2 minutes
+- Memory cleared after save
+- Prevents data loss + overflow
 
 ### Dynamic Recalibration
-- Trigger: Stationary for 30+ seconds
-- Frequency: Check every 30 seconds max
-- Threshold: Only log if gravity drift > 0.5 m/s² (significant change)
-- Result: Auto-corrects for phone rotation, silent for minor drift
+- Trigger: Stationary >30s
+- Check: Every 30s max
+- Threshold: Gravity drift >0.5 m/s²
 
 ---
 
-## 📋 Incident Detection & Legal Use
+## Incident Detection
 
-**See:** `motion_tracker_v2/docs/INCIDENT_DETECTION.md` (comprehensive guide)
+| Event | Threshold | Use |
+|-------|-----------|-----|
+| Hard Braking | >0.8g | Emergency stops |
+| Impact | >1.5g | Collisions |
+| Swerving | >60°/sec | Loss of control |
 
-### Quick Reference: Detection Thresholds
-| Event | Threshold | Use Case |
-|-------|-----------|----------|
-| **Hard Braking** | >0.8g | Emergency stops, collision avoidance |
-| **Impact** | >1.5g | Collisions, severe potholes |
-| **Swerving** | >60°/sec | Evasive action, loss of control |
+**Context captured:** 30s before + 30s after event
+**Location:** `motion_tracker_sessions/incidents/`
+**Access:** `ls ~/gojo/motion_tracker_sessions/incidents/`
 
-### Data Captured Per Incident
-- 30 seconds of context **before** event
-- 30 seconds of context **after** event
-- GPS location (±5-10m accuracy)
-- Acceleration magnitude
-- Vehicle rotation (gyro)
-- Timestamps (GPS-synchronized)
-
-### For Insurance Disputes
-1. Keep incident files (don't delete raw data)
-2. Establish baseline driving patterns
-3. Export analysis reports before incidents needed
-4. Include sensor specs & calibration info
-5. Note road/weather conditions at time
-
-### Access Incidents
-```bash
-# List all incidents
-ls ~/gojo/motion_tracker_sessions/incidents/
-
-# View specific incident
-cat ~/gojo/motion_tracker_sessions/incidents/incident_*_braking.json | python3 -m json.tool
-
-# Count by type
-grep -l hard_braking ~/gojo/motion_tracker_sessions/incidents/* | wc -l
-```
-
-### Customizing Thresholds
-Edit `motion_tracker_v2/incident_detector.py`:
-```python
-THRESHOLDS = {
-    'hard_braking': 0.8,    # Lower = more sensitive
-    'impact': 1.5,          # Raise to reduce false positives
-    'swerving': 60.0,       # Higher = only extreme swerves
-}
-```
+**Customize:** Edit `motion_tracker_v2/incident_detector.py` THRESHOLDS dict
 
 ---
 
-## 📚 Future Improvements (If Needed)
+## Operational Metrics
 
-1. **Adaptive GPS Weighting:** Auto-adjust 70/30 split based on GPS accuracy
-2. **Altitude Tracking:** Use GPS altitude + pressure sensor
-3. **Trip Analysis:** Segment drives into acceleration/cruise/deceleration
-4. **False Positive Reduction:** Machine learning on driving patterns
-5. **Web Dashboard:** Real-time session monitoring
-6. **SQLite Backend:** Replace JSON files for query capability
+### Expected Performance
+- Startup: 85MB → 92MB (5s)
+- CPU: 15-25% tracking, 30-35% with metrics
+- Memory: 92MB stable (no growth)
+- Battery: ~8-10%/hour
+- Data: ~5MB per 2min (auto-save)
 
----
-
-## 🗂️ Project Structure
-
-```
-gojo/
-├── .claude/CLAUDE.md                 (This file)
-├── motion_tracker_v2.sh              (Launch wrapper)
-├── motion_tracker_v2/                (Priority: main code)
-│   ├── motion_tracker_v2.py          (Main application)
-│   ├── accel_processor.pyx           (Cython source)
-│   ├── accel_processor.cpython-312.so (Compiled module)
-│   └── setup.py                      (Build config)
-├── motion_tracker_sessions/          (Priority: data storage)
-│   ├── motion_track_v2_*.json        (Raw data)
-│   ├── motion_track_v2_*.json.gz     (Compressed)
-│   └── motion_track_v2_*.gpx         (Maps format)
-└── [other tools/experiments...]
-```
-
----
-
-## 🚀 Quick Start
-
-**For next session with motion tracker:**
-```bash
-cd ~/gojo
-python motion_tracker_v2/motion_tracker_v2.py  # Continuous mode
-# or
-./motion_tracker_v2.sh 10                      # 10 minute run
-```
-
-**Check last session:**
-```bash
-ls -lh motion_tracker_sessions/ | tail -3
-```
-
-**Analyze data:**
-```bash
-gunzip -c motion_tracker_sessions/*.json.gz | python3 -m json.tool | less
-```
-
----
-
----
-
-## 📁 Other Tools in This Workspace
-
-| Tool | Purpose | Status |
-|------|---------|--------|
-| `motion_tracker.py` | Original motion tracker (v1) | Legacy |
-| `motion_tracker_benchmark.py` | Performance testing & benchmarking | Utility |
-| `system_monitor.py` | Termux system stats & telemetry | Active |
-| `ping_tracker.py` | Network ping tracking | Utility |
-| `ping_tracker_enhanced.py` | Enhanced ping analysis | Utility |
-| `gps_tester.py` | GPS functionality validation | Testing |
-| `monitor_ping.sh` | Simple ping monitoring script | Utility |
-
-These are separate experiments in the same workspace. Focus on Motion Tracker V2 for production use; others can be picked up in dedicated sessions if needed.
-
----
-
-## 🆘 Troubleshooting
-
-### Termux Crash During Test (Process 9 Error)
-
-**Root Cause:** Combined disk space and sensor initialization issues
-
-**Symptoms:**
-- Test exits with "signal 9" or "Killed"
-- Running direct Python: `python test_ekf_vs_complementary.py` fails on sensor init
-- Termux restarts unexpectedly
-
-**Solution:**
-
-1. **Always use shell script (MANDATORY):**
-   ```bash
-   ./test_ekf.sh 5      # ✓ CORRECT - shell handles sensor init
-   # NOT:
-   python test_ekf_vs_complementary.py  # ✗ WRONG - sensor fails
-   ```
-
-2. **If sensor still fails, reset stale processes:**
-   ```bash
-   pkill -9 termux-sensor
-   pkill -9 termux-api
-   sleep 3
-   ./test_ekf.sh 5
-   ```
-
-### Disk Space Full (100% reported)
-
-**The /dev/block/dm-7 partition is system bloatware (can't clear)**
-
-**Check actual available space for motion tracker:**
-```bash
-df -h | grep "storage/emulated"    # Should show plenty of free space (250GB+)
-df -h | grep "cache"               # System cache partition
-du -sh ~/*                         # User home directory usage
-```
-
-**Real disk layout:**
-| Partition | Size | Used | Free | Purpose |
-|-----------|------|------|------|---------|
-| `/dev/block/dm-7` | 6.9G | 6.9G | 0 | **Samsung carrier bloatware (ignore 100%)** |
-| `/cache` | 779M | 16M | **747M** | System scratch (cleanable) |
-| `/storage/emulated` | 461G | 208G | **253G** | Your data (plenty of space) |
-
-**Your motion tracker uses `/storage/emulated` → You have 253GB free, no issue.**
-
-**Cleanup if needed (removes old session data):**
-```bash
-rm -rf ~/game ~/go ~/llama.cpp ~/raylib ~/ollama  # Frees ~1.3GB
-rm -rf ~/gojo/sessions/                           # Old session archives
-apt clean                                          # Termux package cache
-```
-
----
-
----
-
-## 🚀 Operational Guide - Quick Reference
-
-### Standard Operation
-```bash
-# 30-minute production run (EKF filter)
-./motion_tracker_v2.sh 30
-
-# With full metrics validation
-./test_ekf.sh 30 --gyro
-
-# Any duration
-./motion_tracker_v2.sh N              # N minutes
-./motion_tracker_v2.sh --enable-gyro N
-./motion_tracker_v2.sh --filter=complementary N
-```
-
-**⚠️ CRITICAL:** Always use shell script, never direct Python
-- `./test_ekf.sh 10` ✓ (correct - sensor init handled)
-- `python test_ekf_vs_complementary.py` ✗ (wrong - sensor fails)
-
-### Real-Time Output
-```
-[MM:SS] GPS: READY | Accel: 1250 | Gyro: 1250 | Memory: 92.1 MB
-[MM:SS] Incidents: Braking: 0 | Swerving: 0
-
-With --gyro flag:
-Bias Magnitude:      0.003831 rad/s  [✓ CONVERGING]
-Quaternion Norm:     1.000000        [✓ HEALTHY]
-Gyro Residual:       0.0596 rad/s    [✓ LOW]
-```
-
-### Interpreting Key Metrics
+### Interpreting Real-Time Output
 | Metric | Expected | Issue | Fix |
 |--------|----------|-------|-----|
-| **GPS: READY** | Within 30s | Timeout after 60s | GPS module may not be enabled |
-| **Accel: NNNN** | ~50/sec increase | 0 samples after 10s | Use shell script, not direct Python |
-| **Gyro: NNNN** | Exactly matches Accel | Mismatch | Paired sensor init failed |
-| **Memory: 92 MB** | Stable, no growth | Growing >0.5 MB/min | Auto-save issue, restart |
-| **Bias Magnitude** | 0.002-0.01 rad/s | 0.0 after 30s | Bias learning failed |
-| **Quaternion Norm** | 1.000000 ± 0.001 | >1.01 or <0.99 | Numerical instability (rare) |
-
-### Performance Expectations
-- **Startup:** 85 MB → 92 MB (5s)
-- **CPU:** 15-25% during tracking, 30-35% with metrics
-- **Memory:** Bounded at 92 MB indefinitely (no growth risk)
-- **Battery:** ~8-10% per hour of continuous operation
-- **Data:** ~5 MB per 2 minutes (auto-save interval)
-
-### Data Output
-```bash
-# Location
-~/gojo/motion_tracker_sessions/motion_track_v2_*.json
-~/gojo/motion_tracker_sessions/motion_track_v2_*.json.gz  # compressed
-
-# View
-gunzip -c motion_track_v2_*.json.gz | python3 -m json.tool | less
-
-# Count incidents
-python3 << 'EOF'
-import json, gzip
-with gzip.open('motion_track_v2_*.json.gz', 'rt') as f:
-    data = json.load(f)
-    incidents = data.get('incidents', [])
-    braking = [i for i in incidents if i['type'] == 'hard_braking']
-    swerving = [i for i in incidents if i['type'] == 'swerving']
-    print(f"Braking: {len(braking)}, Swerving: {len(swerving)}")
-EOF
-```
+| GPS: READY | <30s | >60s timeout | GPS disabled |
+| Accel: NNNN | ~50/sec growth | 0 samples | Use shell script |
+| Gyro: NNNN | Matches accel | Mismatch | Paired init failed |
+| Memory: 92 MB | Stable | Growing >0.5MB/min | Restart |
+| Bias Magnitude | 0.002-0.01 rad/s | 0.0 after 30s | Bias learning failed |
+| Quaternion Norm | 1.000 ± 0.001 | >1.01 or <0.99 | Numerical instability |
 
 ---
 
-## 🔧 Troubleshooting
+## Troubleshooting
 
-### Test Won't Start / "No accelerometer data"
+### No Accelerometer Data
 ```bash
-# Sensor daemon stuck - clean up and retry
-pkill -9 termux-sensor
-pkill -9 termux-api
-sleep 3
+# Clean stale sensors
+pkill -9 termux-sensor && pkill -9 termux-api && sleep 3
 ./test_ekf.sh 5 --gyro
 ```
 
-### Memory Growing Too Fast
-```bash
-# Should be stable at 92 MB (±2 MB variance)
-# If growing: auto-save likely failed
-# Solution: Stop (Ctrl+C) and restart
-```
+### Memory Growing
+- Expected: 92 MB ± 2 MB
+- If growing: auto-save failed → restart
 
-### GPS: WAITING (after 60+ seconds)
-```bash
-# Expected on first run (5-30s to lock)
-# If sustained: LocationAPI issue
-# System gracefully degrades to inertial-only mode
-# Test continues, data preserved
-```
+### GPS Timeout
+- Expected: 5-30s on first lock
+- If sustained: LocationAPI issue → system degrades to inertial-only
 
-### Disk Space Concerns
+### Disk Space
 ```bash
-# Check actual free space (ignore 100% warning on /dev/block/dm-7)
-df -h | grep "storage/emulated"    # Should show 250+ GB free
-
-# Cleanup if needed
-rm -rf ~/gojo/motion_tracker_sessions/motion_track_*.json
-apt clean
+df -h | grep "storage/emulated"  # Should show 250+ GB free
+# Ignore 100% on /dev/block/dm-7 (Samsung bloatware partition)
 ```
 
 ---
 
-## ✅ Production Readiness Status (Oct 31, 2025)
+## Architecture (3-Layer)
 
-**Status:** PRODUCTION READY FOR DEPLOYMENT
+1. **Data Collection** (`_accel_loop`, `_gps_loop`) - Fast, non-blocking, pure collection
+2. **Persistence** (`_save_results`) - Auto-save every 2min, clears deques, NO restarts
+3. **Health Monitoring** (`_health_monitor_loop`) - Runs every 2s, handles failures async
 
-### Validation Completed
-- ✅ 10-minute continuous operation without crashes
-- ✅ Memory bounded at 92 MB with zero growth risk
-- ✅ GPS API stable, no crashes after sustained load
-- ✅ Sensor synchronization perfect (100% accel=gyro sync)
-- ✅ EKF filter working correctly (bias converged, quat normalized)
-- ✅ Auto-save mechanism proven, deques bounded
-- ✅ Code quality reviewed, defensive programming applied
+**Key insight:** No blocking operations in data collection path
 
-### System Architecture
-**Sensor Fusion Stack:**
-- **EKF (13D):** Primary filter with explicit gyro bias terms [bx, by, bz]
-  - Quaternion integrated with bias-corrected angular velocity
-  - Bias converges within 30 seconds
-  - Joseph form covariance for numerical stability
-- **Complementary Filter:** Fallback, fast GPS/accel fusion
-- **Hardware:** GPS (~1 Hz), Accelerometer (50 Hz), Gyroscope (paired)
+---
 
-### What's Ready Now
-- ✅ Long-term driving sessions (30-60+ minutes stable)
-- ✅ Incident detection (hard braking >0.8g, swerving >60°/sec)
-- ✅ Memory-safe operation (won't crash from overflow)
-- ✅ Privacy-preserving incident logging
+## Production Status (Nov 2025)
 
-### Next Phase (When Ready)
-1. Real driving test with actual incident events
+**Validation Completed:**
+- ✅ 10-min continuous operation
+- ✅ Memory bounded (92 MB, zero growth)
+- ✅ GPS API stable
+- ✅ Sensor sync perfect (100% accel=gyro)
+- ✅ EKF filter working (bias converges <30s)
+- ✅ Auto-save proven, deques bounded
+
+**System Architecture:**
+- EKF (13D): Primary filter, gyro bias terms [bx,by,bz], Joseph form covariance
+- Complementary: Fallback, fast GPS/accel fusion
+- Hardware: LSM6DSO IMU + GPS LocationAPI
+
+**Ready Now:**
+- Long sessions (30-60+ min stable)
+- Incident detection
+- Memory-safe operation
+- Privacy-preserving logging
+
+**Next Phase:**
+1. Real drive test with actual incidents
 2. Incident classification validation
-3. False positive rate optimization on real data
+3. False positive optimization
 
 ---
 
-## 📝 Session Log
+## Critical Bugs Fixed (Nov 3)
 
-### Nov 3, 2025 - Comprehensive Architecture Fixes & Accel Recovery
-**Session Goal:** Fix critical bugs found in comprehensive architecture review + restore accel reliability
+1. Final save data loss (80-90%) - Now uses accumulated_data
+2. Race conditions - Added threading.Lock
+3. Deque overflow - Increased buffers 10k→30k
+4. Physics violation - Removed mid-test filter resets
+5. Health monitor race - Re-enabled accel restart properly
+6. GPS counter - Now shows cumulative + recent window
 
-**6 Critical Bugs Fixed:**
-1. **Final save data loss (80-90%)** - Now uses accumulated_data instead of cleared deques
-2. **Race conditions** - Added threading.Lock around all accumulated_data operations
-3. **Deque overflow** - Increased accel/gyro buffers: 10k → 30k (25 min @ 20Hz actual)
-4. **Physics violation** - Removed mid-test filter resets that created fake acceleration
-5. **Health monitor restart race** - Disabled restart in health_monitor, then re-enabled properly
-6. **GPS counter misleading** - Now shows cumulative total + recent window
+**Architecture Lesson:** Keep recovery mechanisms, ensure single source (health_monitor only)
 
-**GPS Polling Improvement:**
-- Changed baseline interval: 10s → 2s (faster response to GPS signal changes)
-- Maintains exponential backoff on failures (5→10→15→20→30s)
+---
 
-**Accel Regression & Fix:**
-- FIX 5 disabled accel restart entirely (too aggressive)
-- Root cause: termux-sensor watchdog exits cleanly (exit_code=0) after 5s silence, expected to recover
-- Solution: Re-enabled accel restart logic in health_monitor (matches GPS behavior)
-- **Result:** Accel now recovers reliably - tested with 2308 accel samples + 1 GPS fix through auto-save cycle
+## File Structure
 
-**Test Results:**
-**Test 943a3b (5-min)** - ✅ PASSED
-- Accel samples: 550+ collected throughout 5 minutes
-- GPS: Restarted once at 31.1s (normal watchdog behavior)
-- Memory: 91.6 MB (stable, no growth)
-- EKF vs Complementary filter differential data valid
-- Data completely preserved (no loss post-fix)
-
-**Test 8c4564 (10-min)** - ✅ PASSED
-- GPS fixes: 12+ collected with ~1-2/minute rate
-- Accel samples: 671+ maintained throughout test
-- Memory: 91.6 MB peak (bounded correctly)
-- Filter comparison showing real movement (64-81m distance)
-- No regressions, all fixes working
-
-**Note:** Test 342f67 ran with cached .pyc files from previous session (before current fixes).
-Python bytecode cache was stale. Cache cleared for future tests.
-
-**Improvements Added (After Main Fixes):**
-- Added stderr capture for PersistentSensorDaemon to log Termux API errors
-- Added stderr capture for PersistentGPSDaemon to detect connection failures
-- All error messages logged with component prefix for diagnostics
-- Helps identify intermittent API failures in future test runs
-
-**Validation Test - Test 5e35cc (5-min with stderr capture):**
-- ✅ PASSED with 1,436 accel samples collected
-- Captured error: "Terminated /data/data/com.termux/files/usr/libexec/termux-api Sensor"
-- Stderr captured: "GPS timeout (8s exceeded)"
-- Stderr captured: "GPS API failed 5 times, backoff=30s (stage 5)"
-- System recovered from early daemon death and continued collecting data
-- Memory peaked at 93.8 MB (stable)
-- Exit code: 0 (successful completion)
-- **Demonstrates:** Errors are now visible and system recovers gracefully
-
-**User Request Addressed:**
-- User: "I get the occasional termux API error. maybe we should have something catch that error"
-- Solution: ✅ Stderr capture now logs all API errors with component prefix
-- Result: Error messages visible in test output for diagnosis and debugging
-
-**Commits:**
-- `bb1b509` - Add stderr capture for Termux API error diagnostics
-- `0a700ea` - Fix 6 critical bugs (data loss, thread safety, physics, monitoring)
-- `2374156` - Re-enable accel restart logic (FIX 5 was regression)
-
-**Key Learning:** Disabling recovery mechanisms to prevent race conditions was wrong approach.
-Instead: keep recovery but ensure it happens from single source (health_monitor only, not auto-save).
-Also: Transient resource issues need diagnostic logging (stderr capture) to identify root cause.
-
-### Nov 1, 2025 - Critical Bug Fix: Blocking Restart in Auto-Save
-**Initial Analysis (INCORRECT):**
-- ✗ Claimed 30-minute test PASSED with 651 samples (actually FAILED at 2 min mark)
-- ✗ Misread test output: 1899 samples in first 2 minutes, then 0 for remaining 28 minutes
-
-**Root Cause Identified:**
-- **BUG**: `_restart_accel_daemon()` was called synchronously in auto-save at ~2 min mark
-- **BLOCKING**: Restart blocked for 27+ seconds (12s sleep + 15s validation)
-- **RACE CONDITION**: During blocking, `_accel_loop()` thread had stale daemon reference
-- **FAILURE**: New daemon created but thread still pulled from dead daemon, received no data
-- **RESULT**: After 2 minutes: 1899 samples collected, then 0 samples for 28 minutes
-
-**The Fix:**
-- ✓ Removed blocking `_restart_accel_daemon()` call from auto-save
-- ✓ Kept deque clearing (that's correct, just no restart)
-- ✓ Health monitor thread handles all failures asynchronously (runs every 2s, no blocking)
-- ✓ Proper separation of concerns: save ≠ monitor
-
-**Why This Works:**
-- Health monitor detects accel silence >5s independently
-- Restarts happen in separate thread (non-blocking)
-- No race condition between threads
-- `_accel_loop()` simplified: data collection only, no restart logic
-- Architecture is now clean and maintainable
-
-**Fix Validation:**
-- ✅ New 30-minute test running successfully
-- ✅ Auto-saves occurring every 2 minutes (verified 7+ saves so far)
-- ✅ Continuous accel collection after each auto-save:
-  - After save #1: 2323 samples collected, then resumes at sample 4
-  - After save #2: 2349 samples collected, then resumes at sample 2
-  - After save #3-7: 2350+ samples per period, continuous collection
-- ✅ Memory stable at 91.7-93.2 MB throughout
-- ✅ GPS continues working (recovers quickly after deque clear)
-- ✅ No "FATAL ERROR" or dropout like previous test
-- ✅ Health monitor thread running silently (no restart messages = no sensor failures detected)
-
-**Architecture Validated:**
-The three-layer architecture is now working correctly:
-1. **Data Collection** (`_accel_loop`, `_gps_loop`): Fast, non-blocking, pure collection
-2. **Persistence** (`_save_results`): Auto-save every 2 minutes, clears deques, no restarts
-3. **Health Monitoring** (`_health_monitor_loop`): Runs every 2 seconds, handles failures asynchronously
-
-Each layer has a clear responsibility. No blocking operations in data collection path.
-
-### Nov 3, 2025 - Sensor Configuration: All Hardware Using Specific LSM6DSO IDs
-**Session Goal:** Configure all sensors (accel, gyro, GPS) with specific hardware IDs for reliability
-
-**Problem:** Generic sensor names (`ACCELEROMETER`, `GYROSCOPE`) were inconsistent
-**Solution:** Use specific sensor IDs for accel & gyro, keep GPS via termux-location
-
-**Changes Made:**
-
-**1. Accelerometer (motion_tracker_v2.py:line159)**
-- Changed from: `-s 'ACCELEROMETER'`
-- Changed to: `-s 'lsm6dso LSM6DSO Accelerometer Non-wakeup'`
-- Updated debug output at line 177
-
-**2. Gyroscope (motion_tracker_v2.py:line335)**
-- Changed from: `-s 'GYROSCOPE'`
-- Changed to: `-s 'lsm6dso LSM6DSO Gyroscope Non-wakeup'`
-- Updated debug output at line 354
-
-**3. GPS (motion_tracker_v2.py:line522)**
-- Already using `termux-location -p gps` (no change needed)
-- GPS API doesn't use sensor selection syntax
-- Provides lat/lon/altitude/speed/bearing/accuracy
-
-**Verification (All Tested & Working):**
-```bash
-# Accelerometer
-termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup" -d 50
-# Output: x, y, z acceleration in m/s²
-
-# Gyroscope
-termux-sensor -s "lsm6dso LSM6DSO Gyroscope Non-wakeup" -d 50
-# Output: x, y, z angular velocity in rad/s
-
-# GPS
-termux-location -p gps
-# Output: JSON with lat/lon/altitude/speed/bearing/accuracy
+```
+gojo/
+├── .claude/CLAUDE.md              (This file)
+├── motion_tracker_v2.sh           (Launch wrapper)
+├── test_ekf.sh                    (Test wrapper - MANDATORY)
+├── motion_tracker_v2/
+│   ├── motion_tracker_v2.py       (Main app)
+│   ├── filters/                   (EKF, UKF, Kalman, Complementary)
+│   ├── test_ekf_vs_complementary.py (Comparison test)
+│   ├── analyze_comparison.py      (Post-test analysis)
+│   ├── accel_processor.pyx        (Cython source)
+│   └── accel_processor.cpython-312.so (Compiled - 25x speedup)
+└── motion_tracker_sessions/
+    ├── motion_track_v2_*.json     (Raw data)
+    ├── motion_track_v2_*.json.gz  (Compressed)
+    ├── motion_track_v2_*.gpx      (Maps format)
+    └── incidents/                 (Incident logs)
 ```
 
-**Impact on Code:**
-- `PersistentAccelDaemon` now uses LSM6DSO accel ID
-- `PersistentGyroDaemon` now uses LSM6DSO gyro ID
-- `GPSThread` unchanged (already using correct API)
-- `test_ekf_vs_complementary.py` imports these classes - **automatically uses updated sensors**
-- All shell scripts work without changes (use classes via Python imports)
+---
 
-**Test Commands (Ready to Use):**
+## Quick Reference
+
+**Start session:**
 ```bash
-# Standard tracking
-./motion_tracker_v2.sh 5                    # Accel + GPS
-./motion_tracker_v2.sh --enable-gyro 5      # Accel + Gyro + GPS (EKF mode)
-./motion_tracker_v2.sh --filter=complementary 5  # Accel + GPS (complementary)
-
-# Validation tests
-./test_ekf.sh 5                             # EKF vs Complementary (accel+GPS)
-./test_ekf.sh 5 --gyro                      # With gyroscope included
+cd ~/gojo
+./motion_tracker_v2.sh 10                      # 10 min tracking
+./test_ekf.sh 5 --gyro                         # 5 min test with gyro
 ```
 
-**Hardware Confirmation:**
-- Device: Samsung Galaxy S24 (Termux on Android 14)
-- Sensors:
-  - LSM6DSO IMU (accel + gyro paired)
-  - AK09918 Magnetometer
-  - GPS (via LocationAPI)
-- All three sensors now with explicit IDs for maximum reliability
+**Check data:**
+```bash
+ls -lh motion_tracker_sessions/ | tail -3
+gunzip -c motion_tracker_sessions/*.json.gz | python3 -m json.tool | less
+```
 
-**Shell Script Updates (Cleanup & Validation):**
+**View incidents:**
+```bash
+ls ~/gojo/motion_tracker_sessions/incidents/
+grep -l hard_braking incidents/* | wc -l
+```
 
-**test_ekf.sh** - Updated cleanup_sensors() & validate_sensor()
-- Cleanup: Now matches both old generic AND new specific sensor names
-  - Kills: `termux-sensor.*ACCELEROMETER`, `termux-sensor.*Accelerometer`
-  - Kills: `termux-sensor.*GYROSCOPE`, `termux-sensor.*Gyroscope`
-  - Kills: `stdbuf.*termux-sensor` (wrapper process)
-  - Kills: `termux-api Sensor` (backend)
-  - Result: Prevents zombie/stale sensor processes
-- Validation: Uses new LSM6DSO Accel ID in test command
-  - Command: `termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup"`
-  - Ensures validation matches actual runtime sensor requests
+---
 
-**motion_tracker_v2.sh** - Updated cleanup_sensors() & validate_sensor()
-- Same cleanup improvements as test_ekf.sh
-- Same validation using LSM6DSO Accel ID
-- GPS cleanup added (termux-api Location) to prevent socket exhaustion
+## Other Tools (Same Workspace)
 
-**Why These Changes Matter:**
-1. **Zombie Prevention** - Old cleanup patterns killed stale GENERIC sensor names but now code uses SPECIFIC LSM6DSO names → cleanup was orphaning processes
-2. **Validation Matching** - Validation was testing ACCELEROMETER but Python code uses specific LSM6DSO ID → mismatched conditions
-3. **Comprehensive Cleanup** - Now kills both old and new process names for backwards compatibility
-4. **stdbuf Wrapper** - Added cleanup for stdbuf processes that wrap termux-sensor commands
-5. **GPS Socket Release** - Added Location API cleanup to prevent "Connection refused" errors from socket exhaustion
+| Tool | Purpose | Status |
+|------|---------|--------|
+| motion_tracker.py | Original v1 | Legacy |
+| system_monitor.py | Termux stats | Active |
+| gps_tester.py | GPS validation | Testing |
+| ping_tracker*.py | Network ping | Utility |
 
-**Result:**
-- Shell script cleanup now properly terminates all sensor-related processes
-- No orphaned/zombie processes from old generic sensor names
-- Validation matches actual sensor initialization in Python code
-- Signal handling (trap EXIT SIGINT SIGTERM) ensures cleanup even on interruption
-- 5-second delay sufficient for Android HAL resource release
-
-### Oct 31, 2025 - Consolidation & Final Audit
-- ✓ Consolidated 50+ markdown files into single CLAUDE.md
-- ✓ Cleaned up redundant documentation
-- ✓ Merged operational guide, validation results, production readiness
-- ✓ Created tight reference format for future sessions
-
-### Oct 29-30, 2025 - Production Validation
-- ✓ Implemented 13D Gyro-EKF with explicit bias terms
-- ✓ Built real-time metrics validation framework
-- ✓ Validated 10-minute extended test
-- ✓ Confirmed memory bounded at 92 MB
-- ✓ Fixed GPS API reliability issues
-- ✓ Applied code quality improvements
-
-### Oct 23, 2025 - Previous
-- ✓ Added dynamic re-calibration for accelerometer drift
-- ✓ Tested: 2min highway, 5min indoor, 3min folder-structure tests
-- ✓ Reorganized code into dedicated project folder
-- ✓ Ready for real drive session
+Focus: **Motion Tracker V2** for production use
