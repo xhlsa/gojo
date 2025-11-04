@@ -1,5 +1,39 @@
 # Gojo Project Overview & Session Notes
 
+## Latest Session: Nov 4, 2025 - Gyroscope Activation Fix (stdbuf Root Cause)
+
+**🎯 Mission Accomplished:** Fixed gyroscope data collection in long-running tests
+
+**Root Cause Found:** `stdbuf -oL` wrapper was terminating termux-api Sensor backend
+- **Symptom:** Accel daemon died after 30-40s with exit_code=0
+- **Investigation:** Direct termux-sensor works fine, but with stdbuf wrapper subprocess received 0 lines
+- **Fix:** Removed stdbuf from PersistentAccelDaemon.start() and PersistentGyroDaemon.start()
+
+**Impact:** Test now runs stably for 5+ minutes
+- Before: Accel daemon crashed mid-test, gyro never collected
+- After: 5964 accel + 5985 gyro samples in 5.1 minutes ✅
+
+**Key Insight:** The paired sensor initialization (comma-separated in termux-sensor -s) was already correct:
+```
+termux-sensor -s "lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup"
+```
+The problem was the `stdbuf -oL` wrapper killing the backend before it could stream any data.
+
+**Gyro Data Structure (Now Saved to JSON):**
+```json
+{
+  "timestamp": 5.138,
+  "gyro_x": 0.01588,  // rad/s
+  "gyro_y": 0.04260,  // rad/s
+  "gyro_z": 0.00824,  // rad/s
+  "magnitude": 0.04621,
+  "ekf_velocity": 0,
+  "ekf_distance": 0.0
+}
+```
+
+---
+
 ## Project Status
 **General Playground:** Various sensor fusion, motion tracking, and system monitoring experiments. Single Termux working directory with multiple tools.
 
