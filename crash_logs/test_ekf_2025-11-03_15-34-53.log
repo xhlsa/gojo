@@ -1,0 +1,751 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Mon Nov  3 22:34:53 UTC 2025
+Test arguments: 2 --gyro
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+==============================================================================
+[cleanup_sensors] Starting
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[cleanup_sensors] Complete
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Starting
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[GyroDaemon] Starting read loop, stdout available
+[GyroDaemon] Reader thread started: Thread-4 (_read_loop)
+[00:05] STATUS: Memory=85.8MB (peak=85.8MB) | GPS=   0 (ALIVE) | Accel=   59 (ALIVE) | Gyro=    0
+[GPSDaemon] stderr: GPS timeout (8s exceeded)
+
+Configuration:
+  Duration: 2 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, independent process)
+   Sensor: lsm6dso LSM6DSO Accelerometer Non-wakeup
+   Process: termux-sensor (PID 27692)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  ✓ Accelerometer responding with data on attempt 1
+
+✓ Calibrating accelerometer (collecting 20 stationary samples)...
+  ✓ Gravity calibrated: 9.85 m/s²
+    (collected 20 samples, range: 9.81-9.90)
+
+✓ EKF filter initialized
+✓ Complementary filter initialized
+
+✓ Starting GPS daemon (continuous polling)...
+  ✓ GPS daemon started (polling termux-location continuously)
+  ⏱ Allowing GPS backend 3 seconds to stabilize...
+
+✓ Initializing gyroscope (optional, will fallback if unavailable)...
+✓ Gyroscope daemon started (20Hz, independent process)
+   Sensor: lsm6dso LSM6DSO Gyroscope Non-wakeup
+   Process: termux-sensor (PID 27748)
+  ✓ Gyroscope daemon started (independent sensor stream)
+  Note: Gyroscope data will be collected during test run
+
+✓ Running for 2 minutes...
+
+[00:05] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 59 | Gyro samples: 0
+
+[00:06] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 79 | Gyro samples: 0
+
+[00:07] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 98 | Gyro samples: 0
+
+[00:08] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 118 | Gyro samples: 0
+
+[00:09] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 138 | Gyro samples: 0
+
+[00:10] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 158 | Gyro samples: 0
+
+[00:11] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.019 m/s²        |    0.019 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 177 | Gyro samples: 0
+
+[00:12] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.013 m/s²        |    0.013 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+⚠️ ACCEL SILENT for 5.6s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+
+GPS fixes: 0 (recent: 0) | Accel samples: 197 | Gyro samples: 0
+
+[00:13] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.019 m/s²        |    0.019 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 217 | Gyro samples: 0
+
+[00:14] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.002 m/s²        |    0.002 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 236 | Gyro samples: 0
+
+[00:15] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 256 | Gyro samples: 0
+
+[00:16] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:17] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:18] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:19] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:20] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:21] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:22] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² [GyroDaemon] Read loop finished: 0 lines, 0 JSON objects, 0 samples queued
+[GPSDaemon] stderr: GPS timeout (8s exceeded)
+
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:23] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:24] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:25] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:26] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:27] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:28] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:29] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:30] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:31] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:32] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  [00:35] STATUS: Memory=86.3MB (peak=86.3MB) | GPS=   0 (ALIVE) | Accel=  264 (NOT_STARTED) | Gyro=    0
+
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:33] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:34] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:35] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:36] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+✓ Accelerometer daemon started (20Hz, independent process)
+   Sensor: lsm6dso LSM6DSO Accelerometer Non-wakeup
+   Process: termux-sensor (PID 27964)
+
+[00:37] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:38] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:39] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:40] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:41] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:42] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:43] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:44] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:45] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:46] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:47] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:48] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:49] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:50] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:51] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+  ✗ Accel restart failed
+
+⚠️ ACCEL SILENT for 38.7s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+[GPSDaemon] stderr: GPS timeout (8s exceeded)
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Mon Nov  3 22:36:59 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+
+LAST 50 LINES OF OUTPUT:
+[00:49] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:50] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:51] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+  ✗ Accel restart failed
+
+⚠️ ACCEL SILENT for 38.7s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+[GPSDaemon] stderr: GPS timeout (8s exceeded)
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Mon Nov  3 22:36:59 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Mon Nov  3 22:37:04 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+
+LAST 50 LINES OF OUTPUT:
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 0 (recent: 0) | Accel samples: 264 | Gyro samples: 0
+
+[00:51] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.000 m/s²        |    0.000 m/s² 
+Status                    |        MOVING        |        MOVING        |                  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+  ✗ Accel restart failed
+
+⚠️ ACCEL SILENT for 38.7s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+[GPSDaemon] stderr: GPS timeout (8s exceeded)
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Mon Nov  3 22:36:59 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Mon Nov  3 22:37:04 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-03_15-34-53.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================

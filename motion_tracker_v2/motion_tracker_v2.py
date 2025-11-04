@@ -151,14 +151,16 @@ class PersistentAccelDaemon:
     def start(self):
         """Start persistent termux-sensor daemon"""
         try:
-            # Start termux-sensor as persistent process with line-buffered output
+            # Start termux-sensor as persistent process
             # Request both ACCELEROMETER and GYROSCOPE from same LSM6DSO IMU chip
             # This enables paired sensor initialization for synchronized data collection
-            # stdbuf -oL forces line-buffering (one JSON object per line)
-            # -d 50 sets 50ms polling delay for ~17Hz hardware rate (vs default ~1Hz)
+            # ⚠️ CRITICAL: DO NOT use stdbuf -oL
+            #    stdbuf wrapper causes termux-api Sensor backend to crash (Terminated)
+            #    Without stdbuf, termux-sensor outputs JSON properly and continuously
+            # -d 50 sets 50ms polling delay for ~20Hz hardware rate
             # Use specific LSM6DSO sensor IDs for reliable activation
             self.sensor_process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', '50'],
+                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', '50'],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
@@ -373,9 +375,10 @@ class PersistentGyroDaemon:
                 return True
 
             # INDEPENDENT MODE: Start own termux-sensor process (fallback)
+            # ⚠️ CRITICAL: DO NOT use stdbuf -oL (causes termux-api Sensor backend to crash)
             # Use specific LSM6DSO sensor ID for more reliable activation
             self.sensor_process = subprocess.Popen(
-                ['stdbuf', '-oL', 'termux-sensor', '-s', 'lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', str(self.delay_ms)],
+                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', str(self.delay_ms)],
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,

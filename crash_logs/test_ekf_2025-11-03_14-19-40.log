@@ -1,0 +1,83 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Mon Nov  3 21:19:40 UTC 2025
+Test arguments: 5
+Log file: crash_logs/test_ekf_2025-11-03_14-19-40.log
+==============================================================================
+[cleanup_sensors] Starting
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[cleanup_sensors] Complete
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Starting
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Starting
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+
+Configuration:
+  Duration: 5 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, independent process)
+   Sensor: ACCELEROMETER only
+   Process: termux-sensor (PID 7265)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  Waiting... (attempt 1/10)
+  Waiting... (attempt 2/10)
+  Waiting... (attempt 3/10)
+  Waiting... (attempt 4/10)
+  Waiting... (attempt 5/10)
+  Waiting... (attempt 6/10)
+  Waiting... (attempt 7/10)
+  Waiting... (attempt 8/10)
+  Waiting... (attempt 9/10)
+
+✗ FATAL ERROR: No accelerometer data received after 10 seconds
+  Test cannot proceed without accelerometer input
+  Check: termux-sensor -s ACCELEROMETER works manually
+
+[1;33mTest finished, performing final cleanup...[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+[0;32m✓ Test completed successfully[0m

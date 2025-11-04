@@ -1,0 +1,87 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Mon Nov  3 17:47:41 UTC 2025
+Test arguments: 5
+Log file: crash_logs/test_ekf_2025-11-03_10-47-41.log
+==============================================================================
+[cleanup_sensors] Starting
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[cleanup_sensors] Complete
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Starting
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[01:11] STATUS: Memory=92.2MB (peak=92.2MB) | GPS=   0 (ALIVE) | Accel=    0 (DEAD (exit_code=0))
+
+⚠️  WARNING: Accelerometer daemon died at 01:11
+   Status: DEAD (exit_code=0)
+   Samples collected: 0
+   Attempting automatic restart...
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/3)...
+  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+   ✗ Restart attempt 1/3 failed
+
+[01:41] STATUS: Memory=92.3MB (peak=92.3MB) | GPS=   0 (ALIVE) | Accel=    0 (ALIVE) | Restarts: Accel=1, GPS=0
+  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+  ✗ Accel restart failed after daemon death
+
+⚠️ GPS SILENT for 73.7s - triggering auto-restart
+
+🔄 Attempting to restart GPS daemon (attempt 1/3)...
+  ✓ GPS daemon restarted successfully
+  ✓ GPS restarted, resuming data collection
+
+⚠️ ACCEL SILENT for 116.8s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/3)...
+[02:11] STATUS: Memory=92.6MB (peak=92.6MB) | GPS=   0 (ALIVE) | Accel=    0 (NOT_STARTED) | Restarts: Accel=1, GPS=1
+  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)
+  ✗ Accel restart failed
+
+⚠️ GPS SILENT for 43.1s - triggering auto-restart
+
+🔄 Attempting to restart GPS daemon (attempt 2/3)...
+  ✓ GPS daemon restarted successfully
+  ✓ GPS restarted, resuming data collection
+[02:41] STATUS: Memory=92.6MB (peak=92.6MB) | GPS=   0 (ALIVE) | Accel=    0 (ALIVE) | Restarts: Accel=1, GPS=2
+
+⚠️ ACCEL SILENT for 162.9s - triggering auto-restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/3)...
