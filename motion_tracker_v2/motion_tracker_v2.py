@@ -368,7 +368,11 @@ class PersistentGyroDaemon:
                 if not self.accel_daemon.is_alive():
                     raise RuntimeError("Accel daemon not alive - cannot share IMU stream")
 
-                # No subprocess needed - gyro data comes from accel daemon's shared stream
+                # Start reader thread to consume from accel daemon's gyro_queue
+                # (Data flows: accel._read_loop -> accel.gyro_queue -> this reader -> self.data_queue)
+                self.reader_thread = threading.Thread(target=self._read_shared_queue, daemon=True)
+                self.reader_thread.start()
+
                 print(f"✓ Gyroscope daemon started (shared IMU stream)")
                 print(f"   Sensor: lsm6dso LSM6DSO Gyroscope Non-wakeup (paired)")
                 print(f"   Source: Shared with Accelerometer daemon (same hardware)")
@@ -519,6 +523,49 @@ class PersistentGyroDaemon:
                         self.sensor_process.kill()
                     except:
                         pass
+
+    def _read_shared_queue(self):
+        """
+        Read gyroscope data from accel daemon's shared gyro_queue.
+
+        This method runs in shared mode when gyro is initialized with accel_daemon.
+        Data flows: accel._read_loop -> accel.gyro_queue -> this reader -> self.data_queue
+        """
+        try:
+            if not self.accel_daemon:
+                print("[GyroDaemon] ⚠️  No accel daemon reference!", file=sys.stderr)
+                return
+            if not hasattr(self.accel_daemon, 'gyro_queue'):
+                print(f"[GyroDaemon] ⚠️  Accel daemon missing gyro_queue! Attributes: {dir(self.accel_daemon)[:5]}", file=sys.stderr)
+                return
+
+            samples_read = 0
+            print("[GyroDaemon] Starting shared queue reader", file=sys.stderr)
+            print(f"[GyroDaemon] Accel daemon alive: {self.accel_daemon.is_alive()}", file=sys.stderr)
+
+            while not self.stop_event.is_set():
+                try:
+                    # Non-blocking read with timeout
+                    gyro_data = self.accel_daemon.gyro_queue.get(timeout=0.5)
+                    if gyro_data:
+                        try:
+                            self.data_queue.put_nowait(gyro_data)
+                            samples_read += 1
+                            if samples_read <= 5:
+                                print(f"[GyroDaemon] Shared sample #{samples_read}: x={gyro_data.get('x', 0):.4f}", file=sys.stderr)
+                        except Exception as qe:
+                            print(f"[GyroDaemon] Output queue error: {qe}", file=sys.stderr)
+                except Exception as re:
+                    # Timeout is normal, only log every 50th timeout
+                    if samples_read % 50 == 0 and samples_read > 0:
+                        print(f"[GyroDaemon] Still waiting... {samples_read} samples so far", file=sys.stderr)
+
+            print(f"[GyroDaemon] Shared queue reader finished: {samples_read} samples transferred", file=sys.stderr)
+
+        except Exception as e:
+            print(f"⚠️  [GyroDaemon] Shared queue reader error: {e}", file=sys.stderr)
+            import traceback
+            traceback.print_exc(file=sys.stderr)
 
     def stop(self):
         """Stop the daemon"""
