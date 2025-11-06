@@ -435,6 +435,591 @@ def get_drive_gpx(drive_id: str):
     raise HTTPException(status_code=404, detail="No GPX or GPS data found for this drive")
 
 
+@app.get("/api/live/status")
+def get_live_status():
+    """Get live tracking session status (file-based IPC)"""
+    status_file = os.path.join(SESSIONS_DIR, 'live_status.json')
+
+    try:
+        if not os.path.exists(status_file):
+            return {"status": "INACTIVE", "message": "No active tracking session"}
+
+        # Check if status file is stale (>10 seconds old = session likely crashed)
+        file_age = datetime.now().timestamp() - os.path.getmtime(status_file)
+        if file_age > 10:
+            return {"status": "STALE", "message": f"Session inactive for {int(file_age)}s", "file_age": file_age}
+
+        with open(status_file, 'r') as f:
+            status_data = json.load(f)
+
+        return status_data
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to read live status: {str(e)}")
+
+
+@app.get("/api/live/data/{session_id}")
+def get_live_data(session_id: str):
+    """Get latest auto-saved data for active session"""
+    # Look for the session's latest auto-save file
+    json_filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json.gz")
+
+    if not os.path.exists(json_filepath):
+        # Try uncompressed
+        json_filepath = os.path.join(SESSIONS_DIR, f"{session_id}.json")
+
+    if not os.path.exists(json_filepath):
+        raise HTTPException(status_code=404, detail="Session data not found (no auto-save yet)")
+
+    try:
+        data = load_json_file(json_filepath)
+
+        # Extract latest GPS samples for route display (last 100 points)
+        gps_samples = []
+        if "gps_samples" in data and isinstance(data["gps_samples"], list):
+            gps_samples = data["gps_samples"][-100:]  # Last 100 GPS points
+
+        return {
+            "gps_samples": gps_samples,
+            "total_gps": len(data.get("gps_samples", [])),
+            "total_accel": len(data.get("accel_samples", [])),
+            "total_gyro": len(data.get("gyro_samples", [])),
+            "auto_save": data.get("auto_save", False),
+            "autosave_number": data.get("autosave_number", 0),
+            "peak_memory_mb": data.get("peak_memory_mb", 0)
+        }
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to load session data: {str(e)}")
+
+
+@app.get("/live")
+def live_monitor():
+    """Serve the live drive monitor page"""
+    html_content = """<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Drive Monitor</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: #1a1a1a;
+            color: #fff;
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .container {
+            display: flex;
+            height: 100vh;
+        }
+
+        .sidebar {
+            width: 320px;
+            background: #2a2a2a;
+            border-right: 1px solid #444;
+            overflow-y: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .header {
+            padding: 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .header h1 {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .header p {
+            font-size: 13px;
+            opacity: 0.9;
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            margin-top: 10px;
+        }
+
+        .status-active {
+            background: #4caf50;
+            color: white;
+        }
+
+        .status-inactive {
+            background: #f44336;
+            color: white;
+        }
+
+        .status-stale {
+            background: #ff9800;
+            color: white;
+        }
+
+        .metrics-panel {
+            padding: 20px;
+            flex: 1;
+        }
+
+        .metric-group {
+            background: #333;
+            border-radius: 8px;
+            padding: 15px;
+            margin-bottom: 15px;
+        }
+
+        .metric-group h3 {
+            font-size: 12px;
+            color: #999;
+            text-transform: uppercase;
+            margin-bottom: 10px;
+            letter-spacing: 0.5px;
+        }
+
+        .metric-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid #444;
+        }
+
+        .metric-row:last-child {
+            border-bottom: none;
+        }
+
+        .metric-label {
+            font-size: 13px;
+            color: #bbb;
+        }
+
+        .metric-value {
+            font-size: 14px;
+            font-weight: 600;
+            color: #fff;
+        }
+
+        .metric-value.highlight {
+            color: #667eea;
+            font-size: 20px;
+        }
+
+        .incidents-list {
+            max-height: 150px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+
+        .incident-item {
+            background: #444;
+            padding: 8px;
+            margin: 5px 0;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .incident-swerving { border-left: 3px solid #ff9800; }
+        .incident-braking { border-left: 3px solid #f44336; }
+        .incident-impact { border-left: 3px solid #9c27b0; }
+
+        .map-container {
+            flex: 1;
+            position: relative;
+        }
+
+        #map {
+            width: 100%;
+            height: 100%;
+        }
+
+        .map-overlay {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.95);
+            padding: 15px 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            z-index: 1000;
+            min-width: 200px;
+        }
+
+        .map-overlay h3 {
+            font-size: 13px;
+            color: #667eea;
+            margin-bottom: 10px;
+            text-transform: uppercase;
+        }
+
+        .map-overlay .metric {
+            display: flex;
+            justify-content: space-between;
+            margin: 5px 0;
+            font-size: 13px;
+            color: #333;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 40px 20px;
+            color: #999;
+        }
+
+        .loading-spinner {
+            width: 40px;
+            height: 40px;
+            margin: 0 auto 10px;
+            border: 3px solid #444;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            color: #f44336;
+            padding: 20px;
+            background: #3a1a1a;
+            border-left: 4px solid #f44336;
+            margin: 20px;
+            border-radius: 4px;
+            font-size: 13px;
+        }
+
+        .nav-button {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            background: white;
+            padding: 10px 15px;
+            border-radius: 6px;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+            z-index: 1000;
+            text-decoration: none;
+            color: #667eea;
+            font-weight: 600;
+            font-size: 13px;
+        }
+
+        .nav-button:hover {
+            background: #f5f5f5;
+        }
+
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: 50vh;
+                border-right: none;
+                border-bottom: 1px solid #444;
+            }
+
+            .map-container {
+                height: 50vh;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="header">
+                <h1>Live Drive Monitor</h1>
+                <p id="sessionInfo">Waiting for session...</p>
+                <div id="statusBadge" class="status-badge status-inactive">INACTIVE</div>
+            </div>
+
+            <div class="metrics-panel">
+                <div class="metric-group">
+                    <h3>Current State</h3>
+                    <div class="metric-row">
+                        <span class="metric-label">Velocity</span>
+                        <span class="metric-value highlight" id="velocity">0.0 m/s</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Distance</span>
+                        <span class="metric-value" id="distance">0.0 km</span>
+                    </div>
+                    <div class="metric-row" id="headingRow" style="display:none;">
+                        <span class="metric-label">Heading</span>
+                        <span class="metric-value" id="heading">0°</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Duration</span>
+                        <span class="metric-value" id="duration">00:00</span>
+                    </div>
+                </div>
+
+                <div class="metric-group">
+                    <h3>Sensors</h3>
+                    <div class="metric-row">
+                        <span class="metric-label">GPS Fixes</span>
+                        <span class="metric-value" id="gpsFixes">0</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Accel Samples</span>
+                        <span class="metric-value" id="accelSamples">0</span>
+                    </div>
+                    <div class="metric-row" id="gyroRow" style="display:none;">
+                        <span class="metric-label">Gyro Samples</span>
+                        <span class="metric-value" id="gyroSamples">0</span>
+                    </div>
+                    <div class="metric-row">
+                        <span class="metric-label">Memory</span>
+                        <span class="metric-value" id="memory">0 MB</span>
+                    </div>
+                </div>
+
+                <div class="metric-group">
+                    <h3>Incidents</h3>
+                    <div class="metric-row">
+                        <span class="metric-label">Total Events</span>
+                        <span class="metric-value" id="incidentCount">0</span>
+                    </div>
+                    <div id="incidentsList" class="incidents-list"></div>
+                </div>
+            </div>
+        </div>
+
+        <div class="map-container">
+            <a href="/" class="nav-button">← Back to Drives</a>
+            <div id="map"></div>
+            <div class="map-overlay">
+                <h3>Live Position</h3>
+                <div id="mapMetrics">
+                    <div class="metric">
+                        <span>Speed:</span>
+                        <span id="mapSpeed">0 km/h</span>
+                    </div>
+                    <div class="metric">
+                        <span>GPS Accuracy:</span>
+                        <span id="mapAccuracy">-</span>
+                    </div>
+                    <div class="metric">
+                        <span>Last Update:</span>
+                        <span id="mapLastUpdate">-</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let map = null;
+        let currentMarker = null;
+        let routePolyline = null;
+        let allRoutePoints = [];
+        let currentSessionId = null;
+        let pollInterval = null;
+        let lastUpdateTime = 0;
+
+        // Initialize map
+        function initMap() {
+            map = L.map('map').setView([37.7749, -122.4194], 13);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors',
+                maxZoom: 19,
+            }).addTo(map);
+
+            // Create route polyline (empty initially)
+            routePolyline = L.polyline([], {
+                color: '#667eea',
+                weight: 3,
+                opacity: 0.8,
+            }).addTo(map);
+
+            // Create current position marker
+            currentMarker = L.circleMarker([37.7749, -122.4194], {
+                radius: 8,
+                fillColor: '#4caf50',
+                color: '#fff',
+                weight: 2,
+                opacity: 1,
+                fillOpacity: 0.9,
+            }).addTo(map);
+        }
+
+        // Format duration (seconds to MM:SS)
+        function formatDuration(seconds) {
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
+        }
+
+        // Poll for live status
+        async function pollLiveStatus() {
+            try {
+                const response = await fetch('/api/live/status');
+                const status = await response.json();
+
+                if (status.status === 'ACTIVE') {
+                    updateDashboard(status);
+                    if (currentSessionId !== status.session_id) {
+                        currentSessionId = status.session_id;
+                        allRoutePoints = [];
+                        console.log('New session started:', currentSessionId);
+                    }
+                    await fetchRouteData(status.session_id);
+                } else if (status.status === 'INACTIVE') {
+                    showInactive();
+                } else if (status.status === 'STALE') {
+                    showStale(status.file_age);
+                }
+
+            } catch (error) {
+                console.error('Error polling live status:', error);
+                showError('Connection error');
+            }
+        }
+
+        // Update dashboard with live data
+        function updateDashboard(status) {
+            document.getElementById('statusBadge').className = 'status-badge status-active';
+            document.getElementById('statusBadge').textContent = 'LIVE';
+            document.getElementById('sessionInfo').textContent = `Session: ${status.session_id}`;
+
+            // Metrics
+            document.getElementById('velocity').textContent = `${status.current_velocity.toFixed(1)} m/s`;
+            document.getElementById('distance').textContent = `${(status.total_distance / 1000).toFixed(2)} km`;
+            document.getElementById('duration').textContent = formatDuration(status.elapsed_seconds);
+            document.getElementById('gpsFixes').textContent = status.gps_fixes;
+            document.getElementById('accelSamples').textContent = status.accel_samples;
+            document.getElementById('memory').textContent = `${status.memory_mb} MB`;
+            document.getElementById('incidentCount').textContent = status.incidents_count;
+
+            // Heading (if available)
+            if (status.current_heading !== null) {
+                document.getElementById('headingRow').style.display = 'flex';
+                document.getElementById('heading').textContent = `${status.current_heading}°`;
+            }
+
+            // Gyro (if available)
+            if (status.gyro_samples > 0) {
+                document.getElementById('gyroRow').style.display = 'flex';
+                document.getElementById('gyroSamples').textContent = status.gyro_samples;
+            }
+
+            // Map overlay
+            const speedKmh = status.current_velocity * 3.6;
+            document.getElementById('mapSpeed').textContent = `${speedKmh.toFixed(1)} km/h`;
+
+            if (status.latest_gps) {
+                document.getElementById('mapAccuracy').textContent = `${status.latest_gps.accuracy.toFixed(0)} m`;
+            }
+
+            const now = Date.now() / 1000;
+            const timeSinceUpdate = Math.floor(now - status.last_update);
+            document.getElementById('mapLastUpdate').textContent = `${timeSinceUpdate}s ago`;
+
+            // Update current position marker
+            if (status.latest_gps) {
+                const lat = status.latest_gps.lat;
+                const lon = status.latest_gps.lon;
+                currentMarker.setLatLng([lat, lon]);
+                map.setView([lat, lon], map.getZoom() > 15 ? map.getZoom() : 16);
+            }
+
+            lastUpdateTime = status.last_update;
+        }
+
+        // Fetch route data from auto-save
+        async function fetchRouteData(sessionId) {
+            try {
+                const response = await fetch(`/api/live/data/${sessionId}`);
+                const data = await response.json();
+
+                if (data.gps_samples && data.gps_samples.length > 0) {
+                    // Build route from GPS samples
+                    const newPoints = data.gps_samples.map(sample => {
+                        if (sample.gps && sample.gps.latitude && sample.gps.longitude) {
+                            return [sample.gps.latitude, sample.gps.longitude];
+                        } else if (sample.latitude && sample.longitude) {
+                            return [sample.latitude, sample.longitude];
+                        }
+                        return null;
+                    }).filter(p => p !== null);
+
+                    if (newPoints.length > 0) {
+                        // Update polyline with new route
+                        routePolyline.setLatLngs(newPoints);
+
+                        // Zoom to show entire route on first update
+                        if (allRoutePoints.length === 0 && newPoints.length > 1) {
+                            map.fitBounds(routePolyline.getBounds(), {padding: [50, 50]});
+                        }
+
+                        allRoutePoints = newPoints;
+                    }
+                }
+            } catch (error) {
+                console.error('Error fetching route data:', error);
+            }
+        }
+
+        // Show inactive state
+        function showInactive() {
+            document.getElementById('statusBadge').className = 'status-badge status-inactive';
+            document.getElementById('statusBadge').textContent = 'INACTIVE';
+            document.getElementById('sessionInfo').textContent = 'No active tracking session';
+        }
+
+        // Show stale state
+        function showStale(fileAge) {
+            document.getElementById('statusBadge').className = 'status-badge status-stale';
+            document.getElementById('statusBadge').textContent = 'STALE';
+            document.getElementById('sessionInfo').textContent = `Session inactive for ${Math.floor(fileAge)}s`;
+        }
+
+        // Show error
+        function showError(message) {
+            document.getElementById('statusBadge').className = 'status-badge status-inactive';
+            document.getElementById('statusBadge').textContent = 'ERROR';
+            document.getElementById('sessionInfo').textContent = message;
+        }
+
+        // Initialize on page load
+        window.addEventListener('DOMContentLoaded', () => {
+            initMap();
+            pollLiveStatus();
+
+            // Poll every 1 second for updates
+            pollInterval = setInterval(pollLiveStatus, 1000);
+        });
+
+        // Cleanup on page unload
+        window.addEventListener('beforeunload', () => {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+            }
+        });
+    </script>
+</body>
+</html>"""
+    return HTMLResponse(content=html_content)
+
+
 @app.get("/")
 def root():
     """Serve the main dashboard HTML"""
@@ -488,6 +1073,23 @@ def root():
         .header p {
             font-size: 13px;
             opacity: 0.9;
+        }
+
+        .live-monitor-link {
+            display: inline-block;
+            margin-top: 10px;
+            padding: 8px 15px;
+            background: rgba(255, 255, 255, 0.2);
+            color: white;
+            text-decoration: none;
+            border-radius: 6px;
+            font-size: 12px;
+            font-weight: 600;
+            transition: background 0.2s;
+        }
+
+        .live-monitor-link:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .drives-list {
@@ -618,6 +1220,7 @@ def root():
             <div class="header">
                 <h1>Motion Tracker</h1>
                 <p>Your Drives</p>
+                <a href="/live" class="live-monitor-link">View Live Monitor</a>
             </div>
             <ul class="drives-list" id="drivesList">
                 <div class="loading">Loading drives...</div>

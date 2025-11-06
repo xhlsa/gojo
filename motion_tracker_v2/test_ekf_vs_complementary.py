@@ -95,7 +95,7 @@ import time
 
 consecutive_failures = 0
 max_failures = 5
-failure_backoff_stages = [5, 10, 15, 20, 30]  # Seconds to wait per failure stage
+failure_backoff_stages = [2, 5, 10, 15, 20]  # Reduced backoff: quicker recovery during driving
 current_backoff_stage = 0
 
 while True:
@@ -104,7 +104,7 @@ while True:
             ['termux-location', '-p', 'gps'],
             capture_output=True,
             text=True,
-            timeout=8  # Increased from 5s → 8s to allow more processing time
+            timeout=15  # Increased from 8s → 15s for moving/poor signal conditions
         )
         if result.returncode == 0:
             print(result.stdout, flush=True)
@@ -120,7 +120,7 @@ while True:
                 time.sleep(backoff)
                 consecutive_failures = 0
     except subprocess.TimeoutExpired:
-        sys.stderr.write("GPS timeout (8s exceeded)\\n")
+        sys.stderr.write("GPS timeout (15s exceeded)\\n")
         consecutive_failures += 1
         current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
         time.sleep(failure_backoff_stages[current_backoff_stage])
@@ -298,6 +298,9 @@ class FilterComparison:
         # FIX 2: Thread lock for accumulated_data and deque operations
         self._save_lock = threading.Lock()
 
+        # Thread lock for GPS counter (thread-safe increment)
+        self._gps_counter_lock = threading.Lock()
+
         # Metrics
         self.last_gps_time = None
         self.start_time = time.time()
@@ -309,7 +312,7 @@ class FilterComparison:
         self.peak_memory = 0
 
         # Auto-save configuration
-        self.auto_save_interval = 120  # Save every 2 minutes
+        self.auto_save_interval = 15  # Save every 15 seconds (for live dashboard)
 
         # Metrics collector (for gyro-EKF validation)
         self.metrics = None
@@ -346,6 +349,14 @@ class FilterComparison:
 
         # FIX 6: Total GPS counter (cumulative across auto-saves)
         self.total_gps_fixes = 0
+
+        # GPS health metrics
+        self.gps_first_fix_latency = None  # Time from start to first GPS fix
+        self.gps_first_fix_received = False  # Flag for first fix
+
+        # Live status file for dashboard monitoring (file-based IPC)
+        self.status_file = os.path.join(SESSIONS_DIR, 'live_status.json')
+        self.last_status_update = time.time()
 
     def _calibrate_gravity(self):
         """Collect initial stationary samples to calibrate gravity magnitude"""
@@ -428,8 +439,68 @@ class FilterComparison:
             self.gps_daemon = None  # Mark as unavailable for graceful degradation
         else:
             print(f"  ✓ GPS daemon started (polling termux-location continuously)")
-            print(f"  ⏱ Allowing GPS backend 3 seconds to stabilize...")
-            time.sleep(3)  # CRITICAL FIX: Allow API service to recover from cleanup
+            print(f"  ⏱ Waiting for first GPS fix (up to 30 seconds)...")
+
+            # PRE-TEST VALIDATION: Wait for actual first GPS fix before starting test
+            # This ensures GPS is not just running, but actually collecting location data
+            gps_lock_timeout = 30  # seconds
+            start_wait = time.time()
+            first_fix_received = False
+
+            while time.time() - start_wait < gps_lock_timeout and not first_fix_received:
+                gps_data = self.gps_daemon.get_data(timeout=1.0)
+                if gps_data:
+                    elapsed = time.time() - start_wait
+                    print(f"  ✓ GPS lock acquired: {gps_data['latitude']:.4f}, {gps_data['longitude']:.4f} (latency: {elapsed:.1f}s)")
+                    first_fix_received = True
+                    # CRITICAL FIX: Process this first GPS fix immediately instead of discarding it
+                    # This ensures we don't waste the first valid location data
+                    try:
+                        now = time.time()
+                        # Update both filters with first GPS fix
+                        v1, d1 = self.ekf.update_gps(gps_data['latitude'], gps_data['longitude'],
+                                                      gps_data['speed'], gps_data['accuracy'])
+                        v2, d2 = self.complementary.update_gps(gps_data['latitude'], gps_data['longitude'],
+                                                                gps_data['speed'], gps_data['accuracy'])
+
+                        # Add GPS sample for incident context
+                        self.incident_detector.add_gps_sample(
+                            gps_data['latitude'], gps_data['longitude'], gps_data['speed'], gps_data['accuracy'], timestamp=now
+                        )
+
+                        # Increment GPS counter (thread-safe)
+                        with self._gps_counter_lock:
+                            self.total_gps_fixes += 1
+
+                        # Record first fix latency
+                        self.gps_first_fix_latency = now - self.start_time
+                        self.gps_first_fix_received = True
+
+                        # Store GPS sample
+                        self.gps_samples.append({
+                            'timestamp': now - self.start_time,
+                            'latitude': gps_data['latitude'],
+                            'longitude': gps_data['longitude'],
+                            'accuracy': gps_data['accuracy'],
+                            'speed': gps_data['speed'],
+                            'ekf_velocity': v1,
+                            'ekf_distance': d1,
+                            'comp_velocity': v2,
+                            'comp_distance': d2
+                        })
+                        print(f"  ✓ First GPS fix processed and added to test data")
+                    except Exception as e:
+                        print(f"  ⚠ ERROR processing first GPS fix: {e}", file=sys.stderr)
+
+                    break
+                else:
+                    elapsed = time.time() - start_wait
+                    print(f"  Waiting for GPS... ({elapsed:.1f}s)")
+
+            if not first_fix_received:
+                print(f"  ⚠ WARNING: No GPS fix received after {gps_lock_timeout} seconds")
+                print(f"  ⚠ GPS may be unavailable or location service not responding")
+                print(f"  ⚠ Continuing test WITHOUT GPS (EKF will use Accel only)")
 
         # OPTIONAL: Initialize gyroscope if requested (shared IMU stream from accel daemon)
         if self.enable_gyro:
@@ -516,8 +587,9 @@ class FilterComparison:
                         gps['latitude'], gps['longitude'], gps['speed'], gps['accuracy'], timestamp=now
                     )
 
-                    # FIX 6: Increment cumulative GPS counter
-                    self.total_gps_fixes += 1
+                    # FIX 6: Increment cumulative GPS counter (thread-safe)
+                    with self._gps_counter_lock:
+                        self.total_gps_fixes += 1
 
                     self.gps_samples.append({
                         'timestamp': now - self.start_time,
@@ -764,6 +836,11 @@ class FilterComparison:
                 last_display = now
                 self._display_metrics()
 
+            # Update live status file every 2 seconds for dashboard
+            if now - self.last_status_update > 2.0:
+                self.last_status_update = now
+                self._update_live_status()
+
             time.sleep(0.1)
 
     def _restart_accel_daemon(self):
@@ -820,7 +897,30 @@ class FilterComparison:
 
         # Start new daemon
         if self.gps_daemon.start():
-            print(f"  ✓ GPS daemon restarted successfully", file=sys.stderr)
+            print(f"  ✓ GPS daemon process started, waiting for first fix...", file=sys.stderr)
+
+            # SOLUTION 1: Validate GPS actually collects data (not just process start)
+            # Root cause: GPS daemon can be ALIVE (subprocess running) but hung in termux-location
+            # This validates we're actually getting GPS data, not just a running process
+            validation_timeout = 30  # seconds to wait for first fix
+            validation_start = time.time()
+            fix_received = False
+
+            while time.time() - validation_start < validation_timeout:
+                gps_data = self.gps_daemon.get_data(timeout=1.0)
+                if gps_data:
+                    print(f"  ✓ GPS restart validated: {gps_data['latitude']:.4f}, {gps_data['longitude']:.4f}", file=sys.stderr)
+                    fix_received = True
+                    break
+                # Brief wait before retrying
+                time.sleep(0.5)
+
+            if not fix_received:
+                print(f"  ✗ GPS restart FAILED: No fix received after {validation_timeout}s (termux-location may be hung)", file=sys.stderr)
+                self.gps_daemon.stop()
+                return False
+
+            print(f"  ✓ GPS daemon restarted and validated successfully", file=sys.stderr)
             self.restart_counts['gps'] += 1
             return True
         else:
@@ -983,15 +1083,82 @@ class FilterComparison:
         # Sensor info
         print("-" * 100)
         # FIX 6: Show total GPS fixes (cumulative), not just recent window
-        sensor_info = f"GPS fixes: {self.total_gps_fixes} (recent: {len(self.gps_samples)}) | Accel samples: {len(self.accel_samples)}"
+        # REAL-TIME DISPLAY: Show GPS daemon status alongside counts
+        gps_status = self.gps_daemon.get_status() if self.gps_daemon else "DISABLED"
+        accel_status = self.accel_daemon.get_status()
+        sensor_info = f"GPS: {self.total_gps_fixes} fixes ({gps_status}) | Accel: {len(self.accel_samples)} samples ({accel_status})"
         if self.enable_gyro:
-            sensor_info += f" | Gyro samples: {len(self.gyro_samples)}"
+            sensor_info += f" | Gyro: {len(self.gyro_samples)} samples"
         print(sensor_info)
+
+    def _update_live_status(self):
+        """Update live status file for dashboard monitoring (lightweight, ~200 bytes)"""
+        try:
+            # Get latest state
+            ekf_state = self.ekf.get_state()
+
+            # Get latest GPS if available
+            latest_gps = None
+            if self.gps_samples:
+                last = self.gps_samples[-1]
+                latest_gps = {
+                    'lat': last['latitude'],
+                    'lon': last['longitude'],
+                    'accuracy': last.get('accuracy', 0)
+                }
+
+            # Get incident count
+            incidents_count = len(self.incident_detector.get_recent_incidents()) if hasattr(self.incident_detector, 'get_recent_incidents') else 0
+
+            # Get memory usage
+            mem_info = self.process.memory_info()
+            mem_mb = mem_info.rss / 1024 / 1024
+
+            # Session ID from timestamp
+            if hasattr(self, 'start_time') and isinstance(self.start_time, float):
+                session_id = f"comparison_{datetime.fromtimestamp(self.start_time).strftime('%Y%m%d_%H%M%S')}"
+            else:
+                session_id = f"comparison_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+            status_data = {
+                'session_id': session_id,
+                'status': 'ACTIVE',
+                'elapsed_seconds': int(time.time() - self.start_time),
+                'last_update': time.time(),
+                'gps_fixes': self.total_gps_fixes,
+                'accel_samples': len(self.accel_samples),
+                'gyro_samples': len(self.gyro_samples) if self.enable_gyro else 0,
+                'current_velocity': round(ekf_state['velocity'], 2),
+                'current_heading': round(ekf_state.get('heading_deg', 0), 1) if self.enable_gyro else None,
+                'total_distance': round(ekf_state['distance'], 1),
+                'latest_gps': latest_gps,
+                'incidents_count': incidents_count,
+                'memory_mb': round(mem_mb, 1),
+                'filter_type': 'EKF' if self.enable_gyro else 'EKF+Complementary',
+                'gps_first_fix_latency': round(self.gps_first_fix_latency, 1) if self.gps_first_fix_latency else None
+            }
+
+            # Atomic write with temp file
+            temp_file = f"{self.status_file}.tmp"
+            with open(temp_file, 'w') as f:
+                json.dump(status_data, f, separators=(',', ':'))
+            os.rename(temp_file, self.status_file)
+
+        except Exception as e:
+            # Log status update failure for debugging
+            print(f"[DEBUG] Status file update failed: {e}", file=sys.stderr)
 
     def stop(self):
         self.stop_event.set()
         self.accel_daemon.stop()
         self.gps_daemon.stop()
+
+        # Clean up live status file
+        try:
+            if os.path.exists(self.status_file):
+                os.remove(self.status_file)
+        except:
+            pass
 
         # CRITICAL: Verify accelerometer data was collected
         # FIX 1: Check both accumulated_data and current deques
@@ -1024,6 +1191,10 @@ class FilterComparison:
             'actual_duration': time.time() - self.start_time,
             'peak_memory_mb': self.peak_memory,
             'auto_save': auto_save,
+            'gps_available': self.total_gps_fixes > 0,  # Flag: Was GPS successfully collecting data?
+            'gps_fixes_collected': self.total_gps_fixes,  # Total GPS fixes during test
+            'gps_first_fix_latency_seconds': self.gps_first_fix_latency,  # Time to first GPS fix
+            'gps_daemon_restart_count': self.restart_counts['gps'],  # How many times GPS restarted
             'gps_samples': list(self.gps_samples),  # Convert deque to list
             'accel_samples': list(self.accel_samples),  # Convert deque to list
             'gyro_samples': list(self.gyro_samples) if self.enable_gyro else [],  # Convert deque to list
@@ -1060,6 +1231,10 @@ class FilterComparison:
                     'peak_memory_mb': self.peak_memory,
                     'auto_save': auto_save,
                     'autosave_number': self._accumulated_data['autosave_count'],
+                    'gps_available': self.total_gps_fixes > 0,
+                    'gps_fixes_collected': self.total_gps_fixes,
+                    'gps_first_fix_latency_seconds': self.gps_first_fix_latency,
+                    'gps_daemon_restart_count': self.restart_counts['gps'],
                     'gps_samples': self._accumulated_data['gps_samples'],
                     'accel_samples': self._accumulated_data['accel_samples'],
                     'gyro_samples': self._accumulated_data['gyro_samples'],

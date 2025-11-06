@@ -1,0 +1,228 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Tue Nov  4 23:44:37 UTC 2025
+Test arguments: 25 --gyro
+Log file: crash_logs/test_ekf_2025-11-04_16-44-37.log
+==============================================================================
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;31m✗ Accelerometer validation failed[0m
+[0;31mOutput received:[0m
+Terminated                 /data/data/com.termux/files/usr/libexec/termux-api Sensor "$@"
+Caught interrupt.. Finishing...
+Performing sensor cleanup
+Sensor cleanup successful!
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mSensor initialization attempt 2/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;32m✓ GPS API responding correctly[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+
+Configuration:
+  Duration: 25 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 8068)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  Waiting... (attempt 1/10)
+  Wait
+Configuration:
+  Duration: 25 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired fr[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m
+arted
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  Waiting... (attempt 1/10)
+  Waiting... (attempt 2/10)
+  Waiting... (attempt 3/10)
+  Waiting... (attempt 4/10)
+  Waiting... (attempt 5/10)
+  Waiting... (attempt 6/10)
+  Waiting... (attempt 7/10)
+  Waiting... (attempt 8/10)
+  Waiting... (attempt 9/10)
+
+✗ FATAL ERROR: No accelerometer data received after 10 seconds
+  Test cannot proceed without accelerometer input
+  Check: termux-sensor -s ACCELEROMETER works manually
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mCleaning up sensor processes...[0m
+./test_ekf.sh: line 66:  8492 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8497 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8499 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8505 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8510 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8512 Killed                     exit $exit_code
+[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m
+celerometer samples...
+  ✓ Accelerometer responding with data on attempt 1
+
+✓ Calibrating accelerometer (collecting 20 stationary samples)...
+  ✓ Gravity calibrated: 9.45 m/s²
+    (collected 20 samples, range: 7.48-11.14)
+
+✓ EKF filter initialized
+✓ Complementary filter initialized
+
+✓ Starting GPS daemon (continuous polling)...
+  ✓ GPS daemon started (polling termux-location continuously)
+  ⏱ Allowing GPS backend 3 seconds to stabilize...
+
+✓ Initializing gyroscope (optional, will fallback if unavailable)...
+✓ Gyroscope daemon started (shared IMU stream)
+   Sensor: lsm6dso LSM6DSO Gyroscope Non-wakeup (paired)
+   Source: Shared with Accelerometer daemon (same hardware)
+  ✓ Gyroscope daemon started (using shared IMU stream)
+  Note: Gyroscope data will be collected during test run
+
+✓ Running for 25 minutes...
+
+[00:05] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000000 rad/s  [⏳ Learning...]
+  └─ Stability (σ):  0.000000 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.028849 rad/s
+  └─ Std Dev:        0.000000 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ✓ HEALTHY
+===========================================================================
+
+[00:05] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.505 m/s²        |    0.505 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 1 (recent: 1) | Accel samples: 59 | Gyro samples: 1
+
+[00:06] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    0.204 m/s²        |    0.204 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 1 (recent: 1) | Accel samples: 79 | Gyro samples: 94
+
+[00:07] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s         |    0.000 m/s         |    0.000 m/s  
+Distance (m)              |     0.00 m           |     0.00 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.000 m/s²        |    2.328 m/s²        |    2.328 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 1 (recent: 1) | Accel samples: 99 | Gyro samples: 118
+
+[00:08] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    5.732 m/s         |   17.101 m/s         |   11.369 m/s  
+Distance (m)              |    68.45 m           |    68.45 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.659 m/s²        |    0.732 m/s²        |    0.073 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 2 (recent: 2) | Accel samples: 118 | Gyro samples: 137
+
+[00:09] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    5.859 m/s         |   17.101 m/s         |   11.242 m/s  
+Distance (m)              |    68.45 m           |    68.45 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.428 m/s²        |    0.290 m/s²        |    0.138 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 2 (recent: 2) | Accel samples: 137 | Gyro samples: 155
+
+[00:10] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    5.868 m/s         |   17.101 m/s         |   11.234 m/s  
+Distance (m)              |    68.45 m           |    68.45 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.258 m/s²        |    0.000 m/s²        |    0.258 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 2 (recent: 2) | Accel samples: 157 | Gyro samples: 175
+
+[00:11] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+----------------------------------------------------------------------------------------------------
+Velocity (m/s)            |   23.540 m/s         |   22.109 m/s         |    1.431 m/s  
+Distance (m)              |   136.38 m           |   136.38 m           |   0.00%      
+Accel Magnitude (m/s²)    |    0.279 m/s²        |    0.000 m/s²        |    0.279 m/s² 
+Status                    |        MOVING        |        MOVING        |                
+----------------------------------------------------------------------------------------------------
+GPS fixes: 3 (recent: 3) | Accel samples: 176 | Gyro samples: 194
+
+[00:12] FILTER COMPARISON
+----------------------------------------------------------------------------------------------------
+METRIC                    |         EKF          |    COMPLEMENTARY     |      DIFF      
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mCleaning up sensor processes...[0m
+./test_ekf.sh: line 66:  8493 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8500 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8502 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8509 Killed                     exit $exit_code
+./test_ekf.sh: line 66:  8511 Killed                     exit $exit_code
+[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m
