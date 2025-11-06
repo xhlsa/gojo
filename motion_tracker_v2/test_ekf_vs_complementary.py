@@ -330,7 +330,9 @@ class FilterComparison:
             'gps': 0,
             'gyro': 0
         }
-        self.max_restart_attempts = 3
+        self.max_restart_attempts = 60  # Increased from 3: allows continuous GPS restart attempts during long tests
+        # GPS validation will reject hung termux-location, but accel fallback works fine
+        # Allows test to recover GPS when service becomes available again
         self.restart_cooldown = 10  # INCREASED from 5s → 10s (termux-sensor needs full resource release)
 
         # HEALTH MONITORING: Detect sensor silence and auto-restart
