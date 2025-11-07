@@ -838,6 +838,7 @@ def live_monitor():
         .map-container {
             flex: 1;
             position: relative;
+            z-index: 1;
         }
 
         #map {
@@ -1439,6 +1440,7 @@ def root():
         .map-container {
             flex: 1;
             position: relative;
+            z-index: 1;
         }
 
         #map {
@@ -1510,7 +1512,7 @@ def root():
                 overflow: hidden;
                 display: flex;
                 flex-direction: column;
-                z-index: 100;
+                z-index: 1000;
                 box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
             }
 
@@ -1569,7 +1571,7 @@ def root():
                 top: 15px;
                 right: 15px;
                 background: rgba(0, 0, 0, 0.5);
-                z-index: 200;
+                z-index: 1001;
             }
 
             .theme-toggle:hover {
