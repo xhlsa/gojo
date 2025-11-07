@@ -1257,6 +1257,7 @@ def root():
         .container {
             display: flex;
             height: 100vh;
+            flex-direction: row;
         }
 
         .sidebar {
@@ -1265,6 +1266,16 @@ def root():
             border-right: 1px solid var(--border-color);
             overflow-y: auto;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            transition: transform 0.3s ease;
+        }
+
+        .sheet-handle {
+            display: none;
+            height: 4px;
+            background: var(--border-color);
+            border-radius: 2px;
+            width: 40px;
+            margin: 8px auto 0;
         }
 
         .header {
@@ -1486,28 +1497,83 @@ def root():
             }
 
             .sidebar {
+                position: fixed;
+                bottom: 0;
+                left: 0;
+                right: 0;
                 width: 100%;
-                height: 40vh;
+                height: var(--sheet-height, 25vh);
                 border-right: none;
-                border-bottom: 1px solid var(--border-color);
+                border-top: 1px solid var(--border-color);
+                border-bottom: none;
+                border-radius: 12px 12px 0 0;
+                overflow: hidden;
+                display: flex;
+                flex-direction: column;
+                z-index: 100;
+                box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+            }
+
+            .sidebar.sheet-expanded {
+                --sheet-height: 100vh;
+            }
+
+            .sidebar.sheet-half {
+                --sheet-height: 60vh;
+            }
+
+            .sidebar.sheet-collapsed {
+                --sheet-height: 25vh;
+            }
+
+            .sheet-handle {
+                display: block;
+                cursor: grab;
+                padding: 8px;
+                touch-action: none;
+            }
+
+            .sheet-handle:active {
+                cursor: grabbing;
+            }
+
+            .header {
+                display: none;
+            }
+
+            .search-bar {
+                padding: 10px 20px 0;
+                border-bottom: none;
+                flex-shrink: 0;
+            }
+
+            .drives-list {
+                flex: 1;
+                overflow-y: auto;
             }
 
             .map-container {
-                height: 60vh;
+                flex: 1;
+                padding-bottom: 25vh;
             }
 
             .map-info {
-                bottom: 10px;
+                bottom: calc(25vh + 20px);
                 right: 10px;
                 max-width: 90%;
                 font-size: 12px;
             }
 
             .theme-toggle {
-                position: static;
-                float: right;
-                margin-top: -35px;
-                margin-right: 0;
+                position: absolute;
+                top: 15px;
+                right: 15px;
+                background: rgba(0, 0, 0, 0.5);
+                z-index: 200;
+            }
+
+            .theme-toggle:hover {
+                background: rgba(0, 0, 0, 0.6);
             }
         }
 
@@ -1531,7 +1597,8 @@ def root():
 </head>
 <body>
     <div class="container">
-        <div class="sidebar">
+        <div class="sidebar sheet-collapsed" id="bottomSheet">
+            <div class="sheet-handle" id="sheetHandle"></div>
             <div class="header">
                 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
                 <h1>Motion Tracker</h1>
@@ -1564,6 +1631,79 @@ def root():
         let currentPage = 0;
         let isLoadingMore = false;
         let showNonGpsRuns = false;  // Filter state: false = show GPS only (default)
+
+        // Bottom sheet management
+        let sheetState = 'collapsed';  // collapsed, half, or expanded
+        let sheetStartY = 0;
+        let sheetStartHeight = 100;
+        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+
+        function setSheetState(state) {
+            const sheet = document.getElementById('bottomSheet');
+            if (!sheet) return;
+            sheet.classList.remove('sheet-collapsed', 'sheet-half', 'sheet-expanded');
+            sheet.classList.add(`sheet-${state}`);
+            sheetState = state;
+        }
+
+        function toggleSheetState() {
+            if (sheetState === 'collapsed') {
+                setSheetState('half');
+            } else if (sheetState === 'half') {
+                setSheetState('expanded');
+            } else {
+                setSheetState('collapsed');
+            }
+        }
+
+        // Bottom sheet drag handling
+        function initSheetDrag() {
+            if (!isMobile) return;
+            const handle = document.getElementById('sheetHandle');
+            const sheet = document.getElementById('bottomSheet');
+            if (!handle || !sheet) return;
+
+            let isDragging = false;
+            let startY = 0;
+            let startHeight = 0;
+
+            handle.addEventListener('touchstart', (e) => {
+                isDragging = true;
+                startY = e.touches[0].clientY;
+                startHeight = sheet.offsetHeight;
+                handle.style.cursor = 'grabbing';
+            });
+
+            document.addEventListener('touchmove', (e) => {
+                if (!isDragging) return;
+                const currentY = e.touches[0].clientY;
+                const diff = startY - currentY;
+                const newHeight = startHeight + diff;
+                const maxHeight = window.innerHeight;
+                const minHeightPx = window.innerHeight * 0.25;  // 25vh minimum
+
+                if (newHeight >= minHeightPx && newHeight <= maxHeight) {
+                    sheet.style.setProperty('--sheet-height', newHeight + 'px');
+                }
+            });
+
+            document.addEventListener('touchend', () => {
+                if (!isDragging) return;
+                isDragging = false;
+                const currentHeight = sheet.offsetHeight;
+                const threshold1 = window.innerHeight * 0.375;  // Midpoint between collapsed (25vh) and half (50vh)
+                const threshold2 = window.innerHeight * 0.75;   // Midpoint between half (50vh) and expanded (100vh)
+
+                if (currentHeight < threshold1) {
+                    setSheetState('collapsed');
+                } else if (currentHeight < threshold2) {
+                    setSheetState('half');
+                } else {
+                    setSheetState('expanded');
+                }
+                handle.style.cursor = 'grab';
+            });
+        }
 
         // Show status message on page (visible on mobile)
         function showStatus(message, type = 'info', duration = 3000) {
@@ -2056,6 +2196,7 @@ def root():
             initTheme();  // Initialize theme
             initMap();
             loadDrives();
+            initSheetDrag();  // Initialize bottom sheet for mobile
 
             // Add search input listener with debouncing
             const searchInput = document.getElementById('searchInput');
@@ -2066,6 +2207,12 @@ def root():
             // Add GPS filter button listener
             const gpsFilterBtn = document.getElementById('gpsFilterBtn');
             gpsFilterBtn.addEventListener('click', toggleGpsFilter);
+
+            // Add sheet handle click to toggle on mobile
+            const sheetHandle = document.getElementById('sheetHandle');
+            if (sheetHandle && isMobile) {
+                sheetHandle.addEventListener('click', toggleSheetState);
+            }
         });
     </script>
 </body>
