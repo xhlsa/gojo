@@ -1313,6 +1313,15 @@ class FilterComparison:
                     final_accel = self._accumulated_data['accel_samples'] + list(self.accel_samples)
                     final_gyro = self._accumulated_data['gyro_samples'] + list(self.gyro_samples)
 
+                    # DEBUG: Validate data is being assembled correctly
+                    print(f"\n✓ Final save data assembly:")
+                    print(f"  Accumulated GPS: {len(self._accumulated_data['gps_samples'])}")
+                    print(f"  Current deque GPS: {len(list(self.gps_samples))}")
+                    print(f"  Final GPS: {len(final_gps)}")
+                    print(f"  Accumulated Accel: {len(self._accumulated_data['accel_samples'])}")
+                    print(f"  Current deque Accel: {len(list(self.accel_samples))}")
+                    print(f"  Final Accel: {len(final_accel)}")
+
                     results['gps_samples'] = final_gps
                     results['accel_samples'] = final_accel
                     results['gyro_samples'] = final_gyro
