@@ -93,47 +93,75 @@ import json
 import sys
 import time
 
+# Non-blocking async GPS poller (never blocks for 15s)
+# This wrapper runs a GPS subprocess and reads results without blocking
+current_process = None
+request_start_time = None
+next_poll_time = time.time()
 consecutive_failures = 0
-max_failures = 5
-failure_backoff_stages = [2, 5, 10, 15, 20]  # Reduced backoff: quicker recovery during driving
+max_failures = 3
+failure_backoff_stages = [2, 5, 10, 15, 20]
 current_backoff_stage = 0
+max_request_duration = 5.0  # Kill requests after 5s, not 15s
 
 while True:
-    try:
-        result = subprocess.run(
-            ['termux-location', '-p', 'gps'],
-            capture_output=True,
-            text=True,
-            timeout=15  # Increased from 8s → 15s for moving/poor signal conditions
-        )
-        if result.returncode == 0:
-            print(result.stdout, flush=True)
-            consecutive_failures = 0  # Reset on success
-            current_backoff_stage = 0
-        else:
-            consecutive_failures += 1
-            if consecutive_failures >= max_failures:
-                # Move to next backoff stage, capped at max
-                current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
-                backoff = failure_backoff_stages[current_backoff_stage]
-                sys.stderr.write(f"GPS API failed {max_failures} times, backoff={backoff}s (stage {current_backoff_stage + 1})\\n")
-                time.sleep(backoff)
-                consecutive_failures = 0
-    except subprocess.TimeoutExpired:
-        sys.stderr.write("GPS timeout (15s exceeded)\\n")
-        consecutive_failures += 1
-        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
-        time.sleep(failure_backoff_stages[current_backoff_stage])
-    except Exception as e:
-        sys.stderr.write(f"GPS error: {e}\\n")
-        consecutive_failures += 1
-        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
-        time.sleep(failure_backoff_stages[current_backoff_stage])
+    current_time = time.time()
 
-    # Baseline sleep: 2s between polls for responsive GPS tracking
-    # On consecutive failures, back off to avoid hammering the API
-    baseline_sleep = 2.0 if consecutive_failures == 0 else 1.0
-    time.sleep(baseline_sleep)
+    # Check if current request finished (non-blocking)
+    if current_process is not None:
+        returncode = current_process.poll()
+
+        if returncode is None:  # Still running
+            # Check for timeout - kill if exceeding max duration
+            if current_time - request_start_time > max_request_duration:
+                sys.stderr.write(f"[GPS] Request timeout ({max_request_duration}s), killing process\\n")
+                try:
+                    current_process.kill()
+                    current_process.wait(timeout=1)
+                except:
+                    pass
+                current_process = None
+                consecutive_failures += 1
+        else:
+            # Process finished - read output
+            try:
+                stdout, stderr = current_process.communicate(timeout=0.1)
+                current_process = None
+
+                if returncode == 0 and stdout:
+                    print(stdout, flush=True)
+                    consecutive_failures = 0
+                    current_backoff_stage = 0
+                else:
+                    consecutive_failures += 1
+                    if consecutive_failures >= max_failures:
+                        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
+                        backoff = failure_backoff_stages[current_backoff_stage]
+                        sys.stderr.write(f"[GPS] Failed {max_failures} times, backoff={backoff}s (stage {current_backoff_stage + 1})\\n")
+                        time.sleep(backoff)
+                        consecutive_failures = 0
+            except Exception as e:
+                sys.stderr.write(f"[GPS] Error parsing result: {e}\\n")
+                current_process = None
+                consecutive_failures += 1
+
+    # Start new request if it's time and no request running
+    if current_time >= next_poll_time and current_process is None:
+        try:
+            current_process = subprocess.Popen(
+                ['termux-location', '-p', 'gps'],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
+            )
+            request_start_time = current_time
+            next_poll_time = current_time + 2.0  # Poll every 2 seconds
+        except Exception as e:
+            sys.stderr.write(f"[GPS] Failed to start request: {e}\\n")
+            consecutive_failures += 1
+
+    # Sleep briefly (100ms check cycle, never blocks long)
+    time.sleep(0.1)
 '''
 
             self.gps_process = subprocess.Popen(

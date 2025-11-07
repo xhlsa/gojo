@@ -602,61 +602,148 @@ class PersistentGyroDaemon:
 
 
 class GPSThread(threading.Thread):
-    """Background thread for continuous GPS polling"""
+    """Non-blocking async GPS poller - never blocks thread, tolerates LocationAPI stalls"""
 
     def __init__(self, gps_queue, stop_event):
         super().__init__(daemon=True)
         self.gps_queue = gps_queue
         self.stop_event = stop_event
-        self.update_interval = 1.0  # Try to update every second
 
-    def read_gps(self, timeout=15):
-        """Read GPS data from Termux API"""
+        # Async state tracking
+        self.current_process = None
+        self.request_start_time = None
+        self.last_success_time = time.time()
+        self.last_gps_data = None
+
+        # Configuration
+        self.poll_interval = 1.0  # Target 1 Hz polling
+        self.max_request_duration = 5.0  # Kill requests after 5s (not 15s)
+        self.starvation_threshold = 30.0  # Alert if no data for 30s
+
+        # Statistics (for health monitoring)
+        self.requests_sent = 0
+        self.requests_completed = 0
+        self.requests_timeout = 0
+
+    def start_gps_request(self):
+        """Start a new GPS request without blocking (non-blocking Popen)"""
+        if self.current_process is not None:
+            return False
+
         try:
-            result = subprocess.run(
+            self.current_process = subprocess.Popen(
                 ['termux-location', '-p', 'gps'],
-                capture_output=True,
-                text=True,
-                timeout=timeout
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True
             )
+            self.request_start_time = time.time()
+            self.requests_sent += 1
+            return True
+        except Exception as e:
+            if not self.stop_event.is_set():
+                print(f"\n⚠ GPS: Failed to start request: {e}")
+            return False
 
-            if result.returncode == 0 and result.stdout:
-                data = json_loads(result.stdout)
-                return {
+    def check_gps_request(self):
+        """Check if current GPS request finished (non-blocking poll)"""
+        if self.current_process is None:
+            return None
+
+        # Check if process finished
+        returncode = self.current_process.poll()
+
+        if returncode is None:  # Still running
+            # Check for timeout - kill if exceeding max duration
+            if time.time() - self.request_start_time > self.max_request_duration:
+                if not self.stop_event.is_set():
+                    print(f"\n⚠ GPS: Request exceeded {self.max_request_duration}s, killing...")
+                try:
+                    self.current_process.kill()
+                    self.current_process.wait(timeout=1)
+                except:
+                    pass
+
+                self.current_process = None
+                self.requests_timeout += 1
+                return None
+
+            return None  # Still waiting
+
+        # Process finished - read output
+        try:
+            stdout, stderr = self.current_process.communicate(timeout=0.1)
+            self.current_process = None
+
+            if returncode == 0 and stdout:
+                data = json_loads(stdout)
+                gps_data = {
                     'latitude': data.get('latitude'),
                     'longitude': data.get('longitude'),
                     'altitude': data.get('altitude'),
-                    'speed': data.get('speed'),  # m/s
+                    'speed': data.get('speed'),
                     'bearing': data.get('bearing'),
                     'accuracy': data.get('accuracy'),
                     'timestamp': time.time()
                 }
-        except Exception as e:
-            return None
 
+                if gps_data.get('latitude'):
+                    self.last_success_time = time.time()
+                    self.last_gps_data = gps_data
+                    self.requests_completed += 1
+                    return gps_data
+
+        except Exception as e:
+            if not self.stop_event.is_set():
+                print(f"\n⚠ GPS: Error parsing result: {e}")
+
+        self.current_process = None
         return None
 
+    def get_health_status(self):
+        """Get GPS health metrics for monitoring"""
+        time_since_last = time.time() - self.last_success_time
+        success_rate = self.requests_completed / self.requests_sent if self.requests_sent > 0 else 0
+
+        return {
+            'alive': True,  # Thread is always running
+            'starved': time_since_last > self.starvation_threshold,
+            'time_since_last_gps': time_since_last,
+            'requests_sent': self.requests_sent,
+            'requests_completed': self.requests_completed,
+            'requests_timeout': self.requests_timeout,
+            'success_rate': success_rate,
+            'has_process_running': self.current_process is not None
+        }
+
     def run(self):
-        """Continuously poll GPS"""
+        """Main GPS polling loop - never blocks main thread"""
         try:
+            next_poll_time = time.time()
+
             while not self.stop_event.is_set():
-                try:
-                    gps_data = self.read_gps()
+                current_time = time.time()
 
-                    if gps_data and gps_data.get('latitude'):
-                        self.gps_queue.put(gps_data)
+                # Check if current request finished (non-blocking)
+                gps_data = self.check_gps_request()
+                if gps_data:
+                    try:
+                        self.gps_queue.put_nowait(gps_data)
+                    except:
+                        pass  # Queue full, skip this update
 
-                    # Wait before next poll (if not stopping)
-                    self.stop_event.wait(self.update_interval)
+                # Start new request if it's time and no request is running
+                if current_time >= next_poll_time:
+                    if self.start_gps_request():
+                        next_poll_time = current_time + self.poll_interval
+                    else:
+                        # Failed to start, try again soon
+                        next_poll_time = current_time + 0.5
 
-                except Exception as e:
-                    # Log error but continue running
-                    if not self.stop_event.is_set():
-                        print(f"\n⚠ GPS thread error (continuing): {e}")
-                    time.sleep(1)
+                # Sleep briefly (100ms check interval, never blocks long)
+                self.stop_event.wait(0.1)
 
         except Exception as e:
-            # Fatal error - thread will die
             print(f"\n⚠ GPS thread FATAL error: {e}")
             import traceback
             traceback.print_exc()
@@ -1095,6 +1182,7 @@ class MotionTrackerV2:
         """
         Check if critical threads are alive and healthy.
         Returns dict with thread status and recommendations.
+        Detects GPS starvation (no data for 30s) in addition to thread death.
         """
         status = {
             'gps_alive': self.gps_thread.is_alive() if self.gps_thread else False,
@@ -1103,10 +1191,19 @@ class MotionTrackerV2:
             'warnings': []
         }
 
-        # Check GPS thread
-        if self.gps_thread and not status['gps_alive']:
-            status['healthy'] = False
-            status['warnings'].append("GPS thread died unexpectedly")
+        # Check GPS thread - both alive status AND starvation
+        if self.gps_thread:
+            if not status['gps_alive']:
+                status['healthy'] = False
+                status['warnings'].append("GPS thread died unexpectedly")
+            else:
+                # Thread is alive, but check for starvation (data production stall)
+                health = self.gps_thread.get_health_status()
+                if health['starved']:
+                    status['healthy'] = False
+                    status['warnings'].append(f"GPS starved: No data for {health['time_since_last_gps']:.1f}s")
+                elif health['success_rate'] < 0.5 and health['requests_sent'] > 10:
+                    status['warnings'].append(f"GPS low success rate: {health['success_rate']*100:.1f}%")
 
         # Check accelerometer thread
         if self.accel_thread and not status['accel_alive']:
@@ -1154,7 +1251,7 @@ class MotionTrackerV2:
             return False
 
     def restart_gps_thread(self):
-        """Attempt to restart the GPS thread after failure"""
+        """Attempt to restart the GPS thread after failure, with process cleanup"""
         if self.thread_restart_count['gps'] >= self.max_thread_restarts:
             print(f"⚠ GPS thread failed {self.max_thread_restarts} times, not restarting")
             return False
@@ -1164,7 +1261,23 @@ class MotionTrackerV2:
         try:
             # Stop existing thread if any
             if self.gps_thread:
+                self.gps_thread.stop_event.set()  # Signal thread to stop
                 self.gps_thread.join(timeout=1)
+
+            # Force kill any stuck termux-location processes
+            # (async GPS may have left a process running if it timed out)
+            try:
+                subprocess.run(['pkill', '-9', 'termux-location'], timeout=1)
+            except:
+                pass
+
+            # Also kill GPS backend (Location service) to reset socket state
+            try:
+                subprocess.run(['pkill', '-9', '-f', 'termux-api Location'], timeout=1)
+            except:
+                pass
+
+            time.sleep(0.5)  # Brief delay for OS cleanup
 
             # Clear the queue
             while not self.gps_queue.empty():
