@@ -1304,12 +1304,15 @@ def root():
         }
 
         .search-bar {
+            display: flex;
+            gap: 8px;
+            align-items: center;
             padding: 10px 20px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .search-bar input {
-            width: 100%;
+            flex: 1;
             padding: 8px 12px;
             min-height: 44px;
             border: 1px solid var(--border-color);
@@ -1321,6 +1324,30 @@ def root():
 
         .search-bar input::placeholder {
             color: var(--text-light);
+        }
+
+        .filter-toggle {
+            padding: 8px 12px;
+            min-height: 44px;
+            border: 1px solid var(--accent-color);
+            border-radius: 6px;
+            background: var(--accent-color);
+            color: white;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+            white-space: nowrap;
+            transition: opacity 0.2s;
+        }
+
+        .filter-toggle:active {
+            opacity: 0.8;
+        }
+
+        .filter-toggle[aria-pressed="false"] {
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            border-color: var(--border-color);
         }
 
         .group-header {
@@ -1513,6 +1540,7 @@ def root():
             </div>
             <div class="search-bar">
                 <input type="text" id="searchInput" placeholder="Search drives...">
+                <button id="gpsFilterBtn" class="filter-toggle" title="Show/hide runs without GPS data" aria-pressed="true">Show GPS only</button>
             </div>
             <ul class="drives-list" id="drivesList">
                 <div class="loading">Loading drives...</div>
@@ -1535,6 +1563,7 @@ def root():
         const DRIVES_PER_PAGE = 15;
         let currentPage = 0;
         let isLoadingMore = false;
+        let showNonGpsRuns = false;  // Filter state: false = show GPS only (default)
 
         // Show status message on page (visible on mobile)
         function showStatus(message, type = 'info', duration = 3000) {
@@ -1553,6 +1582,44 @@ def root():
                     indicator.style.display = 'none';
                 }, duration);
             }
+        }
+
+        // Toggle GPS filter (show/hide non-GPS runs)
+        function toggleGpsFilter() {
+            showNonGpsRuns = !showNonGpsRuns;
+            const btn = document.getElementById('gpsFilterBtn');
+            if (showNonGpsRuns) {
+                btn.textContent = 'Show all runs';
+                btn.setAttribute('aria-pressed', 'false');
+            } else {
+                btn.textContent = 'Show GPS only';
+                btn.setAttribute('aria-pressed', 'true');
+            }
+            // Re-render with current filter applied
+            filterDrives(document.getElementById('searchInput').value);
+        }
+
+        // Filter drives by GPS data and search term
+        function getFilteredDrives(allDrives, searchTerm = '') {
+            let filtered = allDrives;
+
+            // Apply GPS filter
+            if (!showNonGpsRuns) {
+                filtered = filtered.filter(drive => drive.stats.gps_samples > 0);
+            }
+
+            // Apply search filter
+            if (searchTerm) {
+                const term = searchTerm.toLowerCase();
+                filtered = filtered.filter(drive =>
+                    drive.datetime.toLowerCase().includes(term) ||
+                    drive.id.toLowerCase().includes(term) ||
+                    drive.stats.distance_km.toString().includes(term) ||
+                    drive.stats.gps_samples.toString().includes(term)
+                );
+            }
+
+            return filtered;
         }
 
         // Initialize map
@@ -1581,10 +1648,12 @@ def root():
                     return;
                 }
 
-                renderDrivesList(null, true);  // Reset pagination and show first batch
+                // Apply default filter (GPS only)
+                const filtered = getFilteredDrives(drives, '');
+                renderDrivesList(filtered, true);  // Reset pagination and show first batch
 
                 // Auto-select first drive if it has GPX
-                const firstWithGpx = drives.find(d => d.has_gpx);
+                const firstWithGpx = filtered.find(d => d.has_gpx);
                 if (firstWithGpx) {
                     selectDrive(firstWithGpx.id);
                 }
@@ -1704,21 +1773,9 @@ def root():
             }
         }
 
-        // Filter drives based on search input
+        // Filter drives based on search input and GPS filter state
         function filterDrives(searchTerm) {
-            if (!searchTerm) {
-                renderDrivesList(null, true);  // Reset pagination
-                return;
-            }
-
-            const term = searchTerm.toLowerCase();
-            const filtered = drives.filter(drive =>
-                drive.datetime.toLowerCase().includes(term) ||
-                drive.id.toLowerCase().includes(term) ||
-                drive.stats.distance_km.toString().includes(term) ||
-                drive.stats.gps_samples.toString().includes(term)
-            );
-
+            const filtered = getFilteredDrives(drives, searchTerm || '');
             renderDrivesList(filtered, true);  // Reset pagination
         }
 
@@ -2005,6 +2062,10 @@ def root():
             searchInput.addEventListener('input', (e) => {
                 debouncedFilter(e.target.value);
             });
+
+            // Add GPS filter button listener
+            const gpsFilterBtn = document.getElementById('gpsFilterBtn');
+            gpsFilterBtn.addEventListener('click', toggleGpsFilter);
         });
     </script>
 </body>
