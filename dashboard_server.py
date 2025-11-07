@@ -13,6 +13,8 @@ import os
 from datetime import datetime
 from pathlib import Path
 import math
+import pickle
+import time
 
 app = FastAPI(title="Motion Tracker Dashboard")
 
@@ -21,6 +23,39 @@ BASE_DIR = os.path.expanduser("~/gojo")
 SESSIONS_DIR = os.path.join(BASE_DIR, "motion_tracker_sessions")
 SESSIONS_SUBDIR = os.path.join(BASE_DIR, "sessions")  # Also check here for motion_tracker_v2 runs
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+# Metadata cache configuration
+CACHE_FILE = os.path.join(SESSIONS_DIR, '.drive_cache.pkl')
+CACHE_VERSION = 1
+
+
+def get_cached_metadata():
+    """Load cached drive metadata with version check"""
+    if not os.path.exists(CACHE_FILE):
+        return {}
+
+    try:
+        with open(CACHE_FILE, 'rb') as f:
+            cache = pickle.load(f)
+            if cache.get('version') != CACHE_VERSION:
+                return {}
+            return cache.get('drives', {})
+    except Exception as e:
+        print(f"Cache load error: {e}")
+        return {}
+
+
+def save_cached_metadata(drives_meta):
+    """Save drive metadata to cache"""
+    try:
+        with open(CACHE_FILE, 'wb') as f:
+            pickle.dump({
+                'version': CACHE_VERSION,
+                'drives': drives_meta,
+                'updated': time.time()
+            }, f)
+    except Exception as e:
+        print(f"Cache write error: {e}")
 
 
 def parse_timestamp(filename: str) -> datetime:
@@ -148,6 +183,30 @@ def generate_gpx_from_json(json_filepath: str) -> str:
         raise HTTPException(status_code=400, detail=f"Failed to generate GPX: {str(e)}")
 
 
+def lazy_has_gps_data(data: dict) -> bool:
+    """Fast check for GPS data - early exit after finding first valid coordinate"""
+    # Check nested format (sample["gps"]["latitude"])
+    if "gps_data" in data and isinstance(data["gps_data"], list):
+        for sample in data["gps_data"][:10]:  # Only check first 10 samples
+            if isinstance(sample, dict) and "gps" in sample and isinstance(sample["gps"], dict):
+                if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
+                    return True
+
+    # Check gps_samples array
+    if "gps_samples" in data and isinstance(data["gps_samples"], list):
+        for sample in data["gps_samples"][:10]:  # Only check first 10 samples
+            if isinstance(sample, dict):
+                # Nested format
+                if "gps" in sample and isinstance(sample["gps"], dict):
+                    if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
+                        return True
+                # Flat format (comparison files)
+                elif "latitude" in sample and "longitude" in sample:
+                    return True
+
+    return False
+
+
 def get_drive_stats(data: dict) -> dict:
     """Extract stats from drive data (handles multiple formats)"""
     stats = {
@@ -215,97 +274,87 @@ def get_drive_stats(data: dict) -> dict:
 
 
 @app.get("/api/drives")
-def list_drives():
-    """List all available drives from motion_tracker_v2 sessions"""
-    drives = []
+def list_drives(limit: int = 20, offset: int = 0):
+    """List available drives (paginated - load only requested batch)"""
+    # Phase 1: Scan filesystem for all file paths (FAST - no JSON parsing)
+    all_filepaths = []
 
-    # Search in sessions subdirectories (motion_tracker_v2 output)
     if os.path.exists(SESSIONS_SUBDIR):
         for session_dir in os.listdir(SESSIONS_SUBDIR):
             session_path = os.path.join(SESSIONS_SUBDIR, session_dir)
             if not os.path.isdir(session_path):
                 continue
-
-            for filename in sorted(os.listdir(session_path)):
+            for filename in os.listdir(session_path):
                 if filename.startswith("motion_track_v2_") and filename.endswith(".json"):
-                    filepath = os.path.join(session_path, filename)
-                    gpx_filepath = filepath.replace(".json", ".gpx")
+                    all_filepaths.append(os.path.join(session_path, filename))
 
-                    try:
-                        data = load_json_file(filepath)
-                        stats = get_drive_stats(data)
-                        timestamp = parse_timestamp(filename)
-
-                        drives.append({
-                            "id": filename.replace(".json", ""),
-                            "path": filepath,
-                            "gpx_path": gpx_filepath,
-                            "timestamp": timestamp.isoformat(),
-                            "datetime": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                            "has_gpx": os.path.exists(gpx_filepath),
-                            "file_size_mb": round(os.path.getsize(filepath) / (1024 * 1024), 2),
-                            "stats": stats,
-                        })
-                    except Exception as e:
-                        print(f"Error loading {filename}: {e}")
-                        continue
-
-    # Also search in main motion_tracker_sessions directory (for comparison runs)
     if os.path.exists(SESSIONS_DIR):
-        for filename in sorted(os.listdir(SESSIONS_DIR)):
-            # Include both motion_track_v2 (actual drives) and comparison (test results) files
+        for filename in os.listdir(SESSIONS_DIR):
             if (filename.startswith("motion_track_v2_") or filename.startswith("comparison_")) and filename.endswith(".json"):
-                filepath = os.path.join(SESSIONS_DIR, filename)
-                gpx_filepath = filepath.replace(".json", ".gpx")
+                all_filepaths.append(os.path.join(SESSIONS_DIR, filename))
 
-                try:
-                    data = load_json_file(filepath)
-                    stats = get_drive_stats(data)
-                    timestamp = parse_timestamp(filename)
+    # Phase 2: Sort by modification time (filesystem only, no JSON parsing)
+    all_filepaths.sort(key=lambda x: os.path.getmtime(x), reverse=True)
 
-                    # Check if GPX exists or can be generated from JSON
-                    has_gpx = os.path.exists(gpx_filepath)
-                    if not has_gpx:
-                        # Check if JSON has actual GPS points (with lat/lon) that can be converted
-                        try:
-                            # motion_track_v2 format with gps_data containing actual GPS coordinates
-                            if "gps_data" in data and isinstance(data["gps_data"], list) and len(data["gps_data"]) > 0:
-                                for sample in data["gps_data"]:
-                                    if "gps" in sample and isinstance(sample["gps"], dict):
-                                        if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
-                                            has_gpx = True
-                                            break
-                            # motion_track_v2 format with gps_samples array
-                            elif "gps_samples" in data and isinstance(data["gps_samples"], list) and len(data["gps_samples"]) > 0:
-                                for sample in data["gps_samples"]:
-                                    if isinstance(sample, dict):
-                                        # Check nested format (sample["gps"]["latitude"])
-                                        if "gps" in sample and isinstance(sample["gps"], dict):
-                                            if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
-                                                has_gpx = True
-                                                break
-                                        # Check flat format (sample["latitude"]) - comparison files use this
-                                        elif "latitude" in sample and "longitude" in sample:
-                                            has_gpx = True
-                                            break
-                        except:
-                            pass
+    total = len(all_filepaths)
 
-                    drives.append({
-                        "id": filename.replace(".json", ""),
-                        "path": filepath,
-                        "gpx_path": gpx_filepath,
-                        "timestamp": timestamp.isoformat(),
-                        "datetime": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
-                        "has_gpx": has_gpx,
-                        "file_size_mb": round(os.path.getsize(filepath) / (1024 * 1024), 2),
-                        "stats": stats,
-                    })
-                except Exception as e:
-                    print(f"Error loading {filename}: {e}")
-                    continue
+    # Phase 3: PAGINATE BEFORE LOADING - only load requested batch
+    paginated_filepaths = all_filepaths[offset:offset + limit]
 
-    return {"drives": sorted(drives, key=lambda x: x["timestamp"], reverse=True)}
+    # Phase 4: Load and process only paginated files
+    cache = get_cached_metadata()
+    drives = []
+
+    for filepath in paginated_filepaths:
+        filename = os.path.basename(filepath)
+        try:
+            # Check cache first (mtime validation)
+            mtime = os.path.getmtime(filepath)
+            if filename in cache and cache[filename].get('mtime') == mtime:
+                # Cache hit - use cached metadata
+                metadata = cache[filename]
+                drives.append(metadata)
+                continue
+
+            # Cache miss - load JSON and process
+            data = load_json_file(filepath)
+            stats = get_drive_stats(data)
+            timestamp = parse_timestamp(filename)
+            gpx_filepath = filepath.replace(".json", ".gpx")
+
+            # Check GPX using lazy function (only first 10 samples)
+            has_gpx = os.path.exists(gpx_filepath) or lazy_has_gps_data(data)
+
+            metadata = {
+                "id": filename.replace(".json", ""),
+                "path": filepath,
+                "gpx_path": gpx_filepath,
+                "timestamp": timestamp.isoformat(),
+                "datetime": timestamp.strftime("%Y-%m-%d %H:%M:%S"),
+                "has_gpx": has_gpx,
+                "file_size_mb": round(os.path.getsize(filepath) / (1024 * 1024), 2),
+                "stats": stats,
+                "mtime": mtime,
+            }
+
+            # Update cache
+            cache[filename] = metadata
+            drives.append(metadata)
+
+        except Exception as e:
+            print(f"Error loading {filename}: {e}")
+            continue
+
+    # Save updated cache
+    save_cached_metadata(cache)
+
+    return {
+        "drives": drives,
+        "total": total,
+        "offset": offset,
+        "limit": limit,
+        "hasMore": (offset + limit) < total
+    }
 
 
 @app.get("/api/drive/{drive_id}")
@@ -491,9 +540,80 @@ def get_live_data(session_id: str):
         raise HTTPException(status_code=400, detail=f"Failed to load session data: {str(e)}")
 
 
+def get_theme_css():
+    """Shared dark mode CSS"""
+    return """
+    <script>
+        // Initialize theme from localStorage with error handling
+        function initTheme() {
+            try {
+                const isDark = localStorage.getItem('dashboardTheme') === 'dark';
+                if (isDark) document.documentElement.setAttribute('data-theme', 'dark');
+                updateThemeIcon(isDark);
+                return isDark;
+            } catch (e) {
+                console.warn('localStorage unavailable, theme won\\'t persist');
+                return false;
+            }
+        }
+        function updateThemeIcon(isDark) {
+            const toggles = document.querySelectorAll('.theme-toggle');
+            toggles.forEach(toggle => {
+                toggle.textContent = isDark ? '☀️' : '🌙';
+                toggle.setAttribute('aria-pressed', isDark ? 'true' : 'false');
+            });
+        }
+        function toggleTheme() {
+            try {
+                const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
+                if (isDark) {
+                    document.documentElement.removeAttribute('data-theme');
+                    localStorage.setItem('dashboardTheme', 'light');
+                    updateThemeIcon(false);
+                } else {
+                    document.documentElement.setAttribute('data-theme', 'dark');
+                    localStorage.setItem('dashboardTheme', 'dark');
+                    updateThemeIcon(true);
+                }
+            } catch (e) {
+                console.warn('localStorage write failed, theme won\\'t persist');
+            }
+        }
+    </script>
+    <style>
+        :root {
+            --bg-primary: #f5f5f5;
+            --bg-secondary: #fff;
+            --bg-tertiary: #f9f9f9;
+            --text-primary: #333;
+            --text-secondary: #666;
+            --text-light: #999;
+            --border-color: #ddd;
+            --header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --accent-color: #667eea;
+            --map-overlay-bg: rgba(255, 255, 255, 0.95);
+        }
+
+        html[data-theme="dark"] {
+            --bg-primary: #1a1a1a;
+            --bg-secondary: #2a2a2a;
+            --bg-tertiary: #333;
+            --text-primary: #fff;
+            --text-secondary: #bbb;
+            --text-light: #999;
+            --border-color: #444;
+            --header-bg: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            --accent-color: #667eea;
+            --map-overlay-bg: rgba(42, 42, 42, 0.95);
+        }
+    </style>
+    """
+
+
 @app.get("/live")
 def live_monitor():
     """Serve the live drive monitor page"""
+    theme_css = get_theme_css()
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -502,6 +622,7 @@ def live_monitor():
     <title>Live Drive Monitor</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    """ + theme_css + """
     <style>
         * {
             margin: 0;
@@ -511,8 +632,8 @@ def live_monitor():
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #1a1a1a;
-            color: #fff;
+            background: var(--bg-primary);
+            color: var(--text-primary);
             height: 100vh;
             overflow: hidden;
         }
@@ -524,8 +645,8 @@ def live_monitor():
 
         .sidebar {
             width: 320px;
-            background: #2a2a2a;
-            border-right: 1px solid #444;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
             overflow-y: auto;
             display: flex;
             flex-direction: column;
@@ -533,7 +654,7 @@ def live_monitor():
 
         .header {
             padding: 20px;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            background: var(--header-bg);
         }
 
         .header h1 {
@@ -578,7 +699,7 @@ def live_monitor():
         }
 
         .metric-group {
-            background: #333;
+            background: var(--bg-tertiary);
             border-radius: 8px;
             padding: 15px;
             margin-bottom: 15px;
@@ -586,7 +707,7 @@ def live_monitor():
 
         .metric-group h3 {
             font-size: 12px;
-            color: #999;
+            color: var(--text-light);
             text-transform: uppercase;
             margin-bottom: 10px;
             letter-spacing: 0.5px;
@@ -596,7 +717,7 @@ def live_monitor():
             display: flex;
             justify-content: space-between;
             padding: 8px 0;
-            border-bottom: 1px solid #444;
+            border-bottom: 1px solid var(--border-color);
         }
 
         .metric-row:last-child {
@@ -605,13 +726,13 @@ def live_monitor():
 
         .metric-label {
             font-size: 13px;
-            color: #bbb;
+            color: var(--text-secondary);
         }
 
         .metric-value {
             font-size: 14px;
             font-weight: 600;
-            color: #fff;
+            color: var(--text-primary);
         }
 
         .metric-value.highlight {
@@ -626,7 +747,7 @@ def live_monitor():
         }
 
         .incident-item {
-            background: #444;
+            background: var(--bg-tertiary);
             padding: 8px;
             margin: 5px 0;
             border-radius: 4px;
@@ -636,6 +757,83 @@ def live_monitor():
         .incident-swerving { border-left: 3px solid #ff9800; }
         .incident-braking { border-left: 3px solid #f44336; }
         .incident-impact { border-left: 3px solid #9c27b0; }
+
+        .theme-toggle {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 18px;
+            transition: background 0.2s;
+        }
+
+        .theme-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .speedometer {
+            width: 100%;
+            height: 120px;
+            margin: 10px 0;
+            position: relative;
+        }
+
+        .speedometer-gauge {
+            width: 100%;
+            height: 100%;
+            border-radius: 50% 50% 0 0;
+            background: conic-gradient(
+                #4caf50 0deg,
+                #8bc34a 45deg,
+                #ffc107 90deg,
+                #ff5722 135deg,
+                #f44336 180deg
+            );
+            position: relative;
+            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+        }
+
+        .speedometer-gauge::before {
+            content: '';
+            position: absolute;
+            width: 80%;
+            height: 80%;
+            background: var(--bg-secondary);
+            border-radius: 50% 50% 0 0;
+            top: 10%;
+            left: 10%;
+        }
+
+        .speedometer-needle {
+            position: absolute;
+            width: 2px;
+            height: 45%;
+            background: #333;
+            left: 50%;
+            bottom: 0;
+            transform-origin: bottom center;
+            transition: transform 0.3s ease;
+        }
+
+        html[data-theme="dark"] .speedometer-needle {
+            background: #fff;
+        }
+
+        .speedometer-value {
+            position: absolute;
+            bottom: 10%;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 10;
+            font-weight: bold;
+            font-size: 18px;
+            color: var(--text-primary);
+        }
 
         .map-container {
             flex: 1;
@@ -649,19 +847,20 @@ def live_monitor():
 
         .map-overlay {
             position: absolute;
-            top: 20px;
+            top: 80px;
             right: 20px;
-            background: rgba(255, 255, 255, 0.95);
+            background: var(--map-overlay-bg);
             padding: 15px 20px;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.3);
             z-index: 1000;
             min-width: 200px;
+            color: var(--text-primary);
         }
 
         .map-overlay h3 {
             font-size: 13px;
-            color: #667eea;
+            color: var(--accent-color);
             margin-bottom: 10px;
             text-transform: uppercase;
         }
@@ -671,7 +870,7 @@ def live_monitor():
             justify-content: space-between;
             margin: 5px 0;
             font-size: 13px;
-            color: #333;
+            color: var(--text-primary);
         }
 
         .loading {
@@ -744,6 +943,7 @@ def live_monitor():
 </head>
 <body>
     <div class="container">
+        <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
         <div class="sidebar">
             <div class="header">
                 <h1>Live Drive Monitor</h1>
@@ -754,9 +954,10 @@ def live_monitor():
             <div class="metrics-panel">
                 <div class="metric-group">
                     <h3>Current State</h3>
-                    <div class="metric-row">
-                        <span class="metric-label">Velocity</span>
-                        <span class="metric-value highlight" id="velocity">0.0 m/s</span>
+                    <div class="speedometer">
+                        <div class="speedometer-gauge"></div>
+                        <div class="speedometer-needle" id="speedNeedle"></div>
+                        <div class="speedometer-value" id="speedValue">0 km/h</div>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Distance</span>
@@ -901,8 +1102,15 @@ def live_monitor():
             document.getElementById('sessionInfo').textContent = `Session: ${status.session_id}`;
 
             // Metrics
-            document.getElementById('velocity').textContent = `${status.current_velocity.toFixed(1)} m/s`;
+            const velocityMs = status.current_velocity;
+            const velocityKmh = velocityMs * 3.6;
+            document.getElementById('speedValue').textContent = `${velocityKmh.toFixed(0)} km/h`;
             document.getElementById('distance').textContent = `${(status.total_distance / 1000).toFixed(2)} km`;
+
+            // Update speedometer needle (0-180 degrees, max 60 m/s = 216 km/h)
+            const maxVelocity = 60; // m/s
+            const angle = Math.min(180, (velocityMs / maxVelocity) * 180);
+            document.getElementById('speedNeedle').style.transform = `rotate(${angle}deg)`;
             document.getElementById('duration').textContent = formatDuration(status.elapsed_seconds);
             document.getElementById('gpsFixes').textContent = status.gps_fixes;
             document.getElementById('accelSamples').textContent = status.accel_samples;
@@ -1023,6 +1231,7 @@ def live_monitor():
 @app.get("/")
 def root():
     """Serve the main dashboard HTML"""
+    theme_css = get_theme_css()
     html_content = """<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -1031,6 +1240,7 @@ def root():
     <title>Motion Tracker Dashboard</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    """ + theme_css + """
     <style>
         * {
             margin: 0;
@@ -1040,8 +1250,8 @@ def root():
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: #f5f5f5;
-            color: #333;
+            background: var(--bg-primary);
+            color: var(--text-primary);
         }
 
         .container {
@@ -1051,17 +1261,18 @@ def root():
 
         .sidebar {
             width: 350px;
-            background: white;
-            border-right: 1px solid #ddd;
+            background: var(--bg-secondary);
+            border-right: 1px solid var(--border-color);
             overflow-y: auto;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
         }
 
         .header {
             padding: 20px;
-            border-bottom: 1px solid #ddd;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            border-bottom: 1px solid var(--border-color);
+            background: var(--header-bg);
             color: white;
+            position: relative;
         }
 
         .header h1 {
@@ -1092,48 +1303,99 @@ def root():
             background: rgba(255, 255, 255, 0.3);
         }
 
+        .search-bar {
+            padding: 10px 20px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .search-bar input {
+            width: 100%;
+            padding: 8px 12px;
+            min-height: 44px;
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            background: var(--bg-tertiary);
+            color: var(--text-primary);
+            font-size: 13px;
+        }
+
+        .search-bar input::placeholder {
+            color: var(--text-light);
+        }
+
+        .group-header {
+            padding: 10px 20px;
+            font-weight: 600;
+            font-size: 11px;
+            color: var(--text-light);
+            text-transform: uppercase;
+            background: var(--bg-tertiary);
+            border-bottom: 1px solid var(--border-color);
+            margin-top: 10px;
+        }
+
         .drives-list {
             list-style: none;
         }
 
         .drive-item {
             padding: 15px 20px;
-            border-bottom: 1px solid #eee;
+            border-bottom: 1px solid var(--border-color);
             cursor: pointer;
             transition: background 0.2s;
         }
 
         .drive-item:hover {
-            background: #f9f9f9;
+            background: var(--bg-tertiary);
         }
 
         .drive-item.active {
-            background: #e8f0f8;
-            border-left: 4px solid #667eea;
+            background: var(--bg-tertiary);
+            border-left: 4px solid var(--accent-color);
             padding-left: 16px;
         }
 
         .drive-date {
             font-weight: 600;
             font-size: 14px;
-            color: #333;
+            color: var(--text-primary);
             margin-bottom: 5px;
         }
 
         .drive-stats {
             font-size: 12px;
-            color: #666;
+            color: var(--text-secondary);
             line-height: 1.6;
         }
 
         .stat-badge {
             display: inline-block;
-            background: #f0f0f0;
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
             padding: 2px 8px;
             border-radius: 3px;
             margin: 2px 4px 2px 0;
             font-size: 11px;
             white-space: nowrap;
+        }
+
+        .theme-toggle {
+            position: absolute;
+            top: 15px;
+            right: 15px;
+            background: rgba(255, 255, 255, 0.2);
+            border: none;
+            color: white;
+            padding: 6px 10px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            transition: background 0.2s;
+            z-index: 100;
+        }
+
+        .theme-toggle:hover {
+            background: rgba(255, 255, 255, 0.3);
         }
 
         .map-container {
@@ -1150,7 +1412,8 @@ def root():
             position: absolute;
             bottom: 20px;
             right: 20px;
-            background: white;
+            background: var(--map-overlay-bg);
+            color: var(--text-primary);
             padding: 15px 20px;
             border-radius: 8px;
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
@@ -1161,16 +1424,16 @@ def root():
         .loading {
             text-align: center;
             padding: 40px 20px;
-            color: #999;
+            color: var(--text-light);
         }
 
-        .loading spinner {
+        .loading-spinner {
             display: block;
             width: 40px;
             height: 40px;
             margin: 0 auto 10px;
-            border: 3px solid #f0f0f0;
-            border-top: 3px solid #667eea;
+            border: 3px solid var(--border-color);
+            border-top: 3px solid var(--accent-color);
             border-radius: 50%;
             animation: spin 1s linear infinite;
         }
@@ -1183,7 +1446,7 @@ def root():
         .error {
             color: #d32f2f;
             padding: 20px;
-            background: #ffebee;
+            background: var(--bg-tertiary);
             border-left: 4px solid #d32f2f;
             margin: 20px;
             border-radius: 4px;
@@ -1199,7 +1462,7 @@ def root():
                 width: 100%;
                 height: 40vh;
                 border-right: none;
-                border-bottom: 1px solid #ddd;
+                border-bottom: 1px solid var(--border-color);
             }
 
             .map-container {
@@ -1210,6 +1473,31 @@ def root():
                 bottom: 10px;
                 right: 10px;
                 max-width: 90%;
+                font-size: 12px;
+            }
+
+            .theme-toggle {
+                position: static;
+                float: right;
+                margin-top: -35px;
+                margin-right: 0;
+            }
+        }
+
+        @media (max-width: 400px) {
+            .theme-toggle {
+                padding: 4px 8px;
+                font-size: 14px;
+            }
+
+            .header {
+                padding-bottom: 35px;
+            }
+
+            .map-overlay {
+                top: 60px;
+                right: 10px;
+                font-size: 11px;
             }
         }
     </style>
@@ -1218,9 +1506,13 @@ def root():
     <div class="container">
         <div class="sidebar">
             <div class="header">
+                <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
                 <h1>Motion Tracker</h1>
                 <p>Your Drives</p>
                 <a href="/live" class="live-monitor-link">View Live Monitor</a>
+            </div>
+            <div class="search-bar">
+                <input type="text" id="searchInput" placeholder="Search drives...">
             </div>
             <ul class="drives-list" id="drivesList">
                 <div class="loading">Loading drives...</div>
@@ -1239,6 +1531,10 @@ def root():
         let map = null;
         let currentGpxLayer = null;
         let drives = [];
+        let displayedDrives = [];
+        const DRIVES_PER_PAGE = 15;
+        let currentPage = 0;
+        let isLoadingMore = false;
 
         // Show status message on page (visible on mobile)
         function showStatus(message, type = 'info', duration = 3000) {
@@ -1270,12 +1566,14 @@ def root():
             map.setView([40, -95], 4);
         }
 
-        // Fetch and display drives list
+        // Fetch and display drives list (with server-side pagination)
         async function loadDrives() {
             try {
-                const response = await fetch('/api/drives');
+                const response = await fetch('/api/drives?limit=20&offset=0');
                 const data = await response.json();
                 drives = data.drives;
+                window.totalDrives = data.total;
+                window.hasMore = data.hasMore;
 
                 if (drives.length === 0) {
                     document.getElementById('drivesList').innerHTML =
@@ -1283,7 +1581,7 @@ def root():
                     return;
                 }
 
-                renderDrivesList();
+                renderDrivesList(null, true);  // Reset pagination and show first batch
 
                 // Auto-select first drive if it has GPX
                 const firstWithGpx = drives.find(d => d.has_gpx);
@@ -1297,28 +1595,145 @@ def root():
             }
         }
 
-        // Render drives list
-        function renderDrivesList() {
+        // Group drives by time period
+        function groupDrivesByTime(drivesToGroup) {
+            const now = new Date();
+            const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+            const weekAgo = new Date(today.getTime() - 7 * 24 * 60 * 60 * 1000);
+            const monthAgo = new Date(today.getFullYear(), today.getMonth(), 1);
+
+            const groups = { today: [], week: [], month: [], older: [] };
+
+            drivesToGroup.forEach(drive => {
+                const driveDate = new Date(drive.timestamp);
+                const driveDay = new Date(driveDate.getFullYear(), driveDate.getMonth(), driveDate.getDate());
+
+                if (driveDay.getTime() === today.getTime()) {
+                    groups.today.push(drive);
+                } else if (driveDate >= weekAgo) {
+                    groups.week.push(drive);
+                } else if (driveDate >= monthAgo) {
+                    groups.month.push(drive);
+                } else {
+                    groups.older.push(drive);
+                }
+            });
+
+            return groups;
+        }
+
+        // Render drives list with grouping and filtering (paginated)
+        function renderDrivesList(filteredDrives = null, reset = false) {
             const list = document.getElementById('drivesList');
-            list.innerHTML = drives.map(drive => `
-                <li class="drive-item" data-drive-id="${drive.id}" onclick="selectDrive('${drive.id}')">
-                    <div class="drive-date">${drive.datetime}</div>
-                    <div class="drive-stats">
-                        ${drive.stats.distance_km ? `<span class="stat-badge">${drive.stats.distance_km} km</span>` : ''}
-                        <span class="stat-badge">${drive.stats.gps_samples} GPS</span>
-                        <span class="stat-badge">${Math.round(drive.file_size_mb)} MB</span>
-                        ${!drive.has_gpx ? '<span class="stat-badge" style="background:#ffeaa7">No GPX</span>' : ''}
-                    </div>
-                </li>
-            `).join('');
+            const drivesToRender = filteredDrives || drives;
+
+            if (reset) {
+                currentPage = 0;
+                displayedDrives = [];
+            }
+
+            if (drivesToRender.length === 0) {
+                list.innerHTML = '<div class="error">No drives found matching your search.</div>';
+                return;
+            }
+
+            // Load first batch if empty
+            if (displayedDrives.length === 0) {
+                displayedDrives = drivesToRender.slice(0, DRIVES_PER_PAGE);
+                currentPage = 1;
+            }
+
+            const groups = groupDrivesByTime(displayedDrives);
+            let html = '';
+
+            const renderGroup = (groupName, groupLabel, groupDrives) => {
+                if (groupDrives.length === 0) return '';
+                return `
+                    <li class="group-header">${groupLabel}</li>
+                    ${groupDrives.map(drive => `
+                        <li class="drive-item" data-drive-id="${drive.id}" onclick="selectDrive('${drive.id}')" role="button" aria-selected="false" tabindex="0">
+                            <div class="drive-date">${drive.datetime}</div>
+                            <div class="drive-stats">
+                                ${drive.stats.distance_km ? `<span class="stat-badge">${drive.stats.distance_km} km</span>` : ''}
+                                <span class="stat-badge">${drive.stats.gps_samples} GPS</span>
+                                <span class="stat-badge">${Math.round(drive.file_size_mb)} MB</span>
+                                ${drive.has_gpx ? '<span class="stat-badge" style="color:#4caf50;">✓ GPS</span>' : '<span class="stat-badge" style="opacity:0.5;">✗ GPS</span>'}
+                            </div>
+                        </li>
+                    `).join('')}
+                `;
+            };
+
+            html += renderGroup('today', '📅 Today', groups.today);
+            html += renderGroup('week', '📆 This Week', groups.week);
+            html += renderGroup('month', '📊 This Month', groups.month);
+            html += renderGroup('older', '📦 Older', groups.older);
+
+            // Add load more button if there are more drives
+            if (displayedDrives.length < drivesToRender.length) {
+                html += `<li style="padding:15px 20px; text-align:center; border-top:1px solid var(--border-color);">
+                    <button onclick="loadMoreDrives()" style="background:var(--accent-color); color:white; border:none; padding:10px 20px; border-radius:6px; cursor:pointer; font-weight:600; width:100%; max-width:200px;">
+                        Load More (${displayedDrives.length}/${drivesToRender.length})
+                    </button>
+                </li>`;
+            }
+
+            list.innerHTML = html || '<div class="error">No drives found.</div>';
+        }
+
+        // Load more drives (fetch from API)
+        async function loadMoreDrives() {
+            if (isLoadingMore) return;
+            isLoadingMore = true;
+
+            try {
+                const offset = displayedDrives.length;
+                const response = await fetch(`/api/drives?limit=20&offset=${offset}`);
+                const data = await response.json();
+
+                if (data.drives && data.drives.length > 0) {
+                    drives = drives.concat(data.drives);
+                    displayedDrives = drives.slice(0, displayedDrives.length + DRIVES_PER_PAGE);
+                    window.hasMore = data.hasMore;
+                    renderDrivesList(null, false);
+                }
+            } catch (error) {
+                console.error('Error loading more drives:', error);
+            } finally {
+                isLoadingMore = false;
+            }
+        }
+
+        // Filter drives based on search input
+        function filterDrives(searchTerm) {
+            if (!searchTerm) {
+                renderDrivesList(null, true);  // Reset pagination
+                return;
+            }
+
+            const term = searchTerm.toLowerCase();
+            const filtered = drives.filter(drive =>
+                drive.datetime.toLowerCase().includes(term) ||
+                drive.id.toLowerCase().includes(term) ||
+                drive.stats.distance_km.toString().includes(term) ||
+                drive.stats.gps_samples.toString().includes(term)
+            );
+
+            renderDrivesList(filtered, true);  // Reset pagination
         }
 
         // Select and display a drive
         async function selectDrive(driveId) {
-            // Update UI
-            document.querySelectorAll('.drive-item').forEach(item => item.classList.remove('active'));
+            // Update UI with ARIA attributes
+            document.querySelectorAll('.drive-item').forEach(item => {
+                item.classList.remove('active');
+                item.setAttribute('aria-selected', 'false');
+            });
             const selected = document.querySelector(`.drive-item[data-drive-id="${driveId}"]`);
-            if (selected) selected.classList.add('active');
+            if (selected) {
+                selected.classList.add('active');
+                selected.setAttribute('aria-selected', 'true');
+            }
 
             // Get drive details
             try {
@@ -1334,7 +1749,11 @@ def root():
                     Distance: ${drive.stats.distance_km} km<br>
                     GPS Points: ${drive.stats.gps_samples}<br>
                     Accel Samples: ${drive.stats.accel_samples}<br>
-                    Peak Memory: ${drive.stats.peak_memory_mb} MB
+                    Peak Memory: ${drive.stats.peak_memory_mb} MB<br><br>
+                    <div style="display:flex; gap:8px; flex-wrap:wrap;">
+                        <button onclick="exportDrive('${driveId}', 'gpx')" style="flex:1; padding:6px; border:1px solid #667eea; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:12px;">📍 GPX</button>
+                        <button onclick="exportDrive('${driveId}', 'json')" style="flex:1; padding:6px; border:1px solid #667eea; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:12px;">📋 JSON</button>
+                    </div>
                 `;
                 mapInfo.style.display = 'block';
 
@@ -1353,6 +1772,65 @@ def root():
             } catch (error) {
                 console.error('Error loading drive details:', error);
                 showStatus(`Error loading drive: ${error.message}`, 'error', 10000);
+            }
+        }
+
+        // Export drive in different formats with loading state
+        function exportDrive(driveId, format) {
+            const drive = drives.find(d => d.id === driveId);
+            if (!drive) return;
+
+            const filename = `${driveId}.${format === 'gpx' ? 'gpx' : 'json'}`;
+            const buttons = document.querySelectorAll(`button[onclick*="exportDrive('${driveId}', '${format}')"]`);
+
+            // Disable buttons and show loading state
+            buttons.forEach(btn => {
+                btn.disabled = true;
+                btn.style.opacity = '0.5';
+                btn.style.cursor = 'not-allowed';
+            });
+
+            const cleanup = () => {
+                buttons.forEach(btn => {
+                    btn.disabled = false;
+                    btn.style.opacity = '1';
+                    btn.style.cursor = 'pointer';
+                });
+            };
+
+            if (format === 'gpx') {
+                // Fetch and download GPX
+                fetch(`/api/drive/${driveId}/gpx`)
+                    .then(res => res.text())
+                    .then(gpxText => {
+                        const blob = new Blob([gpxText], {type: 'application/gpx+xml'});
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        showStatus('GPX exported successfully!', 'success', 2000);
+                    })
+                    .catch(err => showStatus(`Export failed: ${err.message}`, 'error', 5000))
+                    .finally(cleanup);
+            } else if (format === 'json') {
+                // Fetch and download JSON
+                fetch(`/api/drive/${driveId}`)
+                    .then(res => res.json())
+                    .then(data => {
+                        const jsonText = JSON.stringify(data, null, 2);
+                        const blob = new Blob([jsonText], {type: 'application/json'});
+                        const url = URL.createObjectURL(blob);
+                        const a = document.createElement('a');
+                        a.href = url;
+                        a.download = filename;
+                        a.click();
+                        URL.revokeObjectURL(url);
+                        showStatus('JSON exported successfully!', 'success', 2000);
+                    })
+                    .catch(err => showStatus(`Export failed: ${err.message}`, 'error', 5000))
+                    .finally(cleanup);
             }
         }
 
@@ -1505,10 +1983,28 @@ def root():
             };
         }
 
+        // Debounce helper for search input
+        function debounce(func, delay) {
+            let timeoutId;
+            return function(...args) {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => func(...args), delay);
+            };
+        }
+
+        const debouncedFilter = debounce(filterDrives, 300);
+
         // Initialize on page load
         window.addEventListener('DOMContentLoaded', () => {
+            initTheme();  // Initialize theme
             initMap();
             loadDrives();
+
+            // Add search input listener with debouncing
+            const searchInput = document.getElementById('searchInput');
+            searchInput.addEventListener('input', (e) => {
+                debouncedFilter(e.target.value);
+            });
         });
     </script>
 </body>
