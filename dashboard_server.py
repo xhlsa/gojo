@@ -1597,7 +1597,7 @@ def root():
 </head>
 <body>
     <div class="container">
-        <div class="sidebar sheet-collapsed" id="bottomSheet">
+        <div class="sidebar sheet-half" id="bottomSheet">
             <div class="sheet-handle" id="sheetHandle"></div>
             <div class="header">
                 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
@@ -1633,7 +1633,7 @@ def root():
         let showNonGpsRuns = false;  // Filter state: false = show GPS only (default)
 
         // Bottom sheet management
-        let sheetState = 'collapsed';  // collapsed, half, or expanded
+        let sheetState = 'half';  // collapsed, half, or expanded (default: half for 50/50 split)
         let sheetStartY = 0;
         let sheetStartHeight = 100;
         const isMobile = window.matchMedia('(max-width: 768px)').matches;
