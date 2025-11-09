@@ -238,6 +238,11 @@ cleanup_on_exit() {
 
     echo -e "\n${YELLOW}Test finished, performing final cleanup...${NC}" | tee -a "$LOG_FILE"
 
+    # Release wakelock
+    echo -e "${YELLOW}Releasing wakelock...${NC}" | tee -a "$LOG_FILE"
+    termux-wake-lock-release 2>/dev/null || true
+    echo -e "${GREEN}✓ Wakelock released${NC}" | tee -a "$LOG_FILE"
+
     # Kill Python test process if still running
     if [ ! -z "$TEST_PID" ]; then
         kill -TERM "$TEST_PID" 2>/dev/null || true
@@ -293,6 +298,11 @@ trap cleanup_on_exit EXIT SIGINT SIGTERM
     echo "=============================================================================="
 } | tee "$LOG_FILE"
 
+# Acquire wakelock to prevent device sleep during long tests
+echo -e "${YELLOW}Acquiring wakelock...${NC}" | tee -a "$LOG_FILE"
+termux-wake-lock
+echo -e "${GREEN}✓ Wakelock acquired${NC}" | tee -a "$LOG_FILE"
+
 # Step 1: Initialize sensor with retry
 if ! initialize_sensor_with_retry 2>&1 | tee -a "$LOG_FILE"; then
     exit 1
@@ -311,7 +321,8 @@ echo -e "${GREEN}Starting Python test...${NC}\n" | tee -a "$LOG_FILE"
 
 # Capture both stdout and stderr from Python process
 # Enable gyro by default (since we now have GPS and accel data flowing reliably)
-python3 motion_tracker_v2/test_ekf_vs_complementary.py --enable-gyro "$@" 2>&1 | tee -a "$LOG_FILE" &
+# Use nice -n -10 for higher process priority to compete better with Android system services
+nice -n -10 python3 motion_tracker_v2/test_ekf_vs_complementary.py --enable-gyro "$@" 2>&1 | tee -a "$LOG_FILE" &
 TEST_PID=$!
 
 # Step 4: Monitor Python process

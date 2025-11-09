@@ -224,7 +224,9 @@ class IncidentDetector:
 if __name__ == '__main__':
     print("Incident Detector Test\n" + "="*60)
 
-    detector = IncidentDetector(session_dir='/tmp/test_incidents/')
+    # Use persistent logs directory instead of /tmp (Termux doesn't persist /tmp)
+    test_incidents_dir = os.path.expanduser('~/gojo/motion_tracker_sessions/test_incidents')
+    detector = IncidentDetector(session_dir=test_incidents_dir)
 
     # Simulate some sensor data
     base_time = time.time()
@@ -267,4 +269,4 @@ if __name__ == '__main__':
               f"({summary['latest_incident']['magnitude']:.2f}) "
               f"at {summary['latest_incident']['time']}")
 
-    print("\n✓ Test complete - incidents saved to /tmp/test_incidents/")
+    print(f"\n✓ Test complete - incidents saved to {test_incidents_dir}")

@@ -89,78 +89,49 @@ class PersistentGPSDaemon:
             # - Polling: one subprocess with repeated calls → DalvikVM reused → ~0.5s per call + padding
             wrapper_script = '''
 import subprocess
-import json
 import sys
 import time
 
-# Non-blocking async GPS poller (never blocks for 15s)
-# This wrapper runs a GPS subprocess and reads results without blocking
-current_process = None
-request_start_time = None
-next_poll_time = time.time()
-consecutive_failures = 0
-max_failures = 3
-failure_backoff_stages = [2, 5, 10, 15, 20]
-current_backoff_stage = 0
-max_request_duration = 5.0  # Kill requests after 5s, not 15s
+# GPS polling wrapper - poll every 5 seconds (matches Termux:API hardcoded minimum)
+# Note: termux-location -r updates does NOT actually stream continuously on this device
+# It outputs one fix then exits, so we use polling with -p gps instead
 
-while True:
+next_poll_time = time.time()
+last_success_time = time.time()
+max_starvation = 30.0  # Exit after 30s with no data
+max_runtime = 2700    # 45 minutes max
+
+while time.time() - next_poll_time < max_runtime:
     current_time = time.time()
 
-    # Check if current request finished (non-blocking)
-    if current_process is not None:
-        returncode = current_process.poll()
-
-        if returncode is None:  # Still running
-            # Check for timeout - kill if exceeding max duration
-            if current_time - request_start_time > max_request_duration:
-                sys.stderr.write(f"[GPS] Request timeout ({max_request_duration}s), killing process\\n")
-                try:
-                    current_process.kill()
-                    current_process.wait(timeout=1)
-                except:
-                    pass
-                current_process = None
-                consecutive_failures += 1
-        else:
-            # Process finished - read output
-            try:
-                stdout, stderr = current_process.communicate(timeout=0.1)
-                current_process = None
-
-                if returncode == 0 and stdout:
-                    print(stdout, flush=True)
-                    consecutive_failures = 0
-                    current_backoff_stage = 0
-                else:
-                    consecutive_failures += 1
-                    if consecutive_failures >= max_failures:
-                        current_backoff_stage = min(current_backoff_stage + 1, len(failure_backoff_stages) - 1)
-                        backoff = failure_backoff_stages[current_backoff_stage]
-                        sys.stderr.write(f"[GPS] Failed {max_failures} times, backoff={backoff}s (stage {current_backoff_stage + 1})\\n")
-                        time.sleep(backoff)
-                        consecutive_failures = 0
-            except Exception as e:
-                sys.stderr.write(f"[GPS] Error parsing result: {e}\\n")
-                current_process = None
-                consecutive_failures += 1
-
-    # Start new request if it's time and no request running
-    if current_time >= next_poll_time and current_process is None:
+    # Poll every 5 seconds
+    if current_time >= next_poll_time:
         try:
-            current_process = subprocess.Popen(
+            result = subprocess.run(
                 ['termux-location', '-p', 'gps'],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True
+                capture_output=True,
+                text=True,
+                timeout=30
             )
-            request_start_time = current_time
-            next_poll_time = current_time + 2.0  # Poll every 2 seconds
-        except Exception as e:
-            sys.stderr.write(f"[GPS] Failed to start request: {e}\\n")
-            consecutive_failures += 1
 
-    # Sleep briefly (100ms check cycle, never blocks long)
+            if result.returncode == 0 and result.stdout.strip():
+                print(result.stdout, flush=True)
+                last_success_time = time.time()
+            else:
+                sys.stderr.write(f"[GPS] No output (code {result.returncode})\\n")
+
+        except subprocess.TimeoutExpired:
+            sys.stderr.write("[GPS] Request timeout (15s)\\n")
+        except Exception as e:
+            sys.stderr.write(f"[GPS] Error: {e}\\n")
+
+        next_poll_time = current_time + 5.0
+
+    # Check for starvation
+    if current_time - last_success_time > max_starvation:
+        sys.stderr.write(f"[GPS] Starvation for {max_starvation}s, exiting\\n")
+        sys.exit(1)
+
     time.sleep(0.1)
 '''
 
@@ -313,15 +284,15 @@ class FilterComparison:
 
         # Data storage - OPTIMIZED for memory efficiency
         # All data still saved to disk via auto-save, this is just in-memory history
-        # GPS: 2,000 fixes @ 1 Hz = ~33 minutes (sufficient for single drive)
-        # Accel: 30,000 samples @ 20 Hz actual = 25 minutes (increased buffer for auto-save delays)
-        # Gyro: 30,000 samples @ 20 Hz actual = 25 minutes (paired with accel)
-        # Comparison: 500 summaries (last 5 seconds at ~100Hz comparison rate)
-        # Note: Hardware delivers ~20Hz not theoretical 50Hz, so buffer sized accordingly
-        self.gps_samples = deque(maxlen=2000)
-        self.accel_samples = deque(maxlen=30000)
-        self.gyro_samples = deque(maxlen=30000)
-        self.comparison_samples = deque(maxlen=500)
+        # GPS: 5,000 fixes @ 1 Hz = ~83 minutes (extended for long tests, reduces GC pressure)
+        # Accel: 60,000 samples @ 20 Hz actual = 50 minutes (2x buffer, less frequent auto-save clearing)
+        # Gyro: 60,000 samples @ 20 Hz actual = 50 minutes (paired with accel)
+        # Comparison: 2,000 summaries (last 20 seconds at ~100Hz comparison rate)
+        # Note: Hardware delivers ~20Hz not theoretical 50Hz, buffer sized for 45+ min tests
+        self.gps_samples = deque(maxlen=5000)
+        self.accel_samples = deque(maxlen=60000)
+        self.gyro_samples = deque(maxlen=60000)
+        self.comparison_samples = deque(maxlen=2000)
 
         # FIX 2: Thread lock for accumulated_data and deque operations
         self._save_lock = threading.Lock()
@@ -577,6 +548,7 @@ class FilterComparison:
         # Wait for duration with periodic auto-save
         try:
             end_time = time.time() + (self.duration_minutes * 60 if self.duration_minutes else float('inf'))
+            print(f"\n[DEBUG] Test start time: {self.start_time}, End time target: {end_time}, Duration: {self.duration_minutes} min ({self.duration_minutes * 60 if self.duration_minutes else 'inf'} sec)", file=sys.stderr)
 
             # Run with periodic auto-save for both timed and continuous modes
             while not self.stop_event.is_set() and time.time() < end_time:
@@ -586,6 +558,11 @@ class FilterComparison:
                     print(f"\n✓ Auto-saving data ({len(self.gps_samples)} GPS, {len(self.accel_samples)} accel samples)...")
                     self._save_results(auto_save=True, clear_after_save=True)
                     self.last_auto_save_time = time.time()
+
+            # Log why the loop exited
+            elapsed = time.time() - self.start_time
+            print(f"\n[DEBUG] Loop exited after {elapsed:.1f}s. Stop event: {self.stop_event.is_set()}, Time check: {time.time() < end_time}", file=sys.stderr)
+
         except KeyboardInterrupt:
             print("\n\nInterrupted by user")
         finally:
@@ -854,24 +831,39 @@ class FilterComparison:
         last_status_log = 0
 
         while not self.stop_event.is_set():
-            now = time.time()
+            try:
+                now = time.time()
 
-            # Log status every 30 seconds (to stderr)
-            if now - last_status_log > 30.0:
-                last_status_log = now
-                self._log_status()
+                # Log status every 30 seconds (to stderr)
+                if now - last_status_log > 30.0:
+                    last_status_log = now
+                    try:
+                        self._log_status()
+                    except Exception as e:
+                        print(f"⚠️  Warning: Status logging failed: {e}", file=sys.stderr)
 
-            # Display metrics every second
-            if now - last_display > 1.0:
-                last_display = now
-                self._display_metrics()
+                # Display metrics every second
+                if now - last_display > 1.0:
+                    last_display = now
+                    try:
+                        self._display_metrics()
+                    except Exception as e:
+                        print(f"⚠️  Warning: Metrics display failed: {e}", file=sys.stderr)
 
-            # Update live status file every 2 seconds for dashboard
-            if now - self.last_status_update > 2.0:
-                self.last_status_update = now
-                self._update_live_status()
+                # Update live status file every 2 seconds for dashboard
+                if now - self.last_status_update > 2.0:
+                    self.last_status_update = now
+                    try:
+                        self._update_live_status()
+                    except Exception as e:
+                        # Silently skip status file updates if they fail (non-critical)
+                        pass
 
-            time.sleep(0.1)
+                time.sleep(0.1)
+            except Exception as e:
+                print(f"⚠️  Critical error in display loop: {e}", file=sys.stderr)
+                # Continue display loop even on critical errors
+                time.sleep(0.5)
 
     def _restart_accel_daemon(self):
         """Attempt to restart the accelerometer daemon"""
@@ -888,7 +880,11 @@ class FilterComparison:
             print(f"  Warning during accel daemon stop: {e}", file=sys.stderr)
 
         # Create new daemon instance
-        self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+        try:
+            self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+        except Exception as e:
+            print(f"  ✗ Failed to create new accelerometer daemon: {e}", file=sys.stderr)
+            return False
 
         # EXTENDED cooldown for full resource release
         time.sleep(self.restart_cooldown + 2)
@@ -919,8 +915,19 @@ class FilterComparison:
         except Exception as e:
             print(f"  Warning during GPS daemon stop: {e}", file=sys.stderr)
 
+        # Force kill all stale termux-location processes (Android socket cleanup)
+        try:
+            subprocess.run(['pkill', '-9', 'termux-location'], timeout=2, capture_output=True)
+            time.sleep(2)  # Allow Android to fully release socket resources
+        except Exception as e:
+            pass  # Non-fatal
+
         # Create new daemon instance
-        self.gps_daemon = PersistentGPSDaemon()
+        try:
+            self.gps_daemon = PersistentGPSDaemon()
+        except Exception as e:
+            print(f"  ✗ Failed to create new GPS daemon: {e}", file=sys.stderr)
+            return False
 
         # Wait for cooldown
         time.sleep(self.restart_cooldown)
@@ -959,156 +966,184 @@ class FilterComparison:
 
     def _log_status(self):
         """Log status update to stderr (won't clutter display)"""
-        elapsed = time.time() - self.start_time
-        mins = int(elapsed // 60)
-        secs = int(elapsed % 60)
+        try:
+            elapsed = time.time() - self.start_time
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
 
-        # Memory
-        mem_info = self.process.memory_info()
-        mem_mb = mem_info.rss / 1024 / 1024
-        self.peak_memory = max(self.peak_memory, mem_mb)
+            # Memory
+            try:
+                mem_info = self.process.memory_info()
+                mem_mb = mem_info.rss / 1024 / 1024
+                self.peak_memory = max(self.peak_memory, mem_mb)
+            except Exception as e:
+                mem_mb = self.peak_memory  # Use last known peak if current fails
+                print(f"  ⚠️  Warning: Failed to get memory info: {e}", file=sys.stderr)
 
-        # Sample counts
-        gps_count = len(self.gps_samples)
-        accel_count = len(self.accel_samples)
-        gyro_count = len(self.gyro_samples)
+            # Sample counts
+            try:
+                gps_count = len(self.gps_samples)
+                accel_count = len(self.accel_samples)
+                gyro_count = len(self.gyro_samples)
+            except Exception as e:
+                print(f"  ⚠️  Warning: Failed to count samples: {e}", file=sys.stderr)
+                gps_count = accel_count = gyro_count = 0
 
-        # ⚠️ CRITICAL: Check daemon health every 30 seconds
-        accel_status = self.accel_daemon.get_status()
-        gps_status = self.gps_daemon.get_status() if self.gps_daemon else "DISABLED"
+            # ⚠️ CRITICAL: Check daemon health every 30 seconds
+            try:
+                accel_status = self.accel_daemon.get_status() if self.accel_daemon else "DISABLED"
+                gps_status = self.gps_daemon.get_status() if self.gps_daemon else "DISABLED"
+            except Exception as e:
+                print(f"  ⚠️  Warning: Failed to get daemon status: {e}", file=sys.stderr)
+                accel_status = "UNKNOWN"
+                gps_status = "UNKNOWN"
 
-        status_msg = (
-            f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
-            f"GPS={gps_count:4d} ({gps_status}) | Accel={accel_count:5d} ({accel_status})"
-        )
+            status_msg = (
+                f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
+                f"GPS={gps_count:4d} ({gps_status}) | Accel={accel_count:5d} ({accel_status})"
+            )
 
-        if self.enable_gyro:
-            status_msg += f" | Gyro={gyro_count:5d}"
+            if self.enable_gyro:
+                status_msg += f" | Gyro={gyro_count:5d}"
 
-        # Add restart counts if any restarts occurred
-        if self.restart_counts['accel'] > 0 or self.restart_counts['gps'] > 0:
-            status_msg += f" | Restarts: Accel={self.restart_counts['accel']}, GPS={self.restart_counts['gps']}"
+            # Add restart counts if any restarts occurred
+            if self.restart_counts['accel'] > 0 or self.restart_counts['gps'] > 0:
+                status_msg += f" | Restarts: Accel={self.restart_counts['accel']}, GPS={self.restart_counts['gps']}"
 
-        sys.stderr.write(status_msg + "\n")
-        sys.stderr.flush()
+            sys.stderr.write(status_msg + "\n")
+            sys.stderr.flush()
 
-        # 🔄 AUTO-RESTART: If accelerometer daemon dies, attempt restart
-        if accel_status.startswith("DEAD"):
-            if self.restart_counts['accel'] < self.max_restart_attempts:
-                warning_msg = (
-                    f"\n⚠️  WARNING: Accelerometer daemon died at {mins:02d}:{secs:02d}\n"
-                    f"   Status: {accel_status}\n"
-                    f"   Samples collected: {accel_count}\n"
-                    f"   Attempting automatic restart..."
-                )
-                print(warning_msg, file=sys.stderr)
+            # 🔄 AUTO-RESTART: If accelerometer daemon dies, attempt restart
+            if accel_status.startswith("DEAD"):
+                if self.restart_counts['accel'] < self.max_restart_attempts:
+                    warning_msg = (
+                        f"\n⚠️  WARNING: Accelerometer daemon died at {mins:02d}:{secs:02d}\n"
+                        f"   Status: {accel_status}\n"
+                        f"   Samples collected: {accel_count}\n"
+                        f"   Attempting automatic restart..."
+                    )
+                    print(warning_msg, file=sys.stderr)
 
-                if self._restart_accel_daemon():
-                    print(f"   ✓ Accelerometer daemon recovered, test continues\n", file=sys.stderr)
+                    if self._restart_accel_daemon():
+                        print(f"   ✓ Accelerometer daemon recovered, test continues\n", file=sys.stderr)
+                    else:
+                        self.restart_counts['accel'] += 1  # Count failed attempt
+                        print(f"   ✗ Restart attempt {self.restart_counts['accel']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
+
+                        # If we've hit max retries, fail the test
+                        if self.restart_counts['accel'] >= self.max_restart_attempts:
+                            error_msg = (
+                                f"\n🚨 FATAL ERROR: Accelerometer daemon failed after {self.max_restart_attempts} restart attempts\n"
+                                f"   This indicates a persistent sensor hardware issue or Termux:API failure.\n"
+                                f"   Test cannot continue without accelerometer data."
+                            )
+                            print(error_msg, file=sys.stderr)
+                            self.stop_event.set()  # Signal main loop to exit
+                            return
                 else:
-                    self.restart_counts['accel'] += 1  # Count failed attempt
-                    print(f"   ✗ Restart attempt {self.restart_counts['accel']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
+                    # Already hit max retries
+                    error_msg = (
+                        f"\n🚨 FATAL ERROR: Accelerometer daemon still dead (max retries exceeded)\n"
+                        f"   Test cannot continue without accelerometer data."
+                    )
+                    print(error_msg, file=sys.stderr)
+                    self.stop_event.set()  # Signal main loop to exit
+                    return
 
-                    # If we've hit max retries, fail the test
-                    if self.restart_counts['accel'] >= self.max_restart_attempts:
-                        error_msg = (
-                            f"\n🚨 FATAL ERROR: Accelerometer daemon failed after {self.max_restart_attempts} restart attempts\n"
-                            f"   This indicates a persistent sensor hardware issue or Termux:API failure.\n"
-                            f"   Test cannot continue without accelerometer data."
-                        )
-                        print(error_msg, file=sys.stderr)
-                        self.stop_event.set()  # Signal main loop to exit
-                        return
-            else:
-                # Already hit max retries
-                error_msg = (
-                    f"\n🚨 FATAL ERROR: Accelerometer daemon still dead (max retries exceeded)\n"
-                    f"   Test cannot continue without accelerometer data."
-                )
-                print(error_msg, file=sys.stderr)
-                self.stop_event.set()  # Signal main loop to exit
-                return
+            # 🔄 AUTO-RESTART: GPS daemon died (test can continue with accel only, but try to recover)
+            if gps_status.startswith("DEAD") and self.gps_daemon:
+                if self.restart_counts['gps'] < self.max_restart_attempts:
+                    warning_msg = (
+                        f"\n⚠️  WARNING: GPS daemon died at {mins:02d}:{secs:02d}\n"
+                        f"   Status: {gps_status}\n"
+                        f"   Samples collected: {gps_count}\n"
+                        f"   Attempting automatic restart..."
+                    )
+                    print(warning_msg, file=sys.stderr)
 
-        # 🔄 AUTO-RESTART: GPS daemon died (test can continue with accel only, but try to recover)
-        if gps_status.startswith("DEAD") and self.gps_daemon:
-            if self.restart_counts['gps'] < self.max_restart_attempts:
-                warning_msg = (
-                    f"\n⚠️  WARNING: GPS daemon died at {mins:02d}:{secs:02d}\n"
-                    f"   Status: {gps_status}\n"
-                    f"   Samples collected: {gps_count}\n"
-                    f"   Attempting automatic restart..."
-                )
-                print(warning_msg, file=sys.stderr)
+                    if self._restart_gps_daemon():
+                        print(f"   ✓ GPS daemon recovered, test continues\n", file=sys.stderr)
+                    else:
+                        self.restart_counts['gps'] += 1  # Count failed attempt
+                        print(f"   ✗ Restart attempt {self.restart_counts['gps']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
 
-                if self._restart_gps_daemon():
-                    print(f"   ✓ GPS daemon recovered, test continues\n", file=sys.stderr)
+                        # If we've hit max retries, disable GPS but continue test
+                        if self.restart_counts['gps'] >= self.max_restart_attempts:
+                            warning_msg = (
+                                f"\n⚠️  GPS daemon failed after {self.max_restart_attempts} restart attempts\n"
+                                f"   Disabling GPS, continuing with accelerometer-only fusion."
+                            )
+                            print(warning_msg, file=sys.stderr)
+                            self.gps_daemon = None  # Mark as unavailable
                 else:
-                    self.restart_counts['gps'] += 1  # Count failed attempt
-                    print(f"   ✗ Restart attempt {self.restart_counts['gps']}/{self.max_restart_attempts} failed\n", file=sys.stderr)
-
-                    # If we've hit max retries, disable GPS but continue test
-                    if self.restart_counts['gps'] >= self.max_restart_attempts:
-                        warning_msg = (
-                            f"\n⚠️  GPS daemon failed after {self.max_restart_attempts} restart attempts\n"
-                            f"   Disabling GPS, continuing with accelerometer-only fusion."
-                        )
-                        print(warning_msg, file=sys.stderr)
+                    # Already hit max retries, disable if not already done
+                    if self.gps_daemon:
+                        print(f"\n⚠️  GPS daemon still dead (max retries exceeded), disabling GPS\n", file=sys.stderr)
                         self.gps_daemon = None  # Mark as unavailable
-            else:
-                # Already hit max retries, disable if not already done
-                if self.gps_daemon:
-                    print(f"\n⚠️  GPS daemon still dead (max retries exceeded), disabling GPS\n", file=sys.stderr)
-                    self.gps_daemon = None  # Mark as unavailable
 
-        # Print gyro-EKF validation metrics every 30 seconds (if enabled)
-        if self.enable_gyro and self.metrics:
-            self.metrics.print_dashboard(interval=30)
+            # Print gyro-EKF validation metrics every 30 seconds (if enabled)
+            if self.enable_gyro and self.metrics:
+                try:
+                    self.metrics.print_dashboard(interval=30)
+                except Exception as e:
+                    print(f"  ⚠️  Warning: Failed to print metrics: {e}", file=sys.stderr)
+        except Exception as e:
+            print(f"⚠️  Critical error in _log_status: {e}", file=sys.stderr)
+            # Continue anyway - status logging is non-critical
 
     def _display_metrics(self):
         """Show side-by-side comparison"""
-        if not self.gps_samples and not self.accel_samples:
-            return
+        try:
+            if not self.gps_samples and not self.accel_samples:
+                return
 
-        # Get latest state
-        ekf_state = self.ekf.get_state()
-        comp_state = self.complementary.get_state()
+            # Get latest state
+            try:
+                ekf_state = self.ekf.get_state()
+                comp_state = self.complementary.get_state()
+            except Exception as e:
+                # Skip display if filter states are inaccessible
+                return
 
-        elapsed = time.time() - self.start_time
-        mins = int(elapsed // 60)
-        secs = int(elapsed % 60)
+            elapsed = time.time() - self.start_time
+            mins = int(elapsed // 60)
+            secs = int(elapsed % 60)
 
-        # Get latest sensor data
-        latest_accel = self.accel_samples[-1] if self.accel_samples else None
-        latest_gps = self.gps_samples[-1] if self.gps_samples else None
+            # Get latest sensor data
+            latest_accel = self.accel_samples[-1] if self.accel_samples else None
+            latest_gps = self.gps_samples[-1] if self.gps_samples else None
 
-        print(f"\n[{mins:02d}:{secs:02d}] FILTER COMPARISON")
-        print("-" * 100)
+            print(f"\n[{mins:02d}:{secs:02d}] FILTER COMPARISON")
+            print("-" * 100)
 
-        # Header
-        print(f"{'METRIC':<25} | {'EKF':^20} | {'COMPLEMENTARY':^20} | {'DIFF':^15}")
-        print("-" * 100)
+            # Header
+            print(f"{'METRIC':<25} | {'EKF':^20} | {'COMPLEMENTARY':^20} | {'DIFF':^15}")
+            print("-" * 100)
 
-        # Velocity
-        ekf_vel = ekf_state['velocity']
-        comp_vel = comp_state['velocity']
-        vel_diff = abs(ekf_vel - comp_vel)
-        print(f"{'Velocity (m/s)':<25} | {ekf_vel:>8.3f} m/s         | {comp_vel:>8.3f} m/s         | {vel_diff:>8.3f} m/s  ")
+            # Velocity
+            ekf_vel = ekf_state['velocity']
+            comp_vel = comp_state['velocity']
+            vel_diff = abs(ekf_vel - comp_vel)
+            print(f"{'Velocity (m/s)':<25} | {ekf_vel:>8.3f} m/s         | {comp_vel:>8.3f} m/s         | {vel_diff:>8.3f} m/s  ")
 
-        # Distance
-        ekf_dist = ekf_state['distance']
-        comp_dist = comp_state['distance']
-        dist_diff_pct = abs(ekf_dist - comp_dist) / max(ekf_dist, comp_dist, 0.001) * 100 if max(ekf_dist, comp_dist) > 0 else 0
-        print(f"{'Distance (m)':<25} | {ekf_dist:>8.2f} m           | {comp_dist:>8.2f} m           | {dist_diff_pct:>6.2f}%      ")
+            # Distance
+            ekf_dist = ekf_state['distance']
+            comp_dist = comp_state['distance']
+            dist_diff_pct = abs(ekf_dist - comp_dist) / max(ekf_dist, comp_dist, 0.001) * 100 if max(ekf_dist, comp_dist) > 0 else 0
+            print(f"{'Distance (m)':<25} | {ekf_dist:>8.2f} m           | {comp_dist:>8.2f} m           | {dist_diff_pct:>6.2f}%      ")
 
-        # Acceleration magnitude
-        ekf_accel = ekf_state['accel_magnitude']
-        comp_accel = comp_state['accel_magnitude']
-        print(f"{'Accel Magnitude (m/s²)':<25} | {ekf_accel:>8.3f} m/s²        | {comp_accel:>8.3f} m/s²        | {abs(ekf_accel - comp_accel):>8.3f} m/s² ")
+            # Acceleration magnitude
+            ekf_accel = ekf_state['accel_magnitude']
+            comp_accel = comp_state['accel_magnitude']
+            print(f"{'Accel Magnitude (m/s²)':<25} | {ekf_accel:>8.3f} m/s²        | {comp_accel:>8.3f} m/s²        | {abs(ekf_accel - comp_accel):>8.3f} m/s² ")
 
-        # Status
-        ekf_status = "MOVING" if not ekf_state['is_stationary'] else "STATIONARY"
-        comp_status = "MOVING" if not comp_state['is_stationary'] else "STATIONARY"
-        print(f"{'Status':<25} | {ekf_status:^20} | {comp_status:^20} | {'':^15}")
+            # Status
+            ekf_status = "MOVING" if not ekf_state['is_stationary'] else "STATIONARY"
+            comp_status = "MOVING" if not comp_state['is_stationary'] else "STATIONARY"
+            print(f"{'Status':<25} | {ekf_status:^20} | {comp_status:^20} | {'':^15}")
+        except Exception as e:
+            # Non-critical display failure, skip metrics
+            pass
 
         # Sensor info
         print("-" * 100)
@@ -1277,32 +1312,41 @@ class FilterComparison:
                 filename = f"{base_filename}.json.gz"
                 temp_filename = f"{filename}.tmp"
 
-                with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
-                    json.dump(accumulated_results, f, separators=(',', ':'))
+                try:
+                    with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
+                        json.dump(accumulated_results, f, separators=(',', ':'))
 
-                # Atomic rename
-                os.rename(temp_filename, filename)
+                    # Atomic rename - only clears deques AFTER confirming save succeeded
+                    os.rename(temp_filename, filename)
 
-                # Clear samples after saving to free memory (deques stay bounded)
-                if clear_after_save:
-                    self.gps_samples.clear()
-                    self.accel_samples.clear()
-                    self.gyro_samples.clear()
+                    # ✅ Save confirmed - NOW clear samples to free memory
+                    if clear_after_save:
+                        self.gps_samples.clear()
+                        self.accel_samples.clear()
+                        self.gyro_samples.clear()
 
-                    # NOTE: Do NOT clear _accumulated_data - it's needed for final save
-                    # Accumulated data persists in memory but is essential for combining
-                    # all auto-save data with final deque contents at end of test
+                        # NOTE: Do NOT clear _accumulated_data - it's needed for final save
+                        # Accumulated data persists in memory but is essential for combining
+                        # all auto-save data with final deque contents at end of test
 
-                    # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
-                    # Resetting velocity to 0 mid-test creates fake physics
+                        # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
+                        # Resetting velocity to 0 mid-test creates fake physics
 
-                    gps_count = len(self._accumulated_data['gps_samples'])
-                    accel_count = len(self._accumulated_data['accel_samples'])
-                    print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel | Deques cleared")
-                else:
-                    gps_count = len(self._accumulated_data['gps_samples'])
-                    accel_count = len(self._accumulated_data['accel_samples'])
-                    print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel")
+                        gps_count = len(self._accumulated_data['gps_samples'])
+                        accel_count = len(self._accumulated_data['accel_samples'])
+                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel | Deques cleared")
+                    else:
+                        gps_count = len(self._accumulated_data['gps_samples'])
+                        accel_count = len(self._accumulated_data['accel_samples'])
+                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count} GPS + {accel_count} accel")
+                except Exception as e:
+                    print(f"\n⚠️ WARNING: Auto-save failed (test will continue, data kept in memory): {e}", file=sys.stderr)
+                    # Clean up temp file if it exists
+                    try:
+                        os.remove(temp_filename)
+                    except:
+                        pass
+                    # Do NOT clear deques on failure - keep data in memory for final save
         else:
             # FIX 1: Final save should use accumulated_data if it exists
             # (deques may be empty after auto-saves)
@@ -1331,30 +1375,35 @@ class FilterComparison:
                     pass
 
             # Final save - both compressed and uncompressed
-            # Uncompressed JSON for easy inspection
-            filename_json = f"{base_filename}.json"
-            temp_filename = f"{filename_json}.tmp"
+            try:
+                # Uncompressed JSON for easy inspection
+                filename_json = f"{base_filename}.json"
+                temp_filename = f"{filename_json}.tmp"
 
-            with open(temp_filename, 'w') as f:
-                json.dump(results, f, indent=2)
+                with open(temp_filename, 'w') as f:
+                    json.dump(results, f, indent=2)
 
-            os.rename(temp_filename, filename_json)
+                os.rename(temp_filename, filename_json)
 
-            # Compressed for storage efficiency
-            filename_gz = f"{base_filename}.json.gz"
-            with gzip.open(filename_gz, 'wt', encoding='utf-8') as f:
-                json.dump(results, f, separators=(',', ':'))
+                # Compressed for storage efficiency
+                filename_gz = f"{base_filename}.json.gz"
+                with gzip.open(filename_gz, 'wt', encoding='utf-8') as f:
+                    json.dump(results, f, separators=(',', ':'))
 
-            # Export gyro-EKF validation metrics (if enabled)
-            if self.enable_gyro and self.metrics:
-                metrics_filename = filename_json.replace('comparison_', 'metrics_')
-                self.metrics.export_metrics(metrics_filename)
-                print(f"✓ Validation metrics saved to: {metrics_filename}")
+                # Export gyro-EKF validation metrics (if enabled)
+                if self.enable_gyro and self.metrics:
+                    metrics_filename = filename_json.replace('comparison_', 'metrics_')
+                    self.metrics.export_metrics(metrics_filename)
+                    print(f"✓ Validation metrics saved to: {metrics_filename}")
 
-            print(f"\n✓ Final results saved:")
-            print(f"  {filename_json}")
-            print(f"  {filename_gz}")
-            print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
+                print(f"\n✓ Final results saved:")
+                print(f"  {filename_json}")
+                print(f"  {filename_gz}")
+                print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
+            except Exception as e:
+                print(f"\n✗ ERROR: Final save failed: {e}", file=sys.stderr)
+                print(f"⚠️  Test data may be incomplete but test completed", file=sys.stderr)
+                # Don't crash - test has completed even if final save failed
             # Print summary only on final save
             self._print_summary()
 

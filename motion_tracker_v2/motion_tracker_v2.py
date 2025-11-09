@@ -1212,6 +1212,34 @@ class MotionTrackerV2:
 
         return status
 
+    def restart_gyro_daemon(self):
+        """Restart the gyro daemon after accel restarts (they share the IMU stream)"""
+        if not self.enable_gyro or not self.gyro_daemon:
+            return True  # Gyro not enabled or not used
+
+        try:
+            print("  → Restarting gyro daemon (accel restart detected)...")
+
+            # Stop the old gyro daemon
+            self.gyro_daemon.stop()
+            time.sleep(0.2)  # Brief pause for cleanup
+
+            # Create new gyro daemon with reference to restarted accel daemon
+            self.gyro_daemon = PersistentGyroDaemon(accel_daemon=self.sensor_daemon, delay_ms=50)
+            if self.gyro_daemon.start():
+                print("  ✓ Gyro daemon restarted successfully")
+                time.sleep(0.5)  # Give daemon time to sync
+                return True
+            else:
+                print("  ⚠ Gyro daemon restart failed (continuing without gyro)")
+                self.gyro_daemon = None
+                return False
+
+        except Exception as e:
+            print(f"  ⚠ Gyro restart error: {e}")
+            self.gyro_daemon = None
+            return False
+
     def restart_accel_thread(self):
         """Attempt to restart the accelerometer thread after failure"""
         if self.thread_restart_count['accel'] >= self.max_thread_restarts:
@@ -1244,6 +1272,12 @@ class MotionTrackerV2:
 
             self.thread_restart_count['accel'] += 1
             print(f"✓ Accelerometer thread restarted successfully")
+
+            # CRITICAL: Restart gyro daemon when accel restarts
+            # Gyro shares the IMU stream with accel, so it loses sync when accel restarts
+            if self.enable_gyro:
+                self.restart_gyro_daemon()
+
             return True
 
         except Exception as e:
