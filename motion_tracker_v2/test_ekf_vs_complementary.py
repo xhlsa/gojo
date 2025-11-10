@@ -277,6 +277,7 @@ class FilterComparison:
         # Filters
         self.ekf = get_filter('ekf', enable_gyro=enable_gyro)
         self.complementary = get_filter('complementary')
+        self.es_ekf = get_filter('es_ekf', enable_gyro=enable_gyro)  # NEW: ES-EKF for trajectory mapping
 
         # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
         self.accel_daemon = PersistentAccelDaemon(delay_ms=50)  # Stable baseline - hardware limited to ~15Hz
@@ -295,11 +296,20 @@ class FilterComparison:
         self.gyro_samples = deque(maxlen=60000)
         self.comparison_samples = deque(maxlen=2000)
 
+        # NEW: Trajectory storage for multi-track visualization
+        self.ekf_trajectory = deque(maxlen=10000)  # EKF position history
+        self.es_ekf_trajectory = deque(maxlen=10000)  # ES-EKF position history (dead reckoning)
+        self.comp_trajectory = deque(maxlen=10000)  # Complementary position history
+        self.covariance_snapshots = deque(maxlen=500)  # Covariance every 10th GPS fix (~30s intervals)
+
         # FIX 2: Thread lock for accumulated_data and deque operations
         self._save_lock = threading.Lock()
 
         # Thread lock for GPS counter (thread-safe increment)
         self._gps_counter_lock = threading.Lock()
+
+        # Thread lock for filter state (prevents _display_metrics from reading mid-update)
+        self.state_lock = threading.Lock()
 
         # Metrics
         self.last_gps_time = None
@@ -584,12 +594,79 @@ class FilterComparison:
             if gps:
                 self.last_gps_sample_time = time.time()  # UPDATE HEALTH MONITOR
                 try:
-                    now = time.time()
-                    # Update both filters with new GPS fix
-                    v1, d1 = self.ekf.update_gps(gps['latitude'], gps['longitude'],
-                                                  gps['speed'], gps['accuracy'])
-                    v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
-                                                            gps['speed'], gps['accuracy'])
+                    # Hold state_lock while updating filters to prevent _display_metrics race condition
+                    with self.state_lock:
+                        now = time.time()
+                        # Update all 3 filters with new GPS fix
+                        v1, d1 = self.ekf.update_gps(gps['latitude'], gps['longitude'],
+                                                      gps['speed'], gps['accuracy'])
+                        v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
+                                                                gps['speed'], gps['accuracy'])
+                        v3, d3 = self.es_ekf.update_gps(gps['latitude'], gps['longitude'],  # NEW: ES-EKF update
+                                                         gps['speed'], gps['accuracy'])
+
+                        # Log trajectory positions from all 3 filters
+                        timestamp_relative = now - self.start_time
+
+                        # NEW: EKF trajectory logging (if get_position exists)
+                        if hasattr(self.ekf, 'get_position'):
+                            try:
+                                lat_ekf, lon_ekf, unc_ekf = self.ekf.get_position()
+                                self.ekf_trajectory.append({
+                                    'timestamp': timestamp_relative,
+                                    'lat': lat_ekf,
+                                    'lon': lon_ekf,
+                                    'uncertainty_m': unc_ekf,
+                                    'velocity': v1
+                                })
+                            except:
+                                pass  # Silently skip if get_position fails
+
+                        # NEW: ES-EKF trajectory logging
+                        try:
+                            lat_es, lon_es, unc_es = self.es_ekf.get_position()
+                            self.es_ekf_trajectory.append({
+                                'timestamp': timestamp_relative,
+                                'lat': lat_es,
+                                'lon': lon_es,
+                                'uncertainty_m': unc_es,
+                                'velocity': v3
+                            })
+                        except Exception as e:
+                            pass  # Silently skip if get_position fails
+
+                        # NEW: Complementary trajectory logging
+                        if hasattr(self.complementary, 'get_position'):
+                            try:
+                                lat_comp, lon_comp, unc_comp = self.complementary.get_position()
+                                self.comp_trajectory.append({
+                                    'timestamp': timestamp_relative,
+                                    'lat': lat_comp,
+                                    'lon': lon_comp,
+                                    'uncertainty_m': unc_comp,
+                                    'velocity': v2
+                                })
+                            except:
+                                pass  # Silently skip if get_position fails
+
+                    # NEW: Log covariance snapshots every 10 GPS fixes (~30s intervals)
+                    with self._gps_counter_lock:
+                        next_gps_count = self.total_gps_fixes + 1
+                        if next_gps_count % 10 == 0:
+                            try:
+                                # Extract position covariance blocks from filters
+                                ekf_cov = self.ekf.P[:2, :2].tolist() if hasattr(self.ekf, 'P') else [[1,0],[0,1]]
+                                es_ekf_cov = self.es_ekf.P[:2, :2].tolist() if hasattr(self.es_ekf, 'P') else [[1,0],[0,1]]
+                                comp_cov = [[1.0, 0.0], [0.0, 1.0]]  # Complementary has no covariance model
+
+                                self.covariance_snapshots.append({
+                                    'timestamp': timestamp_relative,
+                                    'ekf_cov_pos': ekf_cov,
+                                    'es_ekf_cov_pos': es_ekf_cov,
+                                    'comp_cov_pos': comp_cov
+                                })
+                            except:
+                                pass  # Silently skip if covariance extraction fails
 
                     # Add GPS sample for incident context (30s before/after events)
                     self.incident_detector.add_gps_sample(
@@ -610,7 +687,9 @@ class FilterComparison:
                         'ekf_velocity': v1,
                         'ekf_distance': d1,
                         'comp_velocity': v2,
-                        'comp_distance': d2
+                        'comp_distance': d2,
+                        'es_ekf_velocity': v3,  # NEW: ES-EKF velocity
+                        'es_ekf_distance': d3  # NEW: ES-EKF distance
                     })
                 except Exception as e:
                     print(f"ERROR in GPS loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
@@ -649,9 +728,10 @@ class FilterComparison:
                     # Check for impact incident (acceleration > 1.5g)
                     self.incident_detector.check_impact(accel_g)
 
-                    # Update both filters with gravity-corrected magnitude
+                    # Update all 3 filters with gravity-corrected magnitude
                     v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
                     v2, d2 = self.complementary.update_accelerometer(motion_magnitude)
+                    v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)  # NEW: ES-EKF update
 
                     self.accel_samples.append({
                         'timestamp': time.time() - self.start_time,
@@ -659,7 +739,9 @@ class FilterComparison:
                         'ekf_velocity': v1,
                         'ekf_distance': d1,
                         'comp_velocity': v2,
-                        'comp_distance': d2
+                        'comp_distance': d2,
+                        'es_ekf_velocity': v3,  # NEW: ES-EKF velocity
+                        'es_ekf_distance': d3  # NEW: ES-EKF distance
                     })
                 except Exception as e:
                     print(f"ERROR in accel loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
@@ -778,9 +860,10 @@ class FilterComparison:
                             if abs(gyro_z) > 1.047:  # Only check if yaw exceeds swerving threshold
                                 self.incident_detector.check_swerving(abs(gyro_z))
 
-                    # Update EKF filter with gyroscope data
+                    # Update EKF and ES-EKF filters with gyroscope data
                     # (Complementary filter does NOT support gyroscope)
                     v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
+                    v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)  # NEW: ES-EKF gyro update
 
                     # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
                     if self.metrics:
@@ -1095,15 +1178,17 @@ class FilterComparison:
             # Continue anyway - status logging is non-critical
 
     def _display_metrics(self):
-        """Show side-by-side comparison"""
+        """Show 3-column filter comparison: EKF, ES-EKF, Complementary"""
         try:
             if not self.gps_samples and not self.accel_samples:
                 return
 
-            # Get latest state
+            # Get latest state from all three filters (with lock to prevent race condition)
             try:
-                ekf_state = self.ekf.get_state()
-                comp_state = self.complementary.get_state()
+                with self.state_lock:
+                    ekf_state = self.ekf.get_state() or {}
+                    comp_state = self.complementary.get_state() or {}
+                    es_ekf_state = (self.es_ekf.get_state() or {}) if hasattr(self, 'es_ekf') else {}
             except Exception as e:
                 # Skip display if filter states are inaccessible
                 return
@@ -1116,40 +1201,42 @@ class FilterComparison:
             latest_accel = self.accel_samples[-1] if self.accel_samples else None
             latest_gps = self.gps_samples[-1] if self.gps_samples else None
 
-            print(f"\n[{mins:02d}:{secs:02d}] FILTER COMPARISON")
-            print("-" * 100)
+            print(f"\n[{mins:02d}:{secs:02d}] FILTER COMPARISON (3-way)")
+            print("-" * 130)
 
             # Header
-            print(f"{'METRIC':<25} | {'EKF':^20} | {'COMPLEMENTARY':^20} | {'DIFF':^15}")
-            print("-" * 100)
+            print(f"{'METRIC':<25} | {'EKF 13D':^20} | {'ES-EKF 8D (DR)':^20} | {'COMPLEMENTARY':^20}")
+            print("-" * 130)
 
             # Velocity
-            ekf_vel = ekf_state['velocity']
-            comp_vel = comp_state['velocity']
-            vel_diff = abs(ekf_vel - comp_vel)
-            print(f"{'Velocity (m/s)':<25} | {ekf_vel:>8.3f} m/s         | {comp_vel:>8.3f} m/s         | {vel_diff:>8.3f} m/s  ")
+            ekf_vel = ekf_state.get('velocity', 0.0)
+            comp_vel = comp_state.get('velocity', 0.0)
+            es_ekf_vel = es_ekf_state.get('velocity', 0.0) if es_ekf_state else 0.0
+            print(f"{'Velocity (m/s)':<25} | {ekf_vel:>8.3f} m/s       | {es_ekf_vel:>8.3f} m/s        | {comp_vel:>8.3f} m/s      ")
 
             # Distance
-            ekf_dist = ekf_state['distance']
-            comp_dist = comp_state['distance']
-            dist_diff_pct = abs(ekf_dist - comp_dist) / max(ekf_dist, comp_dist, 0.001) * 100 if max(ekf_dist, comp_dist) > 0 else 0
-            print(f"{'Distance (m)':<25} | {ekf_dist:>8.2f} m           | {comp_dist:>8.2f} m           | {dist_diff_pct:>6.2f}%      ")
+            ekf_dist = ekf_state.get('distance', 0.0)
+            comp_dist = comp_state.get('distance', 0.0)
+            es_ekf_dist = es_ekf_state.get('distance', 0.0) if es_ekf_state else 0.0
+            print(f"{'Distance (m)':<25} | {ekf_dist:>8.2f} m         | {es_ekf_dist:>8.2f} m          | {comp_dist:>8.2f} m       ")
 
             # Acceleration magnitude
-            ekf_accel = ekf_state['accel_magnitude']
-            comp_accel = comp_state['accel_magnitude']
-            print(f"{'Accel Magnitude (m/s²)':<25} | {ekf_accel:>8.3f} m/s²        | {comp_accel:>8.3f} m/s²        | {abs(ekf_accel - comp_accel):>8.3f} m/s² ")
+            ekf_accel = ekf_state.get('accel_magnitude', 0.0)
+            comp_accel = comp_state.get('accel_magnitude', 0.0)
+            es_ekf_accel = es_ekf_state.get('accel_magnitude', 0.0) if es_ekf_state else 0.0
+            print(f"{'Accel Magnitude (m/s²)':<25} | {ekf_accel:>8.3f} m/s²      | {es_ekf_accel:>8.3f} m/s²       | {comp_accel:>8.3f} m/s²    ")
 
             # Status
-            ekf_status = "MOVING" if not ekf_state['is_stationary'] else "STATIONARY"
-            comp_status = "MOVING" if not comp_state['is_stationary'] else "STATIONARY"
-            print(f"{'Status':<25} | {ekf_status:^20} | {comp_status:^20} | {'':^15}")
+            ekf_status = "MOVING" if not ekf_state.get('is_stationary', False) else "STATIONARY"
+            comp_status = "MOVING" if not comp_state.get('is_stationary', False) else "STATIONARY"
+            es_ekf_status = "MOVING" if es_ekf_state and not es_ekf_state.get('is_stationary', False) else ("STATIONARY" if es_ekf_state else "N/A")
+            print(f"{'Status':<25} | {ekf_status:^20} | {es_ekf_status:^20} | {comp_status:^20}")
         except Exception as e:
             # Non-critical display failure, skip metrics
             pass
 
         # Sensor info
-        print("-" * 100)
+        print("-" * 130)
         # FIX 6: Show total GPS fixes (cumulative), not just recent window
         # REAL-TIME DISPLAY: Show GPS daemon status alongside counts
         gps_status = self.gps_daemon.get_status() if self.gps_daemon else "DISABLED"
@@ -1266,6 +1353,12 @@ class FilterComparison:
             'gps_samples': list(self.gps_samples),  # Convert deque to list
             'accel_samples': list(self.accel_samples),  # Convert deque to list
             'gyro_samples': list(self.gyro_samples) if self.enable_gyro else [],  # Convert deque to list
+            'trajectories': {
+                'ekf': list(self.ekf_trajectory) if hasattr(self, 'ekf_trajectory') else [],
+                'es_ekf': list(self.es_ekf_trajectory) if hasattr(self, 'es_ekf_trajectory') else [],
+                'complementary': list(self.comp_trajectory) if hasattr(self, 'comp_trajectory') else []
+            },
+            'covariance_snapshots': list(self.covariance_snapshots) if hasattr(self, 'covariance_snapshots') else [],
             'final_metrics': {
                 'ekf': self.ekf.get_state(),
                 'complementary': self.complementary.get_state()
@@ -1306,6 +1399,12 @@ class FilterComparison:
                     'gps_samples': self._accumulated_data['gps_samples'],
                     'accel_samples': self._accumulated_data['accel_samples'],
                     'gyro_samples': self._accumulated_data['gyro_samples'],
+                    'trajectories': {
+                        'ekf': list(self.ekf_trajectory) if hasattr(self, 'ekf_trajectory') else [],
+                        'es_ekf': list(self.es_ekf_trajectory) if hasattr(self, 'es_ekf_trajectory') else [],
+                        'complementary': list(self.comp_trajectory) if hasattr(self, 'comp_trajectory') else []
+                    },
+                    'covariance_snapshots': list(self.covariance_snapshots) if hasattr(self, 'covariance_snapshots') else [],
                     'final_metrics': {
                         'ekf': self.ekf.get_state(),
                         'complementary': self.complementary.get_state()
@@ -1403,6 +1502,9 @@ class FilterComparison:
                 print(f"  {filename_json}")
                 print(f"  {filename_gz}")
                 print(f"✓ Peak memory usage: {self.peak_memory:.1f} MB")
+
+                # Generate multi-track GPX file
+                self._generate_gpx(base_filename)
             except Exception as e:
                 print(f"\n✗ ERROR: Final save failed: {e}", file=sys.stderr)
                 print(f"⚠️  Test data may be incomplete but test completed", file=sys.stderr)
@@ -1446,6 +1548,102 @@ class FilterComparison:
             total_distance += distance_increment
 
         return total_distance
+
+    def _generate_gpx(self, base_filename):
+        """Generate multi-track GPX file with 4 filter tracks.
+
+        Creates a GPX document with separate tracks for:
+        - Raw GPS measurements
+        - EKF filtered trajectory
+        - ES-EKF filtered trajectory (dead reckoning)
+        - Complementary filter trajectory
+        """
+        try:
+            # Build GPX content with multiple tracks
+            gpx_lines = [
+                '<?xml version="1.0" encoding="UTF-8"?>',
+                '<gpx version="1.1" creator="motion_tracker_v2" xmlns="http://www.topografix.com/GPX/1/1">',
+                f'  <metadata>',
+                f'    <time>{datetime.fromtimestamp(self.start_time).isoformat()}Z</time>',
+                f'    <desc>Multi-track trajectory comparison: GPS, EKF, ES-EKF, Complementary</desc>',
+                f'  </metadata>'
+            ]
+
+            # Track 1: Raw GPS measurements
+            if self.gps_samples:
+                gpx_lines.append('  <trk>')
+                gpx_lines.append('    <name>Raw GPS</name>')
+                gpx_lines.append('    <desc>Unfiltered GPS measurements</desc>')
+                gpx_lines.append('    <trkseg>')
+                for gps in self.gps_samples:
+                    gpx_lines.append(f'      <trkpt lat="{gps["latitude"]}" lon="{gps["longitude"]}">')
+                    gpx_lines.append(f'        <time>{datetime.fromtimestamp(gps.get("timestamp", self.start_time)).isoformat()}Z</time>')
+                    if 'accuracy' in gps:
+                        gpx_lines.append(f'        <extensions><accuracy>{gps["accuracy"]:.1f}</accuracy></extensions>')
+                    gpx_lines.append('      </trkpt>')
+                gpx_lines.append('    </trkseg>')
+                gpx_lines.append('  </trk>')
+
+            # Track 2: EKF trajectory
+            if hasattr(self, 'ekf_trajectory') and self.ekf_trajectory:
+                gpx_lines.append('  <trk>')
+                gpx_lines.append('    <name>EKF 13D</name>')
+                gpx_lines.append('    <desc>Extended Kalman Filter trajectory (with gyroscope)</desc>')
+                gpx_lines.append('    <trkseg>')
+                for point in self.ekf_trajectory:
+                    gpx_lines.append(f'      <trkpt lat="{point["lat"]}" lon="{point["lon"]}">')
+                    if 'timestamp' in point:
+                        gpx_lines.append(f'        <time>{datetime.fromtimestamp(point["timestamp"]).isoformat()}Z</time>')
+                    if 'uncertainty_m' in point:
+                        gpx_lines.append(f'        <extensions><uncertainty>{point["uncertainty_m"]:.1f}</uncertainty></extensions>')
+                    gpx_lines.append('      </trkpt>')
+                gpx_lines.append('    </trkseg>')
+                gpx_lines.append('  </trk>')
+
+            # Track 3: ES-EKF trajectory (dead reckoning during GPS gaps)
+            if hasattr(self, 'es_ekf_trajectory') and self.es_ekf_trajectory:
+                gpx_lines.append('  <trk>')
+                gpx_lines.append('    <name>ES-EKF 8D</name>')
+                gpx_lines.append('    <desc>Error-State EKF trajectory (smooth dead reckoning, primary for GPS gaps)</desc>')
+                gpx_lines.append('    <trkseg>')
+                for point in self.es_ekf_trajectory:
+                    gpx_lines.append(f'      <trkpt lat="{point["lat"]}" lon="{point["lon"]}">')
+                    if 'timestamp' in point:
+                        gpx_lines.append(f'        <time>{datetime.fromtimestamp(point["timestamp"]).isoformat()}Z</time>')
+                    if 'uncertainty_m' in point:
+                        gpx_lines.append(f'        <extensions><uncertainty>{point["uncertainty_m"]:.1f}</uncertainty></extensions>')
+                    gpx_lines.append('      </trkpt>')
+                gpx_lines.append('    </trkseg>')
+                gpx_lines.append('  </trk>')
+
+            # Track 4: Complementary filter trajectory
+            if hasattr(self, 'comp_trajectory') and self.comp_trajectory:
+                gpx_lines.append('  <trk>')
+                gpx_lines.append('    <name>Complementary</name>')
+                gpx_lines.append('    <desc>Complementary filter trajectory (GPS-weighted fusion)</desc>')
+                gpx_lines.append('    <trkseg>')
+                for point in self.comp_trajectory:
+                    gpx_lines.append(f'      <trkpt lat="{point["lat"]}" lon="{point["lon"]}">')
+                    if 'timestamp' in point:
+                        gpx_lines.append(f'        <time>{datetime.fromtimestamp(point["timestamp"]).isoformat()}Z</time>')
+                    if 'uncertainty_m' in point:
+                        gpx_lines.append(f'        <extensions><uncertainty>{point["uncertainty_m"]:.1f}</uncertainty></extensions>')
+                    gpx_lines.append('      </trkpt>')
+                gpx_lines.append('    </trkseg>')
+                gpx_lines.append('  </trk>')
+
+            gpx_lines.append('</gpx>')
+
+            # Write GPX file
+            gpx_filename = f"{base_filename}.gpx"
+            with open(gpx_filename, 'w') as f:
+                f.write('\n'.join(gpx_lines))
+
+            print(f"✓ Multi-track GPX saved: {gpx_filename}")
+
+        except Exception as e:
+            print(f"⚠️  GPX generation failed: {e}", file=sys.stderr)
+            # Don't crash - GPX is optional
 
     def _print_summary(self):
         """Print final comparison summary"""

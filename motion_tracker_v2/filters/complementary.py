@@ -207,3 +207,21 @@ class ComplementaryFilter(SensorFusionBase):
                 'last_gps_time': self.last_gps_time,
                 'is_stationary': self.is_stationary
             }
+
+    def get_position(self):
+        """
+        Get current position as (latitude, longitude, uncertainty_m).
+
+        For Complementary filter, returns last GPS position (no internal position tracking).
+        Uncertainty is fixed at 5m (no uncertainty estimate in Complementary filter).
+
+        Returns: (lat, lon, uncertainty_m)
+        """
+        with self.lock:
+            if self.last_gps_position is None:
+                return (0.0, 0.0, 999.9)  # No GPS lock yet
+
+            lat, lon = self.last_gps_position
+            uncertainty = 5.0  # Fixed uncertainty (Complementary has no uncertainty model)
+
+            return lat, lon, uncertainty

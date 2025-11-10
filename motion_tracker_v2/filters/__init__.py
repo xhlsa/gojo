@@ -51,8 +51,11 @@ def get_filter(filter_type='ekf', **kwargs):
     elif filter_type == 'ukf':
         from .ukf import UnscentedKalmanFilter
         return UnscentedKalmanFilter(**kwargs)
+    elif filter_type == 'es_ekf':
+        from .es_ekf import ErrorStateEKF
+        return ErrorStateEKF(**kwargs)
     else:
-        raise ValueError(f"Unknown filter type: {filter_type}. Use 'complementary', 'kalman', 'kalman-numpy', 'ekf', or 'ukf'")
+        raise ValueError(f"Unknown filter type: {filter_type}. Use 'complementary', 'kalman', 'kalman-numpy', 'ekf', 'ukf', or 'es_ekf'")
 
 
 __all__ = ['get_filter']
