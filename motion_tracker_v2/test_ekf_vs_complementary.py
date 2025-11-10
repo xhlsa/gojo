@@ -190,7 +190,8 @@ while time.time() - next_poll_time < max_runtime:
                             'accuracy': float(data.get('accuracy', 5.0)),
                             'altitude': float(data.get('altitude', 0)),
                             'bearing': float(data.get('bearing', 0)),
-                            'speed': float(data.get('speed', 0))
+                            'speed': float(data.get('speed', 0)),
+                            'provider': 'gps'  # Track GPS provider (test uses -p gps only)
                         }
                         try:
                             self.data_queue.put_nowait(gps_data)
@@ -484,6 +485,7 @@ class FilterComparison:
                             'longitude': gps_data['longitude'],
                             'accuracy': gps_data['accuracy'],
                             'speed': gps_data['speed'],
+                            'provider': gps_data.get('provider', 'gps'),  # NEW: Save provider
                             'ekf_velocity': v1,
                             'ekf_distance': d1,
                             'comp_velocity': v2,
@@ -604,6 +606,7 @@ class FilterComparison:
                         'longitude': gps['longitude'],
                         'accuracy': gps['accuracy'],
                         'speed': gps['speed'],
+                        'provider': gps.get('provider', 'gps'),  # NEW: Save provider
                         'ekf_velocity': v1,
                         'ekf_distance': d1,
                         'comp_velocity': v2,

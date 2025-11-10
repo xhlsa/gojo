@@ -625,14 +625,29 @@ class GPSThread(threading.Thread):
         self.requests_completed = 0
         self.requests_timeout = 0
 
+        # NEW: Multi-provider support + quality filtering
+        self.current_provider = 'gps'  # Track active provider
+        self.provider_fallback_threshold = 60.0  # Switch to network after 60s starvation
+        self.quality_threshold = 100.0  # Reject GPS fixes with accuracy >100m (very poor signal)
+        self.low_quality_rejections = 0  # Count filtered fixes
+
     def start_gps_request(self):
         """Start a new GPS request without blocking (non-blocking Popen)"""
         if self.current_process is not None:
             return False
 
         try:
+            # NEW: Choose provider based on GPS starvation
+            time_since_last = time.time() - self.last_success_time
+            if time_since_last > self.provider_fallback_threshold:
+                # Fallback to network provider (WiFi/cellular) during GPS starvation
+                self.current_provider = 'network'
+            else:
+                # Use GPS when available
+                self.current_provider = 'gps'
+
             self.current_process = subprocess.Popen(
-                ['termux-location', '-p', 'gps'],
+                ['termux-location', '-p', self.current_provider],  # MODIFIED: Use chosen provider
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True
@@ -642,7 +657,7 @@ class GPSThread(threading.Thread):
             return True
         except Exception as e:
             if not self.stop_event.is_set():
-                print(f"\n⚠ GPS: Failed to start request: {e}")
+                print(f"\n⚠ GPS: Failed to start {self.current_provider} request: {e}")
             return False
 
     def check_gps_request(self):
@@ -677,13 +692,23 @@ class GPSThread(threading.Thread):
 
             if returncode == 0 and stdout:
                 data = json_loads(stdout)
+                accuracy = data.get('accuracy', 999)
+
+                # NEW: Quality filtering - reject low-quality fixes
+                if accuracy > self.quality_threshold:
+                    self.low_quality_rejections += 1
+                    if not self.stop_event.is_set():
+                        print(f"\n⚠ GPS: Rejected low-quality fix (accuracy {accuracy:.1f}m > {self.quality_threshold}m)")
+                    return None
+
                 gps_data = {
                     'latitude': data.get('latitude'),
                     'longitude': data.get('longitude'),
                     'altitude': data.get('altitude'),
                     'speed': data.get('speed'),
                     'bearing': data.get('bearing'),
-                    'accuracy': data.get('accuracy'),
+                    'accuracy': accuracy,
+                    'provider': self.current_provider,  # NEW: Track data source
                     'timestamp': time.time()
                 }
 
@@ -713,7 +738,9 @@ class GPSThread(threading.Thread):
             'requests_completed': self.requests_completed,
             'requests_timeout': self.requests_timeout,
             'success_rate': success_rate,
-            'has_process_running': self.current_process is not None
+            'has_process_running': self.current_process is not None,
+            'current_provider': self.current_provider,  # NEW: Track active provider
+            'low_quality_rejections': self.low_quality_rejections  # NEW: Track filtered fixes
         }
 
     def run(self):
