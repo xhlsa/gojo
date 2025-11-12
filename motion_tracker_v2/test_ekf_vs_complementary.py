@@ -838,6 +838,7 @@ class FilterComparison:
         """Process gyroscope samples and feed to EKF filter (if enabled)"""
         import sys
         samples_collected = 0
+        print("[GYRO_LOOP] Started", file=sys.stderr)
         while not self.stop_event.is_set():
             # Skip if gyro not available
             if not self.gyro_daemon or not self.enable_gyro:
@@ -848,8 +849,8 @@ class FilterComparison:
 
             if gyro_data:
                 samples_collected += 1
-                if samples_collected <= 1:
-                    print(f"[GYRO] First sample received: {list(gyro_data.keys())}", file=sys.stderr)
+                if samples_collected <= 5 or samples_collected % 100 == 0:
+                    print(f"[GYRO_LOOP] Processed sample #{samples_collected}", file=sys.stderr)
                 try:
                     # Extract gyroscope angular velocities (rad/s)
                     # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
@@ -937,8 +938,7 @@ class FilterComparison:
                     import traceback
                     traceback.print_exc()
 
-            # Brief sleep to avoid CPU spinning
-            time.sleep(0.01)
+        print(f"[GYRO_LOOP] Exited after processing {samples_collected} samples", file=sys.stderr)
 
     def _display_loop(self):
         """Display metrics every second, log status every 30 seconds"""

@@ -579,8 +579,8 @@ class PersistentGyroDaemon:
                         try:
                             self.data_queue.put_nowait(gyro_data)
                             samples_read += 1
-                            if samples_read <= 5:
-                                print(f"[GyroDaemon] Shared sample #{samples_read}: x={gyro_data.get('x', 0):.4f}", file=sys.stderr)
+                            if samples_read <= 5 or samples_read % 100 == 0:
+                                print(f"[GyroDaemon] Transferred sample #{samples_read}: x={gyro_data.get('x', 0):.4f}", file=sys.stderr)
                         except queue.Full:
                             # Output queue full - consumer too slow, drop oldest samples
                             try:
@@ -596,11 +596,10 @@ class PersistentGyroDaemon:
                         except Exception as qe:
                             print(f"[GyroDaemon] Output queue unexpected error: {type(qe).__name__}: {qe}", file=sys.stderr)
                 except Exception as re:
-                    # Timeout is normal, only log every 50th timeout
-                    if samples_read % 50 == 0 and samples_read > 0:
-                        print(f"[GyroDaemon] Still waiting... {samples_read} samples so far", file=sys.stderr)
+                    # Timeout is normal, ignore silently
+                    pass
 
-            print(f"[GyroDaemon] Shared queue reader finished: {samples_read} samples transferred", file=sys.stderr)
+            print(f"[GyroDaemon] Shared queue reader finished: {samples_read} samples transferred total", file=sys.stderr)
 
         except Exception as e:
             print(f"⚠️  [GyroDaemon] Shared queue reader error: {e}", file=sys.stderr)

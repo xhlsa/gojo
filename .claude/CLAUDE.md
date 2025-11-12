@@ -1,8 +1,29 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 11, 2025 - P1 Critical: Sensor Daemon Stability Fixed + Dashboard Speedometer Redesigned
+## Latest: Nov 12, 2025 - Gyro Resolution Fixed + Architecture Issue Documented
 
-**Status:** ⚠️ TESTING (Critical daemon stability fixes implemented, validation in progress)
+**Status:** ✅ WORKING (Gyro now matches accel resolution ~1200 samples/min)
+
+### Gyro Sample Count Fixed
+**Problem:** Gyro collected only 59 samples vs 1216 accel samples (102x discrepancy)
+**Root Cause:** `time.sleep(0.01)` in gyro_loop limited processing to 100 Hz
+**Solution:** Removed sleep bottleneck, added comprehensive logging
+**Result:** Gyro 1242 samples vs Accel 1216 (matching resolution ✓)
+
+**Files Modified:**
+- `test_ekf_vs_complementary.py` lines 837-853: Removed sleep(0.01), added logging
+
+---
+
+### Architecture Issue: Filter Blocking (Future Work)
+**Current Problem:** Filters run synchronously in data collection loops - if any filter hangs (e.g., ES-EKF), ALL data collection stops
+**User Vision:** "we should be getting that base data from gps, accel, gyro, then the filters do their independent things"
+**Proposed:** Decouple raw data collection from filter processing via independent filter threads consuming from raw data queues
+**Status:** Noted for future refactor, not blocking current work
+
+---
+
+## Nov 11, 2025 - P1 Critical: Sensor Daemon Stability Fixed + Dashboard Speedometer Redesigned
 
 ### Dashboard Improvement: Speedometer Redesigned
 **Problem:** Rotating needle tachometer visually confusing (appeared in wrong speed zone at 0 km/h)
@@ -36,6 +57,7 @@
 
 ## Historical Fixes Summary
 
+**Nov 12:** Gyro resolution fixed - Removed time.sleep(0.01) bottleneck → 59 samples → 1242 samples (matches accel ~1200/min)
 **Nov 6:** Memory optimization - Clear deques after auto-save (not accumulated_data) → 70 MB freed, bounded 92-112 MB stable
 **Nov 6:** GPS polling fixed - Changed blocking subprocess.run(timeout=15s) → non-blocking async poller (0.38 Hz → 0.9-1.0 Hz)
 **Nov 4:** Incident detection validated - 25-min test: 126 swerving events (5.04/min, all real), 71% false positive reduction via motion context
