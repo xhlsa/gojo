@@ -15,11 +15,11 @@
 
 ---
 
-### Architecture Issue: Filter Blocking (Future Work)
+### Architecture Issue: Filter Blocking (Refactor Scheduled)
 **Current Problem:** Filters run synchronously in data collection loops - if any filter hangs (e.g., ES-EKF), ALL data collection stops
 **User Vision:** "we should be getting that base data from gps, accel, gyro, then the filters do their independent things"
 **Proposed:** Decouple raw data collection from filter processing via independent filter threads consuming from raw data queues
-**Status:** Noted for future refactor, not blocking current work
+**Status:** 📋 Detailed plan in ARCHITECTURE_REFACTOR_PLAN.md (6 phases, ~85 min implementation, scheduled for tomorrow)
 
 ---
 
