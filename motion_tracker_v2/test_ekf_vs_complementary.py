@@ -140,7 +140,8 @@ while time.time() - next_poll_time < max_runtime:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                bufsize=1
+                bufsize=1,
+                close_fds=True  # CRITICAL: Close inherited file descriptors to prevent leaks
             )
 
             # Start separate thread to capture stderr from GPS daemon (includes Termux API errors)
@@ -232,14 +233,29 @@ while time.time() - next_poll_time < max_runtime:
         return "ALIVE"
 
     def stop(self):
-        """Stop GPS daemon"""
+        """Stop GPS daemon (with explicit FD cleanup to prevent leaks)"""
         self.stop_event.set()
         if self.gps_process:
             try:
                 self.gps_process.terminate()
                 self.gps_process.wait(timeout=2)
-            except:
+            except subprocess.TimeoutExpired:
+                # Force kill if timeout
+                self.gps_process.kill()
+                self.gps_process.wait(timeout=1)
+            except Exception:
                 pass
+            finally:
+                # CRITICAL: Close file descriptors explicitly to prevent FD leak
+                try:
+                    if self.gps_process.stdout:
+                        self.gps_process.stdout.close()
+                    if self.gps_process.stderr:
+                        self.gps_process.stderr.close()
+                    if self.gps_process.stdin:
+                        self.gps_process.stdin.close()
+                except Exception:
+                    pass
 
 
 def parse_gps():
@@ -344,6 +360,10 @@ class FilterComparison:
         # GPS validation will reject hung termux-location, but accel fallback works fine
         # Allows test to recover GPS when service becomes available again
         self.restart_cooldown = 10  # INCREASED from 5s → 10s (termux-sensor needs full resource release)
+
+        # Thread locks for sensor restart (prevents concurrent restarts from health monitor + status logger)
+        self._accel_restart_lock = threading.Lock()
+        self._gps_restart_lock = threading.Lock()
 
         # HEALTH MONITORING: Detect sensor silence and auto-restart
         self.last_accel_sample_time = time.time()
@@ -700,11 +720,16 @@ class FilterComparison:
 
     def _accel_loop(self):
         """Process accelerometer samples"""
+        samples_processed = 0
+        print("[ACCEL_LOOP] Started", file=sys.stderr)
         while not self.stop_event.is_set():
             accel_data = self.accel_daemon.get_data(timeout=0.1)
 
             if accel_data:
                 self.last_accel_sample_time = time.time()  # UPDATE HEALTH MONITOR
+                samples_processed += 1
+                if samples_processed <= 5 or samples_processed % 100 == 0:
+                    print(f"[ACCEL_LOOP] Processed sample #{samples_processed}", file=sys.stderr)
 
                 try:
                     # Data now comes pre-extracted as {'x': ..., 'y': ..., 'z': ...}
@@ -731,7 +756,9 @@ class FilterComparison:
                     # Update all 3 filters with gravity-corrected magnitude
                     v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
                     v2, d2 = self.complementary.update_accelerometer(motion_magnitude)
-                    v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)  # NEW: ES-EKF update
+                    # DISABLED: ES-EKF blocks after sample #5 - investigate separately
+                    # v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)
+                    v3, d3 = v1, d1  # Temporary: use EKF values as placeholder
 
                     self.accel_samples.append({
                         'timestamp': time.time() - self.start_time,
@@ -860,10 +887,12 @@ class FilterComparison:
                             if abs(gyro_z) > 1.047:  # Only check if yaw exceeds swerving threshold
                                 self.incident_detector.check_swerving(abs(gyro_z))
 
-                    # Update EKF and ES-EKF filters with gyroscope data
+                    # Update EKF filter with gyroscope data
                     # (Complementary filter does NOT support gyroscope)
                     v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
-                    v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)  # NEW: ES-EKF gyro update
+                    # DISABLED: ES-EKF blocks - investigate separately
+                    # v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
+                    v3, d3 = v1, d1  # Temporary placeholder
 
                     # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
                     if self.metrics:
@@ -952,103 +981,190 @@ class FilterComparison:
                 time.sleep(0.5)
 
     def _restart_accel_daemon(self):
-        """Attempt to restart the accelerometer daemon"""
-        print(f"\n🔄 Attempting to restart accelerometer daemon (attempt {self.restart_counts['accel'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+        """Attempt to restart the accelerometer daemon (thread-safe with zombie cleanup)"""
+        # LOCK: Prevent concurrent restart attempts from health monitor + status logger
+        with self._accel_restart_lock:
+            # DOUBLE-CHECK: Another thread may have already restarted AND data is flowing
+            if self.accel_daemon and self.accel_daemon.is_alive():
+                # VALIDATE: Process alive doesn't guarantee data flow - check queue
+                test_data = self.accel_daemon.get_data(timeout=2.0)
+                if test_data:
+                    print(f"  → Accel already alive and producing data (concurrent restart won)", file=sys.stderr)
+                    return True
+                else:
+                    print(f"  → Accel process alive but NOT producing data, forcing restart", file=sys.stderr)
+                    # Fall through to perform actual restart
 
-        # AGGRESSIVE STOP: Kill old daemon processes completely
-        try:
-            self.accel_daemon.stop()
-            # Force kill termux-sensor and termux-api to fully clean up
-            os.system("pkill -9 termux-sensor 2>/dev/null")
-            os.system("pkill -9 termux-api 2>/dev/null")
-            time.sleep(3)  # EXTENDED pause for kernel cleanup
-        except Exception as e:
-            print(f"  Warning during accel daemon stop: {e}", file=sys.stderr)
+            print(f"\n🔄 Attempting to restart accelerometer daemon (attempt {self.restart_counts['accel'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
 
-        # Create new daemon instance
-        try:
-            self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
-        except Exception as e:
-            print(f"  ✗ Failed to create new accelerometer daemon: {e}", file=sys.stderr)
-            return False
+            # STEP 1: GRACEFUL STOP (terminate subprocess first)
+            try:
+                if self.accel_daemon:
+                    self.accel_daemon.stop()  # Sends SIGTERM
+            except Exception as e:
+                print(f"  Warning stopping daemon: {e}", file=sys.stderr)
 
-        # EXTENDED cooldown for full resource release
-        time.sleep(self.restart_cooldown + 2)
+            # STEP 2: AGGRESSIVE KILL + ZOMBIE REAPING
+            try:
+                # Kill all termux-sensor processes
+                subprocess.run(['pkill', '-9', 'termux-sensor'],
+                              capture_output=True, timeout=2)
 
-        # Start new daemon
-        if self.accel_daemon.start():
-            # Validate it's actually working (EXTENDED timeout: termux-sensor needs full init on restart)
-            test_data = self.accel_daemon.get_data(timeout=15.0)  # INCREASED from 10 to 15 seconds
-            if test_data:
-                print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
-                self.restart_counts['accel'] += 1
-                return True
-            else:
-                print(f"  ✗ Accelerometer daemon started but not receiving data after 15s (termux-sensor may be unresponsive)", file=sys.stderr)
+                # Kill termux-api backend (Android sensor service)
+                # CRITICAL: Use specific pattern to avoid killing GPS backend
+                subprocess.run(['pkill', '-9', '-f', 'termux-api Sensor'],
+                              capture_output=True, timeout=2)
+
+                # CRITICAL: WAIT FOR ZOMBIE REAPING (poll until processes gone)
+                max_wait = 5.0  # seconds
+                start_wait = time.time()
+                while time.time() - start_wait < max_wait:
+                    result = subprocess.run(['pgrep', '-x', 'termux-sensor'],
+                                           capture_output=True, timeout=1)
+                    if result.returncode != 0:  # No processes found
+                        break
+                    time.sleep(0.2)  # Poll every 200ms
+
+                # VALIDATE cleanup succeeded
+                result = subprocess.run(['pgrep', '-x', 'termux-sensor'],
+                                       capture_output=True, timeout=1)
+                if result.returncode == 0:
+                    print(f"  ⚠️ WARNING: termux-sensor processes still alive after cleanup",
+                          file=sys.stderr)
+                    time.sleep(2)  # Extra wait
+
+            except Exception as e:
+                print(f"  Warning during process cleanup: {e}", file=sys.stderr)
+
+            # STEP 3: CREATE NEW DAEMON (only after validated cleanup)
+            try:
+                self.accel_daemon = PersistentAccelDaemon(delay_ms=50)
+            except Exception as e:
+                print(f"  ✗ Failed to create new accelerometer daemon: {e}", file=sys.stderr)
                 return False
-        else:
-            print(f"  ✗ Failed to start accelerometer daemon process", file=sys.stderr)
-            return False
+
+            # STEP 4: EXTENDED COOLDOWN (Android sensor backend re-init)
+            time.sleep(self.restart_cooldown + 2)  # 12 seconds total
+
+            # STEP 5: START + VALIDATE (with retry)
+            if self.accel_daemon.start():
+                # EXTENDED timeout for post-crash recovery
+                validation_timeout = 30.0  # Increased from 15s
+                test_data = self.accel_daemon.get_data(timeout=validation_timeout)
+
+                if test_data:
+                    print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
+                    self.restart_counts['accel'] += 1
+                    return True
+                else:
+                    # RETRY ONCE (backend may still be initializing)
+                    print(f"  → No data after {validation_timeout}s, retrying...",
+                          file=sys.stderr)
+                    time.sleep(5)
+                    test_data = self.accel_daemon.get_data(timeout=10.0)
+                    if test_data:
+                        print(f"  ✓ Validation succeeded on retry", file=sys.stderr)
+                        self.restart_counts['accel'] += 1
+                        return True
+
+                    print(f"  ✗ Accel daemon unresponsive after retry", file=sys.stderr)
+                    return False
+            else:
+                print(f"  ✗ Failed to start accelerometer daemon process", file=sys.stderr)
+                return False
 
     def _restart_gps_daemon(self):
-        """Attempt to restart the GPS daemon"""
-        print(f"\n🔄 Attempting to restart GPS daemon (attempt {self.restart_counts['gps'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+        """Attempt to restart the GPS daemon (thread-safe with zombie cleanup)"""
+        # LOCK: Prevent concurrent restart attempts
+        with self._gps_restart_lock:
+            # DOUBLE-CHECK: Another thread may have already restarted
+            if self.gps_daemon and self.gps_daemon.is_alive():
+                print(f"  → GPS already alive (concurrent restart won)", file=sys.stderr)
+                return True
 
-        # Stop old daemon
-        try:
-            self.gps_daemon.stop()
-            time.sleep(1)  # Brief pause for cleanup
-        except Exception as e:
-            print(f"  Warning during GPS daemon stop: {e}", file=sys.stderr)
+            print(f"\n🔄 Attempting to restart GPS daemon (attempt {self.restart_counts['gps'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
 
-        # Force kill all stale termux-location processes (Android socket cleanup)
-        try:
-            subprocess.run(['pkill', '-9', 'termux-location'], timeout=2, capture_output=True)
-            time.sleep(2)  # Allow Android to fully release socket resources
-        except Exception as e:
-            pass  # Non-fatal
+            # STEP 1: GRACEFUL STOP
+            try:
+                if self.gps_daemon:
+                    self.gps_daemon.stop()
+                    time.sleep(1)
+            except Exception as e:
+                print(f"  Warning during GPS daemon stop: {e}", file=sys.stderr)
 
-        # Create new daemon instance
-        try:
-            self.gps_daemon = PersistentGPSDaemon()
-        except Exception as e:
-            print(f"  ✗ Failed to create new GPS daemon: {e}", file=sys.stderr)
-            return False
+            # STEP 2: AGGRESSIVE KILL + ZOMBIE REAPING
+            try:
+                # Kill all termux-location processes (GPS wrapper)
+                subprocess.run(['pkill', '-9', 'termux-location'],
+                              capture_output=True, timeout=2)
 
-        # Wait for cooldown
-        time.sleep(self.restart_cooldown)
+                # Kill termux-api backend
+                subprocess.run(['pkill', '-9', 'termux-api'],
+                              capture_output=True, timeout=2)
 
-        # Start new daemon
-        if self.gps_daemon.start():
-            print(f"  ✓ GPS daemon process started, waiting for first fix...", file=sys.stderr)
+                # CRITICAL: WAIT FOR ZOMBIE REAPING (check termux-location, not python3)
+                max_wait = 5.0
+                start_wait = time.time()
+                while time.time() - start_wait < max_wait:
+                    result = subprocess.run(['pgrep', '-x', 'termux-location'],
+                                           capture_output=True, timeout=1)
+                    if result.returncode != 0:  # No termux-location processes found
+                        break
+                    time.sleep(0.2)  # Poll every 200ms
 
-            # SOLUTION 1: Validate GPS actually collects data (not just process start)
-            # Root cause: GPS daemon can be ALIVE (subprocess running) but hung in termux-location
-            # This validates we're actually getting GPS data, not just a running process
-            validation_timeout = 30  # seconds to wait for first fix
-            validation_start = time.time()
-            fix_received = False
+                # Validate cleanup succeeded
+                result = subprocess.run(['pgrep', '-x', 'termux-location'],
+                                       capture_output=True, timeout=1)
+                process_count = len(result.stdout.strip().split('\n')) if result.stdout else 0
+                if process_count > 0:
+                    print(f"  ⚠️ WARNING: {process_count} termux-location processes still alive after cleanup",
+                          file=sys.stderr)
 
-            while time.time() - validation_start < validation_timeout:
-                gps_data = self.gps_daemon.get_data(timeout=1.0)
-                if gps_data:
-                    print(f"  ✓ GPS restart validated: {gps_data['latitude']:.4f}, {gps_data['longitude']:.4f}", file=sys.stderr)
-                    fix_received = True
-                    break
-                # Brief wait before retrying
-                time.sleep(0.5)
+                # Extended wait for Android cleanup
+                time.sleep(2)
 
-            if not fix_received:
-                print(f"  ✗ GPS restart FAILED: No fix received after {validation_timeout}s (termux-location may be hung)", file=sys.stderr)
-                self.gps_daemon.stop()
+            except Exception as e:
+                print(f"  Warning during process cleanup: {e}", file=sys.stderr)
+
+            # STEP 3: CREATE NEW DAEMON (after validated cleanup)
+            try:
+                self.gps_daemon = PersistentGPSDaemon()
+            except Exception as e:
+                print(f"  ✗ Failed to create new GPS daemon: {e}", file=sys.stderr)
                 return False
 
-            print(f"  ✓ GPS daemon restarted and validated successfully", file=sys.stderr)
-            self.restart_counts['gps'] += 1
-            return True
-        else:
-            print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
-            return False
+            # STEP 4: EXTENDED COOLDOWN
+            time.sleep(self.restart_cooldown + 2)
+
+            # STEP 5: START + VALIDATE
+            if self.gps_daemon.start():
+                print(f"  ✓ GPS daemon process started, waiting for first fix...", file=sys.stderr)
+
+                # Validate GPS actually collects data (not just process start)
+                validation_timeout = 30  # seconds to wait for first fix
+                validation_start = time.time()
+                fix_received = False
+
+                while time.time() - validation_start < validation_timeout:
+                    gps_data = self.gps_daemon.get_data(timeout=1.0)
+                    if gps_data:
+                        print(f"  ✓ GPS restart validated: {gps_data['latitude']:.4f}, {gps_data['longitude']:.4f}", file=sys.stderr)
+                        fix_received = True
+                        break
+                    # Brief wait before retrying
+                    time.sleep(0.5)
+
+                if not fix_received:
+                    print(f"  ✗ GPS restart FAILED: No fix received after {validation_timeout}s", file=sys.stderr)
+                    self.gps_daemon.stop()
+                    return False
+
+                print(f"  ✓ GPS daemon restarted and validated successfully", file=sys.stderr)
+                self.restart_counts['gps'] += 1
+                return True
+            else:
+                print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
+                return False
 
     def _log_status(self):
         """Log status update to stderr (won't clutter display)"""

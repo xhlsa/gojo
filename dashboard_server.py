@@ -778,61 +778,139 @@ def live_monitor():
 
         .speedometer {
             width: 100%;
-            height: 120px;
+            height: 160px;
             margin: 10px 0;
             position: relative;
+            display: flex;
+            align-items: flex-end;
         }
 
         .speedometer-gauge {
             width: 100%;
             height: 100%;
-            border-radius: 50% 50% 0 0;
-            background: conic-gradient(
-                #4caf50 0deg,
-                #8bc34a 45deg,
-                #ffc107 90deg,
-                #ff5722 135deg,
-                #f44336 180deg
-            );
             position: relative;
-            box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+            background: radial-gradient(ellipse 100% 100% at 50% 100%,
+                rgba(76, 175, 80, 0.1) 0%,
+                transparent 70%);
+            border-bottom: 3px solid var(--border-color);
         }
 
-        .speedometer-gauge::before {
+        .speedometer-track {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            bottom: 0;
+            left: 0;
+        }
+
+        /* Speed zone backgrounds */
+        .speedometer-track::before {
             content: '';
             position: absolute;
-            width: 80%;
-            height: 80%;
-            background: var(--bg-secondary);
-            border-radius: 50% 50% 0 0;
-            top: 10%;
-            left: 10%;
+            width: 100%;
+            height: 8px;
+            bottom: 0;
+            left: 0;
+            background: linear-gradient(
+                to right,
+                #4caf50 0%,
+                #4caf50 25%,
+                #ffc107 25%,
+                #ffc107 60%,
+                #f44336 60%,
+                #f44336 100%
+            );
+            opacity: 0.6;
+            border-radius: 2px;
+        }
+
+        .speedometer-markers {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            bottom: 12px;
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 600;
+        }
+
+        .speedometer-marker {
+            position: absolute;
+            bottom: 0;
+            transform: translateX(-50%);
+        }
+
+        /* Position markers based on actual speed (max 216 km/h) */
+        .speedometer-marker:nth-child(1) { left: 0%; }           /* 0 km/h */
+        .speedometer-marker:nth-child(2) { left: 18.5%; }        /* 40 km/h */
+        .speedometer-marker:nth-child(3) { left: 37%; }          /* 80 km/h */
+        .speedometer-marker:nth-child(4) { left: 55.5%; }        /* 120 km/h */
+        .speedometer-marker:nth-child(5) { left: 74%; }          /* 160 km/h */
+        .speedometer-marker:nth-child(6) { left: 92.6%; }        /* 200+ km/h */
+
+        .speedometer-marker::before {
+            content: '';
+            position: absolute;
+            width: 2px;
+            height: 12px;
+            background: var(--border-color);
+            bottom: -12px;
+            left: 50%;
+            transform: translateX(-50%);
         }
 
         .speedometer-needle {
             position: absolute;
-            width: 2px;
-            height: 45%;
-            background: #333;
-            left: 50%;
+            width: 8px;
+            height: 100%;
+            background: linear-gradient(to right, #ff0000, #ff6b6b);
+            left: 0;
             bottom: 0;
-            transform-origin: bottom center;
-            transition: transform 0.3s ease;
+            transition: left 0.25s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+            border-radius: 2px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+            z-index: 5;
         }
 
         html[data-theme="dark"] .speedometer-needle {
-            background: #fff;
+            background: linear-gradient(to top, #ffffff, #f0f0f0);
+        }
+
+        .speedometer-center {
+            position: absolute;
+            width: 10px;
+            height: 10px;
+            background: var(--text-primary);
+            border-radius: 50%;
+            left: 50%;
+            bottom: -4px;
+            transform: translateX(-50%);
+            z-index: 6;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
         }
 
         .speedometer-value {
             position: absolute;
-            bottom: 10%;
+            bottom: 55%;
             left: 50%;
             transform: translateX(-50%);
             z-index: 10;
-            font-weight: bold;
-            font-size: 18px;
+            text-align: center;
+        }
+
+        .speedometer-value .speed-number {
+            font-weight: 700;
+            font-size: 32px;
             color: var(--text-primary);
+            line-height: 1;
+        }
+
+        .speedometer-value .speed-unit {
+            font-size: 11px;
+            color: var(--text-secondary);
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
 
         .map-container {
@@ -956,9 +1034,24 @@ def live_monitor():
                 <div class="metric-group">
                     <h3>Current State</h3>
                     <div class="speedometer">
-                        <div class="speedometer-gauge"></div>
-                        <div class="speedometer-needle" id="speedNeedle"></div>
-                        <div class="speedometer-value" id="speedValue">0 km/h</div>
+                        <div class="speedometer-gauge">
+                            <div class="speedometer-track">
+                                <div class="speedometer-markers">
+                                    <div class="speedometer-marker">0</div>
+                                    <div class="speedometer-marker">40</div>
+                                    <div class="speedometer-marker">80</div>
+                                    <div class="speedometer-marker">120</div>
+                                    <div class="speedometer-marker">160</div>
+                                    <div class="speedometer-marker">200+</div>
+                                </div>
+                            </div>
+                            <div class="speedometer-needle" id="speedNeedle"></div>
+                            <div class="speedometer-center"></div>
+                        </div>
+                        <div class="speedometer-value" id="speedValue">
+                            <div class="speed-number">0</div>
+                            <div class="speed-unit">km/h</div>
+                        </div>
                     </div>
                     <div class="metric-row">
                         <span class="metric-label">Distance</span>
@@ -1105,13 +1198,13 @@ def live_monitor():
             // Metrics
             const velocityMs = status.current_velocity;
             const velocityKmh = velocityMs * 3.6;
-            document.getElementById('speedValue').textContent = `${velocityKmh.toFixed(0)} km/h`;
+            document.querySelector('#speedValue .speed-number').textContent = velocityKmh.toFixed(0);
             document.getElementById('distance').textContent = `${(status.total_distance / 1000).toFixed(2)} km`;
 
-            // Update speedometer needle (0-180 degrees, max 60 m/s = 216 km/h)
-            const maxVelocity = 60; // m/s
-            const angle = Math.min(180, (velocityMs / maxVelocity) * 180);
-            document.getElementById('speedNeedle').style.transform = `rotate(${angle}deg)`;
+            // Update speedometer needle (horizontal slider, 0-100% width)
+            const maxVelocity = 60; // m/s (216 km/h)
+            const percentage = Math.min(100, (velocityMs / maxVelocity) * 100);
+            document.getElementById('speedNeedle').style.left = `${percentage}%`;
             document.getElementById('duration').textContent = formatDuration(status.elapsed_seconds);
             document.getElementById('gpsFixes').textContent = status.gps_fixes;
             document.getElementById('accelSamples').textContent = status.accel_samples;

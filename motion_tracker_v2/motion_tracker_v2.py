@@ -159,12 +159,16 @@ class PersistentAccelDaemon:
             #    Without stdbuf, termux-sensor outputs JSON properly and continuously
             # -d 50 sets 50ms polling delay for ~20Hz hardware rate
             # Use specific LSM6DSO sensor IDs for reliable activation
+            # -n 100000: Workaround for termux-sensor continuous mode hang after ~32 samples
+            #            Request large batch, daemon will auto-restart when depleted
             self.sensor_process = subprocess.Popen(
-                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', '50'],
+                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', '50', '-n', '100000'],
+                stdin=subprocess.DEVNULL,  # CRITICAL: Prevent stdin blocking
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                bufsize=1  # Line buffered
+                bufsize=1,  # Line buffered
+                close_fds=True  # CRITICAL: Close inherited file descriptors to prevent leaks
             )
 
             # Verify process started
@@ -195,6 +199,7 @@ class PersistentAccelDaemon:
             json_buffer = ""
             brace_depth = 0
             line_count = 0
+            json_objects_parsed = 0
 
             for line in self.sensor_process.stdout:
                 if self.stop_event.is_set():
@@ -215,6 +220,9 @@ class PersistentAccelDaemon:
                         # Parse the JSON object (may contain ACCELEROMETER and/or GYROSCOPE data)
                         data = json_loads(json_buffer)
                         json_buffer = ""
+                        json_objects_parsed += 1
+                        if json_objects_parsed <= 3 or json_objects_parsed % 100 == 0:
+                            print(f"[AccelDaemon] Parsed JSON #{json_objects_parsed}", file=sys.stderr)
 
                         # Extract sensor data and route to appropriate queue
                         for sensor_key, sensor_data in data.items():
@@ -252,6 +260,8 @@ class PersistentAccelDaemon:
                         json_buffer = ""
                         brace_depth = 0
 
+            print(f"[AccelDaemon] Read loop exited. Parsed {json_objects_parsed} JSON objects, {line_count} lines total", file=sys.stderr)
+
         except Exception as e:
             print(f"⚠️  [AccelDaemon] Reader thread error: {e}", file=sys.stderr)
             import traceback
@@ -269,7 +279,7 @@ class PersistentAccelDaemon:
                         pass
 
     def stop(self):
-        """Stop the daemon"""
+        """Stop the daemon (with explicit FD cleanup to prevent leaks)"""
         self.stop_event.set()
 
         # Kill sensor process if running
@@ -277,9 +287,26 @@ class PersistentAccelDaemon:
             try:
                 self.sensor_process.terminate()
                 self.sensor_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    self.sensor_process.kill()
+                    self.sensor_process.wait(timeout=1)
+                except:
+                    pass
             except:
                 try:
                     self.sensor_process.kill()
+                except:
+                    pass
+            finally:
+                # CRITICAL: Close file descriptors explicitly to prevent FD leak
+                try:
+                    if self.sensor_process.stdout:
+                        self.sensor_process.stdout.close()
+                    if self.sensor_process.stderr:
+                        self.sensor_process.stderr.close()
+                    if self.sensor_process.stdin:
+                        self.sensor_process.stdin.close()
                 except:
                     pass
 
@@ -386,7 +413,8 @@ class PersistentGyroDaemon:
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 universal_newlines=True,
-                bufsize=1  # Line buffered
+                bufsize=1,  # Line buffered
+                close_fds=True  # CRITICAL: Close inherited file descriptors to prevent leaks
             )
 
             # Verify process started
@@ -553,8 +581,20 @@ class PersistentGyroDaemon:
                             samples_read += 1
                             if samples_read <= 5:
                                 print(f"[GyroDaemon] Shared sample #{samples_read}: x={gyro_data.get('x', 0):.4f}", file=sys.stderr)
+                        except queue.Full:
+                            # Output queue full - consumer too slow, drop oldest samples
+                            try:
+                                # Drain 100 old samples to make room
+                                for _ in range(100):
+                                    self.data_queue.get_nowait()
+                                # Retry putting current sample
+                                self.data_queue.put_nowait(gyro_data)
+                                if samples_read < 10:  # Only log first few times
+                                    print(f"[GyroDaemon] Queue full, drained 100 old samples", file=sys.stderr)
+                            except:
+                                pass  # If still fails, just drop this sample
                         except Exception as qe:
-                            print(f"[GyroDaemon] Output queue error: {qe}", file=sys.stderr)
+                            print(f"[GyroDaemon] Output queue unexpected error: {type(qe).__name__}: {qe}", file=sys.stderr)
                 except Exception as re:
                     # Timeout is normal, only log every 50th timeout
                     if samples_read % 50 == 0 and samples_read > 0:
@@ -568,15 +608,32 @@ class PersistentGyroDaemon:
             traceback.print_exc(file=sys.stderr)
 
     def stop(self):
-        """Stop the daemon"""
+        """Stop the daemon (with explicit FD cleanup to prevent leaks)"""
         self.stop_event.set()
         if self.sensor_process:
             try:
                 self.sensor_process.terminate()
                 self.sensor_process.wait(timeout=1)
+            except subprocess.TimeoutExpired:
+                try:
+                    self.sensor_process.kill()
+                    self.sensor_process.wait(timeout=1)
+                except:
+                    pass
             except:
                 try:
                     self.sensor_process.kill()
+                except:
+                    pass
+            finally:
+                # CRITICAL: Close file descriptors explicitly to prevent FD leak
+                try:
+                    if self.sensor_process.stdout:
+                        self.sensor_process.stdout.close()
+                    if self.sensor_process.stderr:
+                        self.sensor_process.stderr.close()
+                    if self.sensor_process.stdin:
+                        self.sensor_process.stdin.close()
                 except:
                     pass
 

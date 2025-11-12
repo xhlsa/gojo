@@ -152,6 +152,18 @@ validate_gps_api() {
             echo -e "${GREEN}✓ GPS API responding correctly${NC}"
             rm -f "$HOME/.gps_test.json"
             return 0
+        else
+            echo -e "${RED}DEBUG: GPS command succeeded but no latitude found${NC}"
+            echo -e "${RED}File contents:${NC}"
+            cat "$HOME/.gps_test.json" 2>&1 | head -10
+        fi
+    else
+        echo -e "${RED}DEBUG: GPS command failed or timed out (exit code: $?)${NC}"
+        if [ -f "$HOME/.gps_test.json" ]; then
+            echo -e "${RED}File contents:${NC}"
+            cat "$HOME/.gps_test.json" 2>&1 | head -10
+        else
+            echo -e "${RED}No output file created${NC}"
         fi
     fi
 
