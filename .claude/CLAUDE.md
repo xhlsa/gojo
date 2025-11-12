@@ -1,8 +1,35 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 12, 2025 - Gyro Resolution Fixed + Architecture Issue Documented
+## Latest: Nov 12, 2025 (Evening) - Gyro Daemon Coupling Fixed
 
-**Status:** ✅ WORKING (Gyro now matches accel resolution ~1200 samples/min)
+**Status:** ✅ READY FOR EXTENDED TEST (Gyro restart now coupled to accel restart)
+
+### Gyro Daemon Coupling Fixed
+**Problem:** 45-min test showed gyro died after 14 min when accel daemon restarted
+**Root Cause:** Gyro shares accel's IMU stream (LSM6DSO paired sensors) - when accel restarts, gyro loses data source but wasn't restarted
+**Solution:** Added `_restart_gyro_after_accel()` - automatically restarts gyro daemon with new accel reference
+**Result:** Gyro will survive accel daemon restarts ✓
+
+**Test Results (45-min driving session):**
+- Accel: 33,984 samples (45 min stable) ✓
+- Gyro: 15,975 samples (died at 14 min when accel restarted) → NOW FIXED
+- Incidents: 118 events captured (74 braking, 44 swerving)
+- Memory: 92.7 MB peak (stable) ✓
+
+**Files Modified:**
+- `test_ekf_vs_complementary.py` lines 1059-1062, 1075-1078: Call gyro restart after accel restart
+- `test_ekf_vs_complementary.py` lines 1088-1119: New `_restart_gyro_after_accel()` method
+
+---
+
+### Incident Detection: TABLED
+**Decision:** Officially tabling incident detection work until we have quality data
+**Reason:** Focus on data collection stability first (accel/gyro/GPS)
+**Status:** 📦 SHELVED (working but not priority)
+
+---
+
+## Nov 12, 2025 (Afternoon) - Gyro Resolution Fixed
 
 ### Gyro Sample Count Fixed
 **Problem:** Gyro collected only 59 samples vs 1216 accel samples (102x discrepancy)
@@ -57,7 +84,8 @@
 
 ## Historical Fixes Summary
 
-**Nov 12:** Gyro resolution fixed - Removed time.sleep(0.01) bottleneck → 59 samples → 1242 samples (matches accel ~1200/min)
+**Nov 12 (PM):** Gyro daemon coupling fixed - Restart gyro when accel restarts (shared IMU stream) → 14 min → 45+ min gyro stability
+**Nov 12 (AM):** Gyro resolution fixed - Removed time.sleep(0.01) bottleneck → 59 samples → 1242 samples (matches accel ~1200/min)
 **Nov 6:** Memory optimization - Clear deques after auto-save (not accumulated_data) → 70 MB freed, bounded 92-112 MB stable
 **Nov 6:** GPS polling fixed - Changed blocking subprocess.run(timeout=15s) → non-blocking async poller (0.38 Hz → 0.9-1.0 Hz)
 **Nov 4:** Incident detection validated - 25-min test: 126 swerving events (5.04/min, all real), 71% false positive reduction via motion context

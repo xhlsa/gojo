@@ -1055,6 +1055,12 @@ class FilterComparison:
                 if test_data:
                     print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
                     self.restart_counts['accel'] += 1
+
+                    # CRITICAL: Restart gyro daemon (shares accel's IMU stream)
+                    if self.enable_gyro and self.gyro_daemon:
+                        print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
+                        self._restart_gyro_after_accel()
+
                     return True
                 else:
                     # RETRY ONCE (backend may still be initializing)
@@ -1065,6 +1071,12 @@ class FilterComparison:
                     if test_data:
                         print(f"  ✓ Validation succeeded on retry", file=sys.stderr)
                         self.restart_counts['accel'] += 1
+
+                        # CRITICAL: Restart gyro daemon (shares accel's IMU stream)
+                        if self.enable_gyro and self.gyro_daemon:
+                            print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
+                            self._restart_gyro_after_accel()
+
                         return True
 
                     print(f"  ✗ Accel daemon unresponsive after retry", file=sys.stderr)
@@ -1072,6 +1084,39 @@ class FilterComparison:
             else:
                 print(f"  ✗ Failed to start accelerometer daemon process", file=sys.stderr)
                 return False
+
+    def _restart_gyro_after_accel(self):
+        """Restart gyro daemon after accel restart (gyro shares accel's IMU stream)"""
+        try:
+            print(f"  🔄 Restarting gyro daemon (coupled to accel daemon)...", file=sys.stderr)
+
+            # STEP 1: Stop old gyro daemon
+            if self.gyro_daemon:
+                try:
+                    self.gyro_daemon.stop()
+                except Exception as e:
+                    print(f"  → Warning stopping gyro daemon: {e}", file=sys.stderr)
+
+            # STEP 2: Create NEW gyro daemon with NEW accel_daemon reference
+            # CRITICAL: Gyro must reference the NEW accel_daemon (LSM6DSO paired sensors)
+            self.gyro_daemon = PersistentGyroDaemon(accel_daemon=self.accel_daemon, delay_ms=50)
+
+            # STEP 3: Start new gyro daemon
+            if self.gyro_daemon.start():
+                print(f"  ✓ Gyro daemon restarted (sharing new accel stream)", file=sys.stderr)
+                return True
+            else:
+                print(f"  ⚠️ WARNING: Gyro daemon failed to restart", file=sys.stderr)
+                print(f"  → Continuing without gyroscope", file=sys.stderr)
+                self.gyro_daemon = None
+                self.enable_gyro = False
+                return False
+
+        except Exception as e:
+            print(f"  ✗ Error restarting gyro daemon: {e}", file=sys.stderr)
+            self.gyro_daemon = None
+            self.enable_gyro = False
+            return False
 
     def _restart_gps_daemon(self):
         """Attempt to restart the GPS daemon (thread-safe with zombie cleanup)"""
