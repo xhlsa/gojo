@@ -151,6 +151,9 @@ class PersistentAccelDaemon:
     def start(self):
         """Start persistent termux-sensor daemon"""
         try:
+            # CRITICAL: Clear stop_event before starting (allows restart after stop())
+            self.stop_event.clear()
+
             # Start termux-sensor as persistent process
             # Request both ACCELEROMETER and GYROSCOPE from same LSM6DSO IMU chip
             # This enables paired sensor initialization for synchronized data collection
@@ -389,6 +392,9 @@ class PersistentGyroDaemon:
     def start(self):
         """Start gyroscope daemon (shared IMU or independent mode)"""
         try:
+            # CRITICAL: Clear stop_event before starting (allows restart after stop())
+            self.stop_event.clear()
+
             # SHARED MODE: Use data from accel daemon's gyro queue
             if self.accel_daemon:
                 # Verify accel daemon is running

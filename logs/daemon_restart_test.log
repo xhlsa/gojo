@@ -1,0 +1,1962 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Thu Nov 13 02:34:31 UTC 2025
+Test arguments: 2 --gyro
+Log file: crash_logs/test_ekf_2025-11-12_19-34-31.log
+==============================================================================
+[1;33mAcquiring wakelock...[0m
+[0;32m✓ Wakelock acquired[0m
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;31m✗ Accelerometer validation failed[0m
+[0;31mOutput received:[0m
+Terminated                 /data/data/com.termux/files/usr/libexec/termux-api Sensor "$@"
+Caught interrupt.. Finishing...
+Performing sensor cleanup
+Sensor cleanup successful!
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mSensor initialization attempt 2/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;32m✓ GPS API responding correctly[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+[GPS _read_loop] Fix #1 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #1 acquired
+[GyroDaemon] Starting shared queue reader
+[GyroDaemon] Accel daemon alive: True
+[GyroDaemon] Transferred sample #1: x=-0.0005
+[GyroDaemon] Transferred sample #2: x=0.0000
+[GyroDaemon] Transferred sample #3: x=0.0000
+[GyroDaemon] Transferred sample #4: x=-0.0005
+[GyroDaemon] Transferred sample #5: x=-0.0005
+[GPS_LOOP] Started
+[ACCEL_LOOP] Started
+[ACCEL_LOOP] Processed sample #1
+[ACCEL_LOOP] Processed sample #2
+[ACCEL_LOOP] Processed sample #3
+[ACCEL_LOOP] Processed sample #4
+[ACCEL_LOOP] Processed sample #5
+[GYRO_LOOP] Started
+[GYRO_LOOP] Processed sample #1
+[GYRO_LOOP] Processed sample #2
+[GYRO_LOOP] Processed sample #3
+
+[DEBUG] Test start time: 1763001303.8556762, End time target: 1763001427.573972, Duration: 2 min (120 sec)
+[00:03] STATUS: Memory=93.2MB (peak=93.2MB) | GPS=   1 (ALIVE) | Accel=   33 (ALIVE) | Gyro=    3
+[GYRO_LOOP] Processed sample #4
+[GYRO_LOOP] Processed sample #5
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #100
+[GyroDaemon] Transferred sample #100: x=-0.0002
+[GYRO_LOOP] Processed sample #100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=478353435216
+[GPSDaemon] stderr: [GPS] ✓ Fix #2 acquired
+[GPS _read_loop] Fix #2 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #1), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #1 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #2), queue_size=0, queue_id=478353435216
+
+Configuration:
+  Duration: 2 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 9941)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  ✓ Accelerometer responding with data on attempt 1
+
+✓ Calibrating accelerometer (collecting 20 stationary samples)...
+  ✓ Gravity calibrated: 9.87 m/s²
+    (collected 20 samples, range: 9.86-9.87)
+
+✓ EKF filter initialized
+✓ Complementary filter initialized
+
+✓ Starting GPS daemon (continuous polling)...
+  ✓ GPS daemon started (polling termux-location continuously)
+  ⏱ Waiting for first GPS fix (up to 30 seconds)...
+  Waiting for GPS... (1.0s)
+  ✓ GPS lock acquired: 32.2160, -110.8433 (latency: 1.7s)
+  ✓ First GPS fix processed and added to test data
+
+✓ Initializing gyroscope (optional, will fallback if unavailable)...
+✓ Gyroscope daemon started (shared IMU stream)
+   Sensor: lsm6dso LSM6DSO Gyroscope Non-wakeup (paired)
+   Source: Shared with Accelerometer daemon (same hardware)
+  ✓ Gyroscope daemon started (using shared IMU stream)
+  Note: Gyroscope data will be collected during test run
+
+✓ Running for 2 minutes...
+
+[00:03] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.001163 rad/s  [⏳ Learning...]
+  └─ Converged at: 3.7s
+  └─ Stability (σ):  0.000000 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.000000 rad/s
+  └─ Std Dev:        0.000000 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ✓ HEALTHY
+===========================================================================
+
+[00:03] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |        MOVING        |         N/A          |        MOVING       
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 1 fixes (ALIVE) | Accel: 33 samples (ALIVE) | Gyro: 3 samples
+
+[00:04] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |        MOVING        |         N/A          |        MOVING       
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 1 fixes (ALIVE) | Accel: 53 samples (ALIVE) | Gyro: 73 samples
+
+[00:05] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |        MOVING        |         N/A          |        MOVING       
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 1 fixes (ALIVE) | Accel: 73 samples (ALIVE) | Gyro: 93 samples
+
+[00:06] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |        MOVING        |         N/A          |        MOVING       
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 1 fixes (ALIVE) | Accel: 92 samples (ALIVE) | Gyro: 112 samples
+
+[00:07] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.003 m/s²    
+Status                    |        MOVING        |         N/A          |        MOVING       
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 1 fixes (ALIVE) | Accel: 112 samples (ALIVE) | Gyro: 132 samples
+
+[00:08] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 132 samples (ALIVE) | Gyro: 152 samples
+
+[00:09] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    [GPS_LOOP] get_data() returned None (check #2), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #200
+[GyroDaemon] Transferred sample #200: x=-0.0002
+[GYRO_LOOP] Processed sample #200
+[GPS_LOOP] get_data() returned None (check #2), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #200
+[GPS_LOOP] get_data() returned None (check #2), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #2), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #3 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #3 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #2), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #2 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #3), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #3), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #300
+[GyroDaemon] Transferred sample #300: x=0.0000
+[GYRO_LOOP] Processed sample #300
+[GPS_LOOP] get_data() returned None (check #3), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #300
+[GPS_LOOP] get_data() returned None (check #3), queue_size=0, queue_id=478353435216
+
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 152 samples (ALIVE) | Gyro: 172 samples
+
+[00:10] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 172 samples (ALIVE) | Gyro: 192 samples
+
+[00:11] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 191 samples (ALIVE) | Gyro: 211 samples
+
+[00:12] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 211 samples (ALIVE) | Gyro: 231 samples
+
+[00:13] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 2 fixes (ALIVE) | Accel: 231 samples (ALIVE) | Gyro: 251 samples
+
+[00:14] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 3 fixes (ALIVE) | Accel: 251 samples (ALIVE) | Gyro: 271 samples
+
+✓ Auto-saving data (3 GPS, 269 accel samples)...
+✓ Auto-saved (autosave #1): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 3 GPS + 269 accel | Deques cleared
+
+[00:16] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 3 fixes (ALIVE) | Accel: 20 samples (ALIVE) | Gyro: 20 samples
+
+[00:17] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 3 fixes (ALIVE) | Accel: 40 samples (ALIVE) | Gyro: 40 samples
+
+[00:18] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       [GPSDaemon] stderr: [GPS] ✓ Fix #4 acquired
+[GPS _read_loop] Fix #4 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #3), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #3 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #4), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #4), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #400
+[GyroDaemon] Transferred sample #400: x=0.0003
+[GYRO_LOOP] Processed sample #400
+[GPS_LOOP] get_data() returned None (check #4), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #400
+[GPS_LOOP] get_data() returned None (check #4), queue_size=0, queue_id=478353435216
+[GPSDaemon] stderr: [GPS] ✓ Fix #5 acquired
+[GPS _read_loop] Fix #5 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #4), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #4 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #5), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #5), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #500
+[GyroDaemon] Transferred sample #500: x=0.0002
+[GYRO_LOOP] Processed sample #500
+[GPS_LOOP] get_data() returned None (check #5), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #500
+
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 3 fixes (ALIVE) | Accel: 60 samples (ALIVE) | Gyro: 60 samples
+
+[00:19] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 4 fixes (ALIVE) | Accel: 79 samples (ALIVE) | Gyro: 79 samples
+
+[00:20] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 4 fixes (ALIVE) | Accel: 100 samples (ALIVE) | Gyro: 100 samples
+
+[00:21] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 4 fixes (ALIVE) | Accel: 119 samples (ALIVE) | Gyro: 119 samples
+
+[00:22] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.008 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 4 fixes (ALIVE) | Accel: 139 samples (ALIVE) | Gyro: 139 samples
+
+[00:23] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 159 samples (ALIVE) | Gyro: 159 samples
+
+[00:24] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 179 samples (ALIVE) | Gyro: 179 samples
+
+[00:25] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 198 samples (ALIVE) | Gyro: 198 samples
+
+[00:26] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.003 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 218 samples (ALIVE) | Gyro: 218 samples
+
+[00:27] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #5), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #5), queue_size=0, queue_id=478353435216
+[GPSDaemon] stderr: [GPS] ✓ Fix #6 acquired
+[GPS _read_loop] Fix #6 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #5), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #5 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #6), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #6), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #600
+[GyroDaemon] Transferred sample #600: x=0.0002
+[GYRO_LOOP] Processed sample #600
+[GPS_LOOP] get_data() returned None (check #6), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #600
+[GPS_LOOP] get_data() returned None (check #6), queue_size=0, queue_id=478353435216
+[00:33] STATUS: Memory=94.9MB (peak=94.9MB) | GPS=   0 (ALIVE) | Accel=   59 (ALIVE) | Gyro=   59
+[GPSDaemon] stderr: [GPS] ✓ Fix #7 acquired
+[GPS _read_loop] Fix #7 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #6), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 238 samples (ALIVE) | Gyro: 238 samples
+
+[00:28] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 5 fixes (ALIVE) | Accel: 258 samples (ALIVE) | Gyro: 258 samples
+
+[00:29] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 6 fixes (ALIVE) | Accel: 278 samples (ALIVE) | Gyro: 278 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #2): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 6 GPS + 565 accel | Deques cleared
+
+[00:30] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.003 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 6 fixes (ALIVE) | Accel: 2 samples (ALIVE) | Gyro: 2 samples
+
+[00:31] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 6 fixes (ALIVE) | Accel: 21 samples (ALIVE) | Gyro: 21 samples
+
+[00:32] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 6 fixes (ALIVE) | Accel: 41 samples (ALIVE) | Gyro: 41 samples
+
+[00:33] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000120 rad/s  [✓ CONVERGING]
+  └─ Converged at: 3.7s
+  └─ Stability (σ):  0.000019 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.000645 rad/s
+  └─ Std Dev:        0.000765 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ✓ HEALTHY
+===========================================================================
+
+[00:33] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 6 fixes (ALIVE) | Accel: 61 samples (ALIVE) | Gyro: 61 samples
+
+[00:34] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #7), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #7), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #700
+[GyroDaemon] Transferred sample #700: x=0.0279
+[GYRO_LOOP] Processed sample #700
+[GPS_LOOP] get_data() returned None (check #7), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #700
+[GPS_LOOP] get_data() returned None (check #7), queue_size=0, queue_id=478353435216
+[GPSDaemon] stderr: [GPS] ✓ Fix #8 acquired
+[GPS _read_loop] Fix #8 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #7), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #8), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #8), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #800
+[GyroDaemon] Transferred sample #800: x=-0.0009
+[GYRO_LOOP] Processed sample #800
+[GPS_LOOP] get_data() returned None (check #8), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #800
+[GPS_LOOP] get_data() returned None (check #8), queue_size=0, queue_id=478353435216
+
+GPS: 7 fixes (ALIVE) | Accel: 81 samples (ALIVE) | Gyro: 81 samples
+
+[00:35] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 7 fixes (ALIVE) | Accel: 101 samples (ALIVE) | Gyro: 101 samples
+
+[00:36] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.017 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 7 fixes (ALIVE) | Accel: 121 samples (ALIVE) | Gyro: 121 samples
+
+[00:37] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 7 fixes (ALIVE) | Accel: 140 samples (ALIVE) | Gyro: 140 samples
+
+[00:38] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.010 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 7 fixes (ALIVE) | Accel: 160 samples (ALIVE) | Gyro: 160 samples
+
+[00:39] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 8 fixes (ALIVE) | Accel: 180 samples (ALIVE) | Gyro: 180 samples
+
+[00:40] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 8 fixes (ALIVE) | Accel: 200 samples (ALIVE) | Gyro: 200 samples
+
+[00:41] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 8 fixes (ALIVE) | Accel: 219 samples (ALIVE) | Gyro: 219 samples
+
+[00:42] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 8 fixes (ALIVE) | Accel: 239 samples (ALIVE) | Gyro: 239 samples
+
+[00:43] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      [GPSDaemon] stderr: [GPS] ✓ Fix #9 acquired
+[GPS _read_loop] Fix #9 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #8), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #9), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #9), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #900
+[GyroDaemon] Transferred sample #900: x=0.0002
+[GYRO_LOOP] Processed sample #900
+[GPS_LOOP] get_data() returned None (check #9), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #900
+[GPS_LOOP] get_data() returned None (check #9), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #10 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #10 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #9), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #10), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #10), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1000
+[GyroDaemon] Transferred sample #1000: x=-0.0003
+[GYRO_LOOP] Processed sample #1000
+
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 8 fixes (ALIVE) | Accel: 259 samples (ALIVE) | Gyro: 259 samples
+
+[00:44] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.010 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 9 fixes (ALIVE) | Accel: 279 samples (ALIVE) | Gyro: 279 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #3): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 9 GPS + 861 accel | Deques cleared
+
+[00:45] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 9 fixes (ALIVE) | Accel: 2 samples (ALIVE) | Gyro: 2 samples
+
+[00:46] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 9 fixes (ALIVE) | Accel: 21 samples (ALIVE) | Gyro: 21 samples
+
+[00:47] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 9 fixes (ALIVE) | Accel: 41 samples (ALIVE) | Gyro: 41 samples
+
+[00:48] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 9 fixes (ALIVE) | Accel: 61 samples (ALIVE) | Gyro: 61 samples
+
+[00:49] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 10 fixes (ALIVE) | Accel: 81 samples (ALIVE) | Gyro: 81 samples
+
+[00:50] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 10 fixes (ALIVE) | Accel: 101 samples (ALIVE) | Gyro: 101 samples
+
+[00:51] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+[GPS_LOOP] get_data() returned None (check #10), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1000
+[GPS_LOOP] get_data() returned None (check #10), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #10), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #11 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #11 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #10), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #10 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #11), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #11), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1100
+[GyroDaemon] Transferred sample #1100: x=-0.0002
+[GYRO_LOOP] Processed sample #1100
+[GPS_LOOP] get_data() returned None (check #11), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1100
+[GPS_LOOP] get_data() returned None (check #11), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #12 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #12 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #11), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #12), queue_size=0, queue_id=478353435216
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 10 fixes (ALIVE) | Accel: 120 samples (ALIVE) | Gyro: 120 samples
+
+[00:52] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.007 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 10 fixes (ALIVE) | Accel: 140 samples (ALIVE) | Gyro: 140 samples
+
+[00:53] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 10 fixes (ALIVE) | Accel: 160 samples (ALIVE) | Gyro: 160 samples
+
+[00:54] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 11 fixes (ALIVE) | Accel: 180 samples (ALIVE) | Gyro: 180 samples
+
+[00:55] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 11 fixes (ALIVE) | Accel: 200 samples (ALIVE) | Gyro: 200 samples
+
+[00:56] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.003 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 11 fixes (ALIVE) | Accel: 219 samples (ALIVE) | Gyro: 219 samples
+
+[00:57] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 11 fixes (ALIVE) | Accel: 239 samples (ALIVE) | Gyro: 239 samples
+
+[00:58] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 11 fixes (ALIVE) | Accel: 259 samples (ALIVE) | Gyro: 259 samples
+
+[00:59] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 12 fixes (ALIVE) | Accel: 279 samples (ALIVE) | Gyro: 279 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #4): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 12 GPS + 1157 accel | Deques cleared
+
+[01:01] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #12), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1200
+[GyroDaemon] Transferred sample #1200: x=0.0002
+[GYRO_LOOP] Processed sample #1200
+[GPS_LOOP] get_data() returned None (check #12), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1200
+[GPS_LOOP] get_data() returned None (check #12), queue_size=0, queue_id=478353435216
+[01:03] STATUS: Memory=95.4MB (peak=95.4MB) | GPS=   0 (ALIVE) | Accel=   57 (ALIVE) | Gyro=   57
+[GPSDaemon] stderr: [GPS] ✓ Fix #13 acquired
+[GPS _read_loop] Fix #13 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #12), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #13), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #13), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1300
+[GyroDaemon] Transferred sample #1300: x=0.0000
+[GYRO_LOOP] Processed sample #1300
+[GPS_LOOP] get_data() returned None (check #13), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1300
+[GPS_LOOP] get_data() returned None (check #13), queue_size=0, queue_id=478353435216
+
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 12 fixes (ALIVE) | Accel: 2 samples (ALIVE) | Gyro: 2 samples
+
+[01:02] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.009 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 12 fixes (ALIVE) | Accel: 21 samples (ALIVE) | Gyro: 21 samples
+
+[01:03] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.003 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 12 fixes (ALIVE) | Accel: 41 samples (ALIVE) | Gyro: 41 samples
+
+[01:03] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000026 rad/s  [✓ CONVERGING]
+  └─ Converged at: 3.7s
+  └─ Stability (σ):  0.000006 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.000427 rad/s
+  └─ Std Dev:        0.000188 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ⚠ WARNING
+  Issues: BIAS_NOT_LEARNING
+===========================================================================
+
+[01:04] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 12 fixes (ALIVE) | Accel: 61 samples (ALIVE) | Gyro: 61 samples
+
+[01:05] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 13 fixes (ALIVE) | Accel: 81 samples (ALIVE) | Gyro: 81 samples
+
+[01:06] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.009 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 13 fixes (ALIVE) | Accel: 101 samples (ALIVE) | Gyro: 101 samples
+
+[01:07] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 13 fixes (ALIVE) | Accel: 120 samples (ALIVE) | Gyro: 120 samples
+
+[01:08] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 13 fixes (ALIVE) | Accel: 140 samples (ALIVE) | Gyro: 140 samples
+
+[01:09] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------[GPSDaemon] stderr: [GPS] ✓ Fix #14 acquired
+[GPS _read_loop] Fix #14 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #13), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #14), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #14), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1400
+[GyroDaemon] Transferred sample #1400: x=0.0000
+[GYRO_LOOP] Processed sample #1400
+[GPS_LOOP] get_data() returned None (check #14), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1400
+[GPS_LOOP] get_data() returned None (check #14), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #15 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #15 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #14), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #15), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #15), queue_size=0, queue_id=478353435216
+
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 13 fixes (ALIVE) | Accel: 160 samples (ALIVE) | Gyro: 160 samples
+
+[01:10] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 14 fixes (ALIVE) | Accel: 180 samples (ALIVE) | Gyro: 180 samples
+
+[01:11] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 14 fixes (ALIVE) | Accel: 199 samples (ALIVE) | Gyro: 199 samples
+
+[01:12] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 14 fixes (ALIVE) | Accel: 219 samples (ALIVE) | Gyro: 219 samples
+
+[01:13] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 14 fixes (ALIVE) | Accel: 239 samples (ALIVE) | Gyro: 239 samples
+
+[01:14] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 14 fixes (ALIVE) | Accel: 259 samples (ALIVE) | Gyro: 259 samples
+
+[01:15] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 15 fixes (ALIVE) | Accel: 279 samples (ALIVE) | Gyro: 279 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #5): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 15 GPS + 1453 accel | Deques cleared
+
+[01:16] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 15 fixes (ALIVE) | Accel: 1 samples (ALIVE) | Gyro: 1 samples
+
+[01:17] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      [AccelDaemon] Parsed JSON #1500
+[GyroDaemon] Transferred sample #1500: x=0.0005
+[GYRO_LOOP] Processed sample #1500
+[GPS_LOOP] get_data() returned None (check #15), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1500
+[GPS_LOOP] get_data() returned None (check #15), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #15), queue_size=0, queue_id=478353435216
+[GPSDaemon] stderr: [GPS] ✓ Fix #16 acquired
+[GPS _read_loop] Fix #16 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #15), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #15 (lat=32.2160)
+[GPS_LOOP] get_data() returned None (check #16), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #16), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1600
+[GyroDaemon] Transferred sample #1600: x=0.0000
+[GYRO_LOOP] Processed sample #1600
+[GPS_LOOP] get_data() returned None (check #16), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1600
+[GPS_LOOP] get_data() returned None (check #16), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #17 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #17 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #16), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #17), queue_size=0, queue_id=478353435216
+
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 15 fixes (ALIVE) | Accel: 20 samples (ALIVE) | Gyro: 20 samples
+
+[01:18] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 15 fixes (ALIVE) | Accel: 40 samples (ALIVE) | Gyro: 40 samples
+
+[01:19] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 15 fixes (ALIVE) | Accel: 60 samples (ALIVE) | Gyro: 60 samples
+
+[01:20] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 16 fixes (ALIVE) | Accel: 80 samples (ALIVE) | Gyro: 80 samples
+
+[01:21] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 16 fixes (ALIVE) | Accel: 100 samples (ALIVE) | Gyro: 100 samples
+
+[01:22] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 16 fixes (ALIVE) | Accel: 119 samples (ALIVE) | Gyro: 119 samples
+
+[01:23] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.007 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 16 fixes (ALIVE) | Accel: 139 samples (ALIVE) | Gyro: 139 samples
+
+[01:24] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 16 fixes (ALIVE) | Accel: 159 samples (ALIVE) | Gyro: 159 samples
+
+[01:25] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 17 fixes (ALIVE) | Accel: 179 samples (ALIVE) | Gyro: 179 samples
+
+[01:26] FILTER COMPARISON (3-way)[GPS_LOOP] get_data() returned None (check #17), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1700
+[GyroDaemon] Transferred sample #1700: x=0.0005
+[GYRO_LOOP] Processed sample #1700
+[GPS_LOOP] get_data() returned None (check #17), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1700
+[GPS_LOOP] get_data() returned None (check #17), queue_size=0, queue_id=478353435216
+[GPS _read_loop] Fix #18 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #18 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #17), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #18), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #18), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1800
+[GyroDaemon] Transferred sample #1800: x=-0.0002
+[GYRO_LOOP] Processed sample #1800
+[GPS_LOOP] get_data() returned None (check #18), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1800
+[GPS_LOOP] get_data() returned None (check #18), queue_size=0, queue_id=478353435216
+[01:33] STATUS: Memory=96.0MB (peak=96.0MB) | GPS=   0 (ALIVE) | Accel=   53 (ALIVE) | Gyro=   53
+
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 17 fixes (ALIVE) | Accel: 199 samples (ALIVE) | Gyro: 199 samples
+
+[01:27] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 17 fixes (ALIVE) | Accel: 219 samples (ALIVE) | Gyro: 218 samples
+
+[01:28] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 17 fixes (ALIVE) | Accel: 238 samples (ALIVE) | Gyro: 238 samples
+
+[01:29] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 17 fixes (ALIVE) | Accel: 258 samples (ALIVE) | Gyro: 258 samples
+
+[01:30] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.028 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 18 fixes (ALIVE) | Accel: 278 samples (ALIVE) | Gyro: 278 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+
+[01:31] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 18 fixes (ALIVE) | Accel: 298 samples (ALIVE) | Gyro: 297 samples
+✓ Auto-saved (autosave #6): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 18 GPS + 1749 accel | Deques cleared
+
+[01:32] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 18 fixes (ALIVE) | Accel: 19 samples (ALIVE) | Gyro: 19 samples
+
+[01:33] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 18 fixes (ALIVE) | Accel: 39 samples (ALIVE) | Gyro: 39 samples
+
+[01:33] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000902 rad/s  [✓ CONVERGING]
+  └─ Converged at: 3.7s
+  └─ Stability (σ):  0.000096 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000[GPS _read_loop] Fix #19 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #18), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPSDaemon] stderr: [GPS] ✓ Fix #19 acquired
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #19), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #19), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #1900
+[GPS_LOOP] get_data() returned None (check #19), queue_size=0, queue_id=478353435216
+[GyroDaemon] Transferred sample #1900: x=-0.0012
+[GYRO_LOOP] Processed sample #1900
+[GPS_LOOP] get_data() returned None (check #19), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #1900
+[GPSDaemon] stderr: [GPS] ✓ Fix #20 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #19), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS _read_loop] Fix #20 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] get_data() returned None (check #20), queue_size=0, queue_id=478353435216
+[GPS_LOOP] get_data() returned None (check #20), queue_size=0, queue_id=478353435216
+
+
+Gyro Residual:       0.001112 rad/s
+  └─ Std Dev:        0.000285 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ✓ HEALTHY
+===========================================================================
+
+[01:34] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 18 fixes (ALIVE) | Accel: 59 samples (ALIVE) | Gyro: 59 samples
+
+[01:35] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 19 fixes (ALIVE) | Accel: 79 samples (ALIVE) | Gyro: 79 samples
+
+[01:36] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.000 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 19 fixes (ALIVE) | Accel: 99 samples (ALIVE) | Gyro: 99 samples
+
+[01:37] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 19 fixes (ALIVE) | Accel: 118 samples (ALIVE) | Gyro: 118 samples
+
+[01:38] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.001 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 19 fixes (ALIVE) | Accel: 138 samples (ALIVE) | Gyro: 138 samples
+
+[01:39] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.007 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 19 fixes (ALIVE) | Accel: 158 samples (ALIVE) | Gyro: 158 samples
+
+[01:40] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 20 fixes (ALIVE) | Accel: 178 samples (ALIVE) | Gyro: 178 samples
+
+[01:41] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 20 fixes (ALIVE) | Accel: 198 samples (ALIVE) | Gyro: 198 samples
+
+[01:42] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    [GPS_LOOP] get_data() returned None (check #20), queue_size=0, queue_id=478353435216
+[AccelDaemon] Parsed JSON #2000
+[GyroDaemon] Transferred sample #2000: x=0.0000
+[GYRO_LOOP] Processed sample #2000
+[GPS_LOOP] get_data() returned None (check #20), queue_size=0, queue_id=478353435216
+[ACCEL_LOOP] Processed sample #2000
+[GPS _read_loop] Fix #21 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #21 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #20), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GPS_LOOP] Processed sample #20 (lat=32.2160)
+[AccelDaemon] Parsed JSON #2100
+[GyroDaemon] Transferred sample #2100: x=-0.0005
+[GYRO_LOOP] Processed sample #2100
+[ACCEL_LOOP] Processed sample #2100
+[GPS _read_loop] Fix #22 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #22 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #21), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.010 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 20 fixes (ALIVE) | Accel: 217 samples (ALIVE) | Gyro: 217 samples
+
+[01:43] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.009 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 20 fixes (ALIVE) | Accel: 237 samples (ALIVE) | Gyro: 237 samples
+
+[01:44] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 20 fixes (ALIVE) | Accel: 257 samples (ALIVE) | Gyro: 257 samples
+
+[01:45] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.008 m/s²      |    0.000 m/s²       |    0.009 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 21 fixes (ALIVE) | Accel: 277 samples (ALIVE) | Gyro: 277 samples
+
+✓ Auto-saving data (3 GPS, 295 accel samples)...
+
+[01:46] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 21 fixes (ALIVE) | Accel: 297 samples (ALIVE) | Gyro: 297 samples
+✓ Auto-saved (autosave #7): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 21 GPS + 2044 accel | Deques cleared
+
+[01:47] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 21 fixes (ALIVE) | Accel: 20 samples (ALIVE) | Gyro: 20 samples
+
+[01:48] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.008 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 21 fixes (ALIVE) | Accel: 39 samples (ALIVE) | Gyro: 39 samples
+
+[01:49] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.002 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 21 fixes (ALIVE) | Accel: 59 samples (ALIVE) | Gyro: 59 samples
+
+[01:50] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       [AccelDaemon] Parsed JSON #2200
+[GyroDaemon] Transferred sample #2200: x=0.0003
+[GYRO_LOOP] Processed sample #2200
+[ACCEL_LOOP] Processed sample #2200
+[GPS _read_loop] Fix #23 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #23 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #22), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[AccelDaemon] Parsed JSON #2300
+[GyroDaemon] Transferred sample #2300: x=0.0000
+[GYRO_LOOP] Processed sample #2300
+[ACCEL_LOOP] Processed sample #2300
+
+Accel Magnitude (m/s²)    |    0.007 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 22 fixes (ALIVE) | Accel: 79 samples (ALIVE) | Gyro: 79 samples
+
+[01:51] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.036 m/s²      |    0.000 m/s²       |    0.034 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 22 fixes (ALIVE) | Accel: 99 samples (ALIVE) | Gyro: 99 samples
+
+[01:52] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 22 fixes (ALIVE) | Accel: 119 samples (ALIVE) | Gyro: 119 samples
+
+[01:53] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.006 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 22 fixes (ALIVE) | Accel: 138 samples (ALIVE) | Gyro: 138 samples
+
+[01:54] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.004 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 22 fixes (ALIVE) | Accel: 158 samples (ALIVE) | Gyro: 158 samples
+
+[01:55] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 23 fixes (ALIVE) | Accel: 178 samples (ALIVE) | Gyro: 178 samples
+
+[01:56] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.006 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 23 fixes (ALIVE) | Accel: 198 samples (ALIVE) | Gyro: 198 samples
+
+[01:57] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.007 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 23 fixes (ALIVE) | Accel: 217 samples (ALIVE) | Gyro: 217 samples
+
+[01:58] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.004 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 23 fixes (ALIVE) | Accel: 237 samples (ALIVE) | Gyro: 237 samples
+
+[01:59] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------[GPSDaemon] stderr: [GPS] ✓ Fix #24 acquired
+[GPS _read_loop] Fix #24 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #23), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[AccelDaemon] Parsed JSON #2400
+[GyroDaemon] Transferred sample #2400: x=0.0003
+[GYRO_LOOP] Processed sample #2400
+[ACCEL_LOOP] Processed sample #2400
+[02:03] STATUS: Memory=93.9MB (peak=96.0MB) | GPS=   0 (ALIVE) | Accel=   49 (ALIVE) | Gyro=   49
+
+[DEBUG] Loop exited after 124.4s. Stop event: False, Time check: False
+[AccelDaemon] Read loop exited. Parsed 2432 JSON objects, 38905 lines total
+[GPS _read_loop] Fix #25 queued (lat=32.2160, queue_size=1, queue_id=478353435216)
+[GPSDaemon] stderr: [GPS] ✓ Fix #25 acquired
+[GPS_LOOP] ✓ get_data() SUCCESS (sample #24), lat=32.2160
+[GPS_LOOP] Updating EKF...
+[GPS_LOOP] EKF done, updating Complementary...
+[GPS_LOOP] Complementary done, updating ES-EKF...
+[GPS_LOOP] ES-EKF done!
+[GYRO_LOOP] Exited after processing 2431 samples
+[GPS _read_loop] Thread exiting (fixes_queued=25)
+
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 23 fixes (ALIVE) | Accel: 257 samples (ALIVE) | Gyro: 257 samples
+
+[02:00] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 24 fixes (ALIVE) | Accel: 277 samples (ALIVE) | Gyro: 277 samples
+
+✓ Auto-saving data (3 GPS, 296 accel samples)...
+
+[02:01] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.003 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 24 fixes (ALIVE) | Accel: 296 samples (ALIVE) | Gyro: 296 samples
+✓ Auto-saved (autosave #8): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz | Total: 24 GPS + 2340 accel | Deques cleared
+
+[02:02] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.001 m/s²      |    0.000 m/s²       |    0.002 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 24 fixes (ALIVE) | Accel: 17 samples (ALIVE) | Gyro: 17 samples
+
+[02:03] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.005 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 24 fixes (ALIVE) | Accel: 37 samples (ALIVE) | Gyro: 37 samples
+
+[02:03] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000071 rad/s  [✓ CONVERGING]
+  └─ Converged at: 3.7s
+  └─ Stability (σ):  0.000011 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.000360 rad/s
+  └─ Std Dev:        0.000163 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ⚠ WARNING
+  Issues: BIAS_NOT_LEARNING
+===========================================================================
+
+[02:04] FILTER COMPARISON (3-way)
+----------------------------------------------------------------------------------------------------------------------------------
+METRIC                    |       EKF 13D        |    ES-EKF 8D (DR)    |    COMPLEMENTARY    
+----------------------------------------------------------------------------------------------------------------------------------
+Velocity (m/s)            |    0.000 m/s       |    0.000 m/s        |    0.000 m/s      
+Distance (m)              |     0.00 m         |     0.00 m          |     0.00 m       
+Accel Magnitude (m/s²)    |    0.005 m/s²      |    0.000 m/s²       |    0.000 m/s²    
+Status                    |      STATIONARY      |         N/A          |      STATIONARY     
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 24 fixes (ALIVE) | Accel: 57 samples (ALIVE) | Gyro: 57 samples
+
+✓ Final save data assembly:
+  Accumulated GPS: 24
+  Current deque GPS: 1
+  Final GPS: 25
+  Accumulated Accel: 2340
+  Current deque Accel: 59
+  Final Accel: 2399
+✓ Validation metrics saved to: /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/metrics_20251112_193503.json
+
+✓ Final results saved:
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.json.gz
+✓ Peak memory usage: 96.0 MB
+✓ Multi-track GPX saved: /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_193503.gpx
+
+====================================================================================================
+FINAL COMPARISON SUMMARY
+====================================================================================================
+
+Distance Accuracy (vs GPS ground truth):
+  GPS Distance (Haversine): 0.00 m
+  EKF Distance:             0.00 m (Error: 0.00%)
+  Complementary Distance:   0.00 m (Error: 0.00%)
+
+  ⚠ Complementary has zero error; EKF has 0.00% error
+
+Final Velocities:
+  EKF:           0.000 m/s
+  Complementary: 0.000 m/s
+
+Gyroscope Statistics:
+  Total samples:  59
+  X-rotation (rad/s):  mean=0.0003, max=0.0038
+  Y-rotation (rad/s):  mean=0.0008, max=0.0111
+  Z-rotation (rad/s):  mean=-0.0002, max=0.0005
+  Overall magnitude:   mean=0.0011, max=0.0119
+
+====================================================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m
