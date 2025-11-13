@@ -165,7 +165,7 @@ class PersistentAccelDaemon:
             # -n 100000: Workaround for termux-sensor continuous mode hang after ~32 samples
             #            Request large batch, daemon will auto-restart when depleted
             self.sensor_process = subprocess.Popen(
-                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', '50', '-n', '100000'],
+                ['termux-sensor', '-s', 'lsm6dso LSM6DSO Accelerometer Non-wakeup,lsm6dso LSM6DSO Gyroscope Non-wakeup', '-d', str(self.delay_ms), '-n', '100000'],
                 stdin=subprocess.DEVNULL,  # CRITICAL: Prevent stdin blocking
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
