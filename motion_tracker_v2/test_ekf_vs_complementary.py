@@ -377,6 +377,23 @@ class FilterComparison:
         # Thread lock for GPS counter (thread-safe increment)
         self._gps_counter_lock = threading.Lock()
 
+        # PHASE 1: Raw sensor data queues (producers: sensor daemons, consumers: collection loops)
+        self.accel_raw_queue = Queue(maxsize=1000)  # ~50s buffer @ 20Hz
+        self.gps_raw_queue = Queue(maxsize=100)     # ~100s buffer @ 1Hz
+        self.gyro_raw_queue = Queue(maxsize=1000)   # ~50s buffer @ 20Hz
+
+        # PHASE 1: Per-filter input queues (producers: collection loops, consumers: filter threads)
+        self.ekf_accel_queue = Queue(maxsize=500)
+        self.ekf_gps_queue = Queue(maxsize=50)
+        self.ekf_gyro_queue = Queue(maxsize=500)
+
+        self.comp_accel_queue = Queue(maxsize=500)
+        self.comp_gps_queue = Queue(maxsize=50)
+
+        self.es_ekf_accel_queue = Queue(maxsize=500)
+        self.es_ekf_gps_queue = Queue(maxsize=50)
+        self.es_ekf_gyro_queue = Queue(maxsize=500)
+
         # Thread lock for filter state (prevents _display_metrics from reading mid-update)
         self.state_lock = threading.Lock()
 
@@ -626,6 +643,16 @@ class FilterComparison:
             gyro_thread = threading.Thread(target=self._gyro_loop, daemon=True)
             gyro_thread.start()
 
+        # PHASE 4: Start filter processing threads (INDEPENDENT - NEW)
+        ekf_thread = threading.Thread(target=self._ekf_filter_thread, daemon=True, name="EKF_Filter")
+        ekf_thread.start()
+
+        comp_thread = threading.Thread(target=self._complementary_filter_thread, daemon=True, name="Comp_Filter")
+        comp_thread.start()
+
+        es_ekf_thread = threading.Thread(target=self._es_ekf_filter_thread, daemon=True, name="ES_EKF_Filter")
+        es_ekf_thread.start()
+
         # Display thread
         display_thread = threading.Thread(target=self._display_loop, daemon=True)
         display_thread.start()
@@ -686,87 +713,32 @@ class FilterComparison:
             if gps:
                 self.last_gps_sample_time = time.time()  # UPDATE HEALTH MONITOR
                 try:
-                    # Hold state_lock while updating filters to prevent _display_metrics race condition
-                    with self.state_lock:
-                        now = time.time()
-                        # Update all 3 filters with new GPS fix
-                        print(f"[GPS_LOOP] Updating EKF...", file=sys.stderr)
-                        sys.stderr.flush()
-                        v1, d1 = self.ekf.update_gps(gps['latitude'], gps['longitude'],
-                                                      gps['speed'], gps['accuracy'])
-                        print(f"[GPS_LOOP] EKF done, updating Complementary...", file=sys.stderr)
-                        sys.stderr.flush()
-                        v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
-                                                                gps['speed'], gps['accuracy'])
-                        print(f"[GPS_LOOP] Complementary done, updating ES-EKF...", file=sys.stderr)
-                        sys.stderr.flush()
-                        v3, d3 = self.es_ekf.update_gps(gps['latitude'], gps['longitude'],  # NEW: ES-EKF update
-                                                         gps['speed'], gps['accuracy'])
-                        print(f"[GPS_LOOP] ES-EKF done!", file=sys.stderr)
-                        sys.stderr.flush()
+                    now = time.time()
+                    timestamp_relative = now - self.start_time
 
-                        # Log trajectory positions from all 3 filters
-                        timestamp_relative = now - self.start_time
+                    # PHASE 2: Package GPS data with timestamp
+                    gps_packet = {
+                        'timestamp': timestamp_relative,
+                        'latitude': gps['latitude'],
+                        'longitude': gps['longitude'],
+                        'speed': gps['speed'],
+                        'accuracy': gps['accuracy'],
+                        'provider': gps.get('provider', 'gps')
+                    }
 
-                        # NEW: EKF trajectory logging (if get_position exists)
-                        if hasattr(self.ekf, 'get_position'):
-                            try:
-                                lat_ekf, lon_ekf, unc_ekf = self.ekf.get_position()
-                                self.ekf_trajectory.append({
-                                    'timestamp': timestamp_relative,
-                                    'lat': lat_ekf,
-                                    'lon': lon_ekf,
-                                    'uncertainty_m': unc_ekf,
-                                    'velocity': v1
-                                })
-                            except:
-                                pass  # Silently skip if get_position fails
-
-                        # NEW: ES-EKF trajectory logging
-                        try:
-                            lat_es, lon_es, unc_es = self.es_ekf.get_position()
-                            self.es_ekf_trajectory.append({
-                                'timestamp': timestamp_relative,
-                                'lat': lat_es,
-                                'lon': lon_es,
-                                'uncertainty_m': unc_es,
-                                'velocity': v3
-                            })
-                        except Exception as e:
-                            pass  # Silently skip if get_position fails
-
-                        # NEW: Complementary trajectory logging
-                        if hasattr(self.complementary, 'get_position'):
-                            try:
-                                lat_comp, lon_comp, unc_comp = self.complementary.get_position()
-                                self.comp_trajectory.append({
-                                    'timestamp': timestamp_relative,
-                                    'lat': lat_comp,
-                                    'lon': lon_comp,
-                                    'uncertainty_m': unc_comp,
-                                    'velocity': v2
-                                })
-                            except:
-                                pass  # Silently skip if get_position fails
-
-                    # NEW: Log covariance snapshots every 10 GPS fixes (~30s intervals)
-                    with self._gps_counter_lock:
-                        next_gps_count = self.total_gps_fixes + 1
-                        if next_gps_count % 10 == 0:
-                            try:
-                                # Extract position covariance blocks from filters
-                                ekf_cov = self.ekf.P[:2, :2].tolist() if hasattr(self.ekf, 'P') else [[1,0],[0,1]]
-                                es_ekf_cov = self.es_ekf.P[:2, :2].tolist() if hasattr(self.es_ekf, 'P') else [[1,0],[0,1]]
-                                comp_cov = [[1.0, 0.0], [0.0, 1.0]]  # Complementary has no covariance model
-
-                                self.covariance_snapshots.append({
-                                    'timestamp': timestamp_relative,
-                                    'ekf_cov_pos': ekf_cov,
-                                    'es_ekf_cov_pos': es_ekf_cov,
-                                    'comp_cov_pos': comp_cov
-                                })
-                            except:
-                                pass  # Silently skip if covariance extraction fails
+                    # PHASE 2: Distribute to ALL filter queues (non-blocking)
+                    try:
+                        self.ekf_gps_queue.put_nowait(gps_packet)
+                    except:
+                        pass  # Queue full, drop oldest
+                    try:
+                        self.comp_gps_queue.put_nowait(gps_packet)
+                    except:
+                        pass
+                    try:
+                        self.es_ekf_gps_queue.put_nowait(gps_packet)
+                    except:
+                        pass
 
                     # Add GPS sample for incident context (30s before/after events)
                     self.incident_detector.add_gps_sample(
@@ -779,23 +751,19 @@ class FilterComparison:
 
                     samples_processed += 1
                     if samples_processed <= 5 or samples_processed % 5 == 0:
-                        print(f"[GPS_LOOP] Processed sample #{samples_processed} (lat={gps['latitude']:.4f})", file=sys.stderr)
+                        print(f"[GPS_LOOP] Queued sample #{samples_processed} (lat={gps['latitude']:.4f})", file=sys.stderr)
                         sys.stderr.flush()
 
-                    self.gps_samples.append({
-                        'timestamp': now - self.start_time,
-                        'latitude': gps['latitude'],
-                        'longitude': gps['longitude'],
-                        'accuracy': gps['accuracy'],
-                        'speed': gps['speed'],
-                        'provider': gps.get('provider', 'gps'),  # NEW: Save provider
-                        'ekf_velocity': v1,
-                        'ekf_distance': d1,
-                        'comp_velocity': v2,
-                        'comp_distance': d2,
-                        'es_ekf_velocity': v3,  # NEW: ES-EKF velocity
-                        'es_ekf_distance': d3  # NEW: ES-EKF distance
-                    })
+                    # Create placeholder GPS sample (will be updated by filter threads)
+                    with self._save_lock:
+                        self.gps_samples.append({
+                            'timestamp': timestamp_relative,
+                            'latitude': gps['latitude'],
+                            'longitude': gps['longitude'],
+                            'accuracy': gps['accuracy'],
+                            'speed': gps['speed'],
+                            'provider': gps_packet['provider']
+                        })
                 except Exception as e:
                     print(f"ERROR in GPS loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
                     import traceback
@@ -838,22 +806,33 @@ class FilterComparison:
                     # Check for impact incident (acceleration > 1.5g)
                     self.incident_detector.check_impact(accel_g)
 
-                    # Update all 3 filters with gravity-corrected magnitude
-                    v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
-                    v2, d2 = self.complementary.update_accelerometer(motion_magnitude)
-                    # FIXED: ES-EKF now uses RLock - deadlock resolved, re-enabled
-                    v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)
+                    # PHASE 2: Package accel data with timestamp
+                    timestamp = time.time() - self.start_time
+                    accel_packet = {
+                        'timestamp': timestamp,
+                        'magnitude': motion_magnitude
+                    }
 
-                    self.accel_samples.append({
-                        'timestamp': time.time() - self.start_time,
-                        'magnitude': motion_magnitude,
-                        'ekf_velocity': v1,
-                        'ekf_distance': d1,
-                        'comp_velocity': v2,
-                        'comp_distance': d2,
-                        'es_ekf_velocity': v3,  # NEW: ES-EKF velocity
-                        'es_ekf_distance': d3  # NEW: ES-EKF distance
-                    })
+                    # PHASE 2: Distribute to ALL filter queues (non-blocking)
+                    try:
+                        self.ekf_accel_queue.put_nowait(accel_packet)
+                    except:
+                        pass
+                    try:
+                        self.comp_accel_queue.put_nowait(accel_packet)
+                    except:
+                        pass
+                    try:
+                        self.es_ekf_accel_queue.put_nowait(accel_packet)
+                    except:
+                        pass
+
+                    # Create placeholder accel sample (will be updated by filter threads)
+                    with self._save_lock:
+                        self.accel_samples.append({
+                            'timestamp': timestamp,
+                            'magnitude': motion_magnitude
+                        })
                 except Exception as e:
                     print(f"ERROR in accel loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
                     import traceback
@@ -972,56 +951,320 @@ class FilterComparison:
                             if abs(gyro_z) > 1.047:  # Only check if yaw exceeds swerving threshold
                                 self.incident_detector.check_swerving(abs(gyro_z))
 
-                    # Update EKF filter with gyroscope data
-                    # (Complementary filter does NOT support gyroscope)
-                    v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
-                    # FIXED: ES-EKF now uses RLock - deadlock resolved, re-enabled
-                    v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
-
-                    # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
-                    if self.metrics:
-                        ekf_state = self.ekf.get_state()
-                        # Get latest GPS heading if available
-                        gps_heading = None
-                        if self.gps_samples:
-                            latest_gps = self.gps_samples[-1]
-                            if 'bearing' in latest_gps or 'heading' in latest_gps:
-                                gps_heading = latest_gps.get('bearing', latest_gps.get('heading'))
-
-                        # Get latest accelerometer magnitude for incident detection
-                        accel_magnitude = 0
-                        if self.accel_samples:
-                            accel_magnitude = self.accel_samples[-1]['magnitude']
-
-                        self.metrics.update(
-                            ekf_state=ekf_state,
-                            gyro_measurement=[gyro_x, gyro_y, gyro_z],
-                            gps_heading=gps_heading,
-                            accel_magnitude=accel_magnitude
-                        )
-
-                    # Store gyroscope sample for analysis
-                    ekf_heading_deg = None
-                    if self.ekf.enable_gyro:
-                        ekf_state = self.ekf.get_state()
-                        ekf_heading_deg = ekf_state.get('heading_deg')
-
-                    self.gyro_samples.append({
-                        'timestamp': time.time() - self.start_time,
+                    # PHASE 2: Package gyro data
+                    timestamp = time.time() - self.start_time
+                    gyro_packet = {
+                        'timestamp': timestamp,
                         'gyro_x': gyro_x,
                         'gyro_y': gyro_y,
                         'gyro_z': gyro_z,
-                        'magnitude': magnitude,
-                        'ekf_velocity': v1,
-                        'ekf_distance': d1,
-                        'ekf_heading': ekf_heading_deg
-                    })
+                        'magnitude': magnitude
+                    }
+
+                    # PHASE 2: Distribute to filter queues (only EKF and ES-EKF support gyro)
+                    try:
+                        self.ekf_gyro_queue.put_nowait(gyro_packet)
+                    except:
+                        pass
+                    try:
+                        self.es_ekf_gyro_queue.put_nowait(gyro_packet)
+                    except:
+                        pass
+
+                    # Create placeholder gyro sample (will be updated by filter threads)
+                    with self._save_lock:
+                        self.gyro_samples.append({
+                            'timestamp': timestamp,
+                            'gyro_x': gyro_x,
+                            'gyro_y': gyro_y,
+                            'gyro_z': gyro_z,
+                            'magnitude': magnitude
+                        })
                 except Exception as e:
                     print(f"ERROR in gyro loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
                     import traceback
                     traceback.print_exc()
 
         print(f"[GYRO_LOOP] Exited after processing {samples_collected} samples", file=sys.stderr)
+
+    def _ekf_filter_thread(self):
+        """PHASE 3: Independent EKF filter processing thread"""
+        print("[EKF_THREAD] Started", file=sys.stderr)
+        sys.stderr.flush()
+        samples_processed = {'accel': 0, 'gps': 0, 'gyro': 0}
+
+        while not self.stop_event.is_set():
+            try:
+                # Process accel (high frequency - non-blocking check)
+                try:
+                    accel_packet = self.ekf_accel_queue.get(timeout=0.01)
+                    v, d = self.ekf.update_accelerometer(accel_packet['magnitude'])
+                    samples_processed['accel'] += 1
+
+                    # Store result (thread-safe with lock)
+                    with self._save_lock:
+                        for sample in reversed(self.accel_samples):
+                            if abs(sample['timestamp'] - accel_packet['timestamp']) < 0.01:
+                                sample['ekf_velocity'] = v
+                                sample['ekf_distance'] = d
+                                break
+                except Empty:
+                    pass
+
+                # Process GPS (low frequency)
+                try:
+                    gps_packet = self.ekf_gps_queue.get(timeout=0.01)
+                    v, d = self.ekf.update_gps(
+                        gps_packet['latitude'], gps_packet['longitude'],
+                        gps_packet['speed'], gps_packet['accuracy']
+                    )
+                    samples_processed['gps'] += 1
+
+                    # Store trajectory
+                    if hasattr(self.ekf, 'get_position'):
+                        try:
+                            lat, lon, unc = self.ekf.get_position()
+                            with self._save_lock:
+                                self.ekf_trajectory.append({
+                                    'timestamp': gps_packet['timestamp'],
+                                    'lat': lat,
+                                    'lon': lon,
+                                    'uncertainty_m': unc,
+                                    'velocity': v
+                                })
+                        except:
+                            pass
+
+                    # Update GPS samples with EKF results
+                    with self._save_lock:
+                        for sample in reversed(self.gps_samples):
+                            if abs(sample['timestamp'] - gps_packet['timestamp']) < 0.01:
+                                sample['ekf_velocity'] = v
+                                sample['ekf_distance'] = d
+                                break
+
+                except Empty:
+                    pass
+
+                # Process gyro (if enabled)
+                if self.enable_gyro:
+                    try:
+                        gyro_packet = self.ekf_gyro_queue.get(timeout=0.01)
+                        v, d = self.ekf.update_gyroscope(
+                            gyro_packet['gyro_x'], gyro_packet['gyro_y'], gyro_packet['gyro_z']
+                        )
+                        samples_processed['gyro'] += 1
+
+                        # Store gyro sample with EKF results
+                        ekf_state = self.ekf.get_state()
+                        with self._save_lock:
+                            for sample in reversed(self.gyro_samples):
+                                if abs(sample['timestamp'] - gyro_packet['timestamp']) < 0.01:
+                                    sample['ekf_velocity'] = v
+                                    sample['ekf_distance'] = d
+                                    sample['ekf_heading'] = ekf_state.get('heading_deg')
+                                    break
+
+                        # Update metrics
+                        if self.metrics:
+                            gps_heading = None
+                            with self._save_lock:
+                                if self.gps_samples:
+                                    latest_gps = self.gps_samples[-1]
+                                    gps_heading = latest_gps.get('bearing', latest_gps.get('heading'))
+
+                            accel_magnitude = 0
+                            with self._save_lock:
+                                if self.accel_samples:
+                                    accel_magnitude = self.accel_samples[-1].get('magnitude', 0)
+
+                            self.metrics.update(
+                                ekf_state=ekf_state,
+                                gyro_measurement=[gyro_packet['gyro_x'], gyro_packet['gyro_y'], gyro_packet['gyro_z']],
+                                gps_heading=gps_heading,
+                                accel_magnitude=accel_magnitude
+                            )
+                    except Empty:
+                        pass
+
+                # Brief sleep to avoid CPU spinning
+                time.sleep(0.001)
+
+            except Exception as e:
+                print(f"ERROR in EKF filter thread: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc()
+                time.sleep(0.1)  # Backoff on error
+
+        print(f"[EKF_THREAD] Exited after processing {samples_processed}", file=sys.stderr)
+
+    def _complementary_filter_thread(self):
+        """PHASE 3: Independent Complementary filter processing thread"""
+        print("[COMP_THREAD] Started", file=sys.stderr)
+        sys.stderr.flush()
+        samples_processed = {'accel': 0, 'gps': 0}
+
+        while not self.stop_event.is_set():
+            try:
+                # Process accel
+                try:
+                    accel_packet = self.comp_accel_queue.get(timeout=0.01)
+                    v, d = self.complementary.update_accelerometer(accel_packet['magnitude'])
+                    samples_processed['accel'] += 1
+
+                    # Update accel samples (find matching timestamp)
+                    with self._save_lock:
+                        for sample in reversed(self.accel_samples):
+                            if abs(sample['timestamp'] - accel_packet['timestamp']) < 0.01:
+                                sample['comp_velocity'] = v
+                                sample['comp_distance'] = d
+                                break
+                except Empty:
+                    pass
+
+                # Process GPS
+                try:
+                    gps_packet = self.comp_gps_queue.get(timeout=0.01)
+                    v, d = self.complementary.update_gps(
+                        gps_packet['latitude'], gps_packet['longitude'],
+                        gps_packet['speed'], gps_packet['accuracy']
+                    )
+                    samples_processed['gps'] += 1
+
+                    # Store trajectory
+                    if hasattr(self.complementary, 'get_position'):
+                        try:
+                            lat, lon, unc = self.complementary.get_position()
+                            with self._save_lock:
+                                self.comp_trajectory.append({
+                                    'timestamp': gps_packet['timestamp'],
+                                    'lat': lat,
+                                    'lon': lon,
+                                    'uncertainty_m': unc,
+                                    'velocity': v
+                                })
+                        except:
+                            pass
+
+                    # Update GPS samples
+                    with self._save_lock:
+                        for sample in reversed(self.gps_samples):
+                            if abs(sample['timestamp'] - gps_packet['timestamp']) < 0.01:
+                                sample['comp_velocity'] = v
+                                sample['comp_distance'] = d
+                                break
+
+                except Empty:
+                    pass
+
+                time.sleep(0.001)
+
+            except Exception as e:
+                print(f"ERROR in Complementary filter thread: {e}", file=sys.stderr)
+                import traceback
+                traceback.print_exc()
+                time.sleep(0.1)
+
+        print(f"[COMP_THREAD] Exited after processing {samples_processed}", file=sys.stderr)
+
+    def _es_ekf_filter_thread(self):
+        """PHASE 3: Independent ES-EKF filter processing thread (EXPERIMENTAL - may hang)"""
+        print("[ES_EKF_THREAD] Started", file=sys.stderr)
+        sys.stderr.flush()
+        samples_processed = {'accel': 0, 'gps': 0, 'gyro': 0}
+        consecutive_failures = 0
+
+        while not self.stop_event.is_set():
+            try:
+                # Process accel
+                try:
+                    accel_packet = self.es_ekf_accel_queue.get(timeout=0.01)
+                    v, d = self.es_ekf.update_accelerometer(accel_packet['magnitude'])
+                    samples_processed['accel'] += 1
+                    consecutive_failures = 0
+
+                    # Update accel samples
+                    with self._save_lock:
+                        for sample in reversed(self.accel_samples):
+                            if abs(sample['timestamp'] - accel_packet['timestamp']) < 0.01:
+                                sample['es_ekf_velocity'] = v
+                                sample['es_ekf_distance'] = d
+                                break
+                except Empty:
+                    pass
+                except Exception as e:
+                    # ES-EKF may hang - log but continue
+                    consecutive_failures += 1
+                    if consecutive_failures == 1:
+                        print(f"⚠️  ES-EKF accel update failed at sample #{samples_processed['accel']}: {e}", file=sys.stderr)
+
+                    # After 10 consecutive failures, drain queue to prevent backup
+                    if consecutive_failures > 10:
+                        try:
+                            drained = 0
+                            while True:
+                                self.es_ekf_accel_queue.get_nowait()
+                                drained += 1
+                        except Empty:
+                            print(f"  → Drained {drained} backed-up accel samples", file=sys.stderr)
+                            consecutive_failures = 0
+
+                # Process GPS
+                try:
+                    gps_packet = self.es_ekf_gps_queue.get(timeout=0.01)
+                    v, d = self.es_ekf.update_gps(
+                        gps_packet['latitude'], gps_packet['longitude'],
+                        gps_packet['speed'], gps_packet['accuracy']
+                    )
+                    samples_processed['gps'] += 1
+
+                    # Store trajectory
+                    try:
+                        lat, lon, unc = self.es_ekf.get_position()
+                        with self._save_lock:
+                            self.es_ekf_trajectory.append({
+                                'timestamp': gps_packet['timestamp'],
+                                'lat': lat,
+                                'lon': lon,
+                                'uncertainty_m': unc,
+                                'velocity': v
+                            })
+                    except:
+                        pass
+
+                    # Update GPS samples
+                    with self._save_lock:
+                        for sample in reversed(self.gps_samples):
+                            if abs(sample['timestamp'] - gps_packet['timestamp']) < 0.01:
+                                sample['es_ekf_velocity'] = v
+                                sample['es_ekf_distance'] = d
+                                break
+
+                except Empty:
+                    pass
+                except Exception as e:
+                    print(f"⚠️  ES-EKF GPS update failed: {e}", file=sys.stderr)
+
+                # Process gyro
+                if self.enable_gyro:
+                    try:
+                        gyro_packet = self.es_ekf_gyro_queue.get(timeout=0.01)
+                        v, d = self.es_ekf.update_gyroscope(
+                            gyro_packet['gyro_x'], gyro_packet['gyro_y'], gyro_packet['gyro_z']
+                        )
+                        samples_processed['gyro'] += 1
+                    except Empty:
+                        pass
+                    except Exception as e:
+                        print(f"⚠️  ES-EKF gyro update failed: {e}", file=sys.stderr)
+
+                time.sleep(0.001)
+
+            except Exception as e:
+                print(f"ERROR in ES-EKF filter thread (continuing): {e}", file=sys.stderr)
+                time.sleep(0.1)
+
+        print(f"[ES_EKF_THREAD] Exited after processing {samples_processed}", file=sys.stderr)
 
     def _display_loop(self):
         """Display metrics every second, log status every 30 seconds"""
@@ -1047,6 +1290,18 @@ class FilterComparison:
                         self._display_metrics()
                     except Exception as e:
                         print(f"⚠️  Warning: Metrics display failed: {e}", file=sys.stderr)
+
+                # PHASE 6: Check queue health
+                queue_depths = {
+                    'ekf_accel': self.ekf_accel_queue.qsize(),
+                    'ekf_gps': self.ekf_gps_queue.qsize(),
+                    'comp_accel': self.comp_accel_queue.qsize(),
+                    'es_ekf_accel': self.es_ekf_accel_queue.qsize()
+                }
+
+                for name, depth in queue_depths.items():
+                    if depth > 400:  # 80% full warning
+                        print(f"⚠️  Queue {name} backing up: {depth} items", file=sys.stderr)
 
                 # Update live status file every 2 seconds for dashboard
                 if now - self.last_status_update > 2.0:
@@ -1604,12 +1859,17 @@ class FilterComparison:
                 'es_ekf': list(self.es_ekf_trajectory) if hasattr(self, 'es_ekf_trajectory') else [],
                 'complementary': list(self.comp_trajectory) if hasattr(self, 'comp_trajectory') else []
             },
-            'covariance_snapshots': list(self.covariance_snapshots) if hasattr(self, 'covariance_snapshots') else [],
-            'final_metrics': {
+            'covariance_snapshots': list(self.covariance_snapshots) if hasattr(self, 'covariance_snapshots') else []
+        }
+
+        # Get final filter states (wrapped to avoid deadlock if filter threads still running)
+        try:
+            results['final_metrics'] = {
                 'ekf': self.ekf.get_state(),
                 'complementary': self.complementary.get_state()
             }
-        }
+        except:
+            results['final_metrics'] = {'ekf': {}, 'complementary': {}}
 
         if auto_save:
             # FIX 2: Acquire lock before accessing shared data structures
