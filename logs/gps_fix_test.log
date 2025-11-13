@@ -1,0 +1,345 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Thu Nov 13 01:37:38 UTC 2025
+Test arguments: 2 --gyro
+Log file: crash_logs/test_ekf_2025-11-12_18-37-38.log
+==============================================================================
+[1;33mAcquiring wakelock...[0m
+[0;32m✓ Wakelock acquired[0m
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;32m✓ GPS API responding correctly[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+[GPS _read_loop] Fix #1 queued (lat=32.2160, queue_size=1)
+[GPSDaemon] stderr: [GPS] ✓ Fix #1 acquired
+[GyroDaemon] Starting shared queue reader
+[GyroDaemon] Accel daemon alive: True
+[GyroDaemon] Transferred sample #1: x=-0.0002
+[GyroDaemon] Transferred sample #2: x=0.0000
+[GyroDaemon] Transferred sample #3: x=-0.0005
+[GyroDaemon] Transferred sample #4: x=-0.0005
+[GyroDaemon] Transferred sample #5: x=-0.0002
+[GPS_LOOP] Started
+[ACCEL_LOOP] Started
+[ACCEL_LOOP] Processed sample #1
+[ACCEL_LOOP] Processed sample #2
+[ACCEL_LOOP] Processed sample #3
+[ACCEL_LOOP] Processed sample #4
+[ACCEL_LOOP] Processed sample #5
+[GYRO_LOOP] Started
+[GYRO_LOOP] Processed sample #1
+
+[DEBUG] Test start time: 1762997880.7472134, End time target: 1762998006.0128314, Duration: 2 min (120 sec)
+[00:05] STATUS: Memory=93.0MB (peak=93.0MB) | GPS=   1 (ALIVE) | Accel=   35 (ALIVE) | Gyro=    0
+[GYRO_LOOP] Processed sample #2
+[GYRO_LOOP] Processed sample #3
+[GYRO_LOOP] Processed sample #4
+[GYRO_LOOP] Processed sample #5
+[AccelDaemon] Parsed JSON #100
+[GyroDaemon] Transferred sample #100: x=0.0000
+[GYRO_LOOP] Processed sample #100
+[GPS_LOOP] get_data() returned None (attempt #1)
+[ACCEL_LOOP] Processed sample #100
+[GPS_LOOP] get_data() returned None (attempt #1)
+[GPS_LOOP] get_data() returned None (attempt #1)
+[GPSDaemon] stderr: [GPS] ✓ Fix #2 acquired
+[GPS _read_loop] Fix #2 queued (lat=32.2160, queue_size=1)
+[AccelDaemon] Parsed JSON #200
+[GyroDaemon] Transferred sample #200: x=-0.0003
+[GYRO_LOOP] Processed sample #200
+[ACCEL_LOOP] Processed sample #200
+[GPSDaemon] stderr: [GPS] ✓ Fix #3 acquired
+[GPS _read_loop] Fix #3 queued (lat=32.2160, queue_size=1)
+[AccelDaemon] Parsed JSON #300
+[GyroDaemon] Transferred sample #300: x=0.0003
+[GYRO_LOOP] Processed sample #300
+[ACCEL_LOOP] Processed sample #300
+[GPSDaemon] stderr: [GPS] ✓ Fix #4 acquired
+[GPS _read_loop] Fix #4 queued (lat=32.2160, queue_size=2)
+[AccelDaemon] Parsed JSON #400
+[GyroDaemon] Transferred sample #400: x=0.0000
+[GYRO_LOOP] Processed sample #400
+[ACCEL_LOOP] Processed sample #400
+[GPS _read_loop] Fix #5 queued (lat=32.2160, queue_size=3)
+[GPSDaemon] stderr: [GPS] ✓ Fix #5 acquired
+[AccelDaemon] Parsed JSON #500
+[GyroDaemon] Transferred sample #500: x=0.0002
+[GYRO_LOOP] Processed sample #500
+[ACCEL_LOOP] Processed sample #500
+[GPS _read_loop] Fix #6 queued (lat=32.2160, queue_size=4)
+[GPSDaemon] stderr: [GPS] ✓ Fix #6 acquired
+[AccelDaemon] Parsed JSON #600
+[GyroDaemon] Transferred sample #600: x=-0.0003
+[GYRO_LOOP] Processed sample #600
+[ACCEL_LOOP] Processed sample #600
+[GPSDaemon] stderr: [GPS] ✓ Fix #7 acquired
+[GPS _read_loop] Fix #7 queued (lat=32.2160, queue_size=5)
+[AccelDaemon] Parsed JSON #700
+[GyroDaemon] Transferred sample #700: x=0.0000
+[GYRO_LOOP] Processed sample #700
+[ACCEL_LOOP] Processed sample #700
+[GPS _read_loop] Fix #8 queued (lat=32.2160, queue_size=6)
+[GPSDaemon] stderr: [GPS] ✓ Fix #8 acquired
+
+⚠️ GPS SILENT for 30.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[AccelDaemon] Parsed JSON #800
+[GyroDaemon] Transferred sample #800: x=0.0000
+[GYRO_LOOP] Processed sample #800
+[ACCEL_LOOP] Processed sample #800
+[GPSDaemon] stderr: [GPS] ✓ Fix #9 acquired
+[GPS _read_loop] Fix #9 queued (lat=32.2160, queue_size=7)
+[AccelDaemon] Parsed JSON #900
+[GyroDaemon] Transferred sample #900: x=-0.0005
+[GYRO_LOOP] Processed sample #900
+[ACCEL_LOOP] Processed sample #900
+[GPS _read_loop] Fix #10 queued (lat=32.2160, queue_size=8)
+[GPSDaemon] stderr: [GPS] ✓ Fix #10 acquired
+[AccelDaemon] Parsed JSON #1000
+[GyroDaemon] Transferred sample #1000: x=0.0000
+[GYRO_LOOP] Processed sample #1000
+[ACCEL_LOOP] Processed sample #1000
+[GPSDaemon] stderr: [GPS] ✓ Fix #11 acquired
+[GPS _read_loop] Fix #11 queued (lat=32.2160, queue_size=9)
+[AccelDaemon] Parsed JSON #1100
+[GyroDaemon] Transferred sample #1100: x=-0.0002
+[GYRO_LOOP] Processed sample #1100
+[ACCEL_LOOP] Processed sample #1100
+[GPS _read_loop] Fix #12 queued (lat=32.2160, queue_size=10)
+[GPSDaemon] stderr: [GPS] ✓ Fix #12 acquired
+[AccelDaemon] Parsed JSON #1200
+[GyroDaemon] Transferred sample #1200: x=-0.0003
+[GYRO_LOOP] Processed sample #1200
+[ACCEL_LOOP] Processed sample #1200
+[GPSDaemon] stderr: [GPS] ✓ Fix #13 acquired
+[GPS _read_loop] Fix #13 queued (lat=32.2160, queue_size=11)
+[AccelDaemon] Parsed JSON #1300
+[GyroDaemon] Transferred sample #1300: x=0.0003
+[GYRO_LOOP] Processed sample #1300
+[ACCEL_LOOP] Processed sample #1300
+
+⚠️ GPS SILENT for 30.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS _read_loop] Fix #14 queued (lat=32.2160, queue_size=12)
+[GPSDaemon] stderr: [GPS] ✓ Fix #14 acquired
+[AccelDaemon] Parsed JSON #1400
+[GyroDaemon] Transferred sample #1400: x=-0.0005
+[GYRO_LOOP] Processed sample #1400
+[ACCEL_LOOP] Processed sample #1400
+[GPSDaemon] stderr: [GPS] ✓ Fix #15 acquired
+[GPS _read_loop] Fix #15 queued (lat=32.2160, queue_size=13)
+[AccelDaemon] Parsed JSON #1500
+[GyroDaemon] Transferred sample #1500: x=0.0000
+[GYRO_LOOP] Processed sample #1500
+[ACCEL_LOOP] Processed sample #1500
+[GPSDaemon] stderr: [GPS] ✓ Fix #16 acquired
+[GPS _read_loop] Fix #16 queued (lat=32.2160, queue_size=14)
+[AccelDaemon] Parsed JSON #1600
+[GyroDaemon] Transferred sample #1600: x=0.0002
+[GYRO_LOOP] Processed sample #1600
+[ACCEL_LOOP] Processed sample #1600
+[GPSDaemon] stderr: [GPS] ✓ Fix #17 acquired
+[GPS _read_loop] Fix #17 queued (lat=32.2160, queue_size=15)
+[AccelDaemon] Parsed JSON #1700
+[GyroDaemon] Transferred sample #1700: x=0.0000
+[GYRO_LOOP] Processed sample #1700
+[ACCEL_LOOP] Processed sample #1700
+[GPS _read_loop] Fix #18 queued (lat=32.2160, queue_size=16)
+[GPSDaemon] stderr: [GPS] ✓ Fix #18 acquired
+[AccelDaemon] Parsed JSON #1800
+[GyroDaemon] Transferred sample #1800: x=0.0000
+[GYRO_LOOP] Processed sample #1800
+[ACCEL_LOOP] Processed sample #1800
+[GPS _read_loop] Fix #19 queued (lat=32.2160, queue_size=17)
+[GPSDaemon] stderr: [GPS] ✓ Fix #19 acquired
+[AccelDaemon] Parsed JSON #1900
+[GyroDaemon] Transferred sample #1900: x=0.0000
+[GYRO_LOOP] Processed sample #1900
+[ACCEL_LOOP] Processed sample #1900
+
+⚠️ GPS SILENT for 30.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS _read_loop] Fix #20 queued (lat=32.2160, queue_size=18)
+[GPSDaemon] stderr: [GPS] ✓ Fix #20 acquired
+[AccelDaemon] Parsed JSON #2000
+[GyroDaemon] Transferred sample #2000: x=0.0000
+[GYRO_LOOP] Processed sample #2000
+[ACCEL_LOOP] Processed sample #2000
+[GPSDaemon] stderr: [GPS] ✓ Fix #21 acquired
+[GPS _read_loop] Fix #21 queued (lat=32.2160, queue_size=19)
+[AccelDaemon] Parsed JSON #2100
+[GyroDaemon] Transferred sample #2100: x=0.0002
+[GYRO_LOOP] Processed sample #2100
+[ACCEL_LOOP] Processed sample #2100
+[GPSDaemon] stderr: [GPS] ✓ Fix #22 acquired
+[GPS _read_loop] Fix #22 queued (lat=32.2160, queue_size=20)
+[AccelDaemon] Parsed JSON #2200
+[GyroDaemon] Transferred sample #2200: x=-0.0002
+[GYRO_LOOP] Processed sample #2200
+[ACCEL_LOOP] Processed sample #2200
+[GPSDaemon] stderr: [GPS] ✓ Fix #23 acquired
+[GPS _read_loop] Fix #23 queued (lat=32.2160, queue_size=21)
+[AccelDaemon] Parsed JSON #2300
+[GyroDaemon] Transferred sample #2300: x=0.0000
+[GYRO_LOOP] Processed sample #2300
+[ACCEL_LOOP] Processed sample #2300
+[GPS _read_loop] Fix #24 queued (lat=32.2160, queue_size=22)
+[GPSDaemon] stderr: [GPS] ✓ Fix #24 acquired
+[AccelDaemon] Parsed JSON #2400
+[GyroDaemon] Transferred sample #2400: x=0.0002
+[GYRO_LOOP] Processed sample #2400
+[ACCEL_LOOP] Processed sample #2400
+
+[DEBUG] Loop exited after 126.0s. Stop event: False, Time check: False
+[AccelDaemon] Read loop exited. Parsed 2463 JSON objects, 39401 lines total
+[GYRO_LOOP] Exited after processing 2462 samples
+[GPS _read_loop] Fix #25 queued (lat=32.2160, queue_size=23)
+[GPSDaemon] stderr: [GPS] ✓ Fix #25 acquired
+[GPS _read_loop] Thread exiting (fixes_queued=25)
+
+Configuration:
+  Duration: 2 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (20Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 13352)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  ✓ Accelerometer responding with data on attempt 1
+
+✓ Calibrating accelerometer (collecting 20 stationary samples)...
+  ✓ Gravity calibrated: 9.87 m/s²
+    (collected 20 samples, range: 9.86-9.87)
+
+✓ EKF filter initialized
+✓ Complementary filter initialized
+
+✓ Starting GPS daemon (continuous polling)...
+  ✓ GPS daemon started (polling termux-location continuously)
+  ⏱ Waiting for first GPS fix (up to 30 seconds)...
+  Waiting for GPS... (1.0s)
+  Waiting for GPS... (2.0s)
+  Waiting for GPS... (3.0s)
+  ✓ GPS lock acquired: 32.2160, -110.8432 (latency: 3.2s)
+  ✓ First GPS fix processed and added to test data
+
+✓ Initializing gyroscope (optional, will fallback if unavailable)...
+✓ Gyroscope daemon started (shared IMU stream)
+   Sensor: lsm6dso LSM6DSO Gyroscope Non-wakeup (paired)
+   Source: Shared with Accelerometer daemon (same hardware)
+  ✓ Gyroscope daemon started (using shared IMU stream)
+  Note: Gyroscope data will be collected during test run
+
+✓ Running for 2 minutes...
+
+[00:05] 13D GYRO-EKF METRICS
+===========================================================================
+Bias Magnitude:      0.000000 rad/s  [⏳ Learning...]
+  └─ Stability (σ):  0.000000 rad/s
+
+Quaternion Norm:     1.000000  [✓ HEALTHY]
+  └─ Error:          0.000000
+
+Gyro Residual:       0.000341 rad/s
+  └─ Std Dev:        0.000000 rad/s
+
+Incident Detection:
+  Hard Braking:        0 events
+  Swerving:            0 events
+
+Overall Status:      ✓ HEALTHY
+===========================================================================
+
+✓ Auto-saving data (1 GPS, 260 accel samples)...
+✓ Auto-saved (autosave #1): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 260 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #2): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 556 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 295 accel samples)...
+✓ Auto-saved (autosave #3): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 851 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 295 accel samples)...
+✓ Auto-saved (autosave #4): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 1146 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #5): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 1442 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 295 accel samples)...
+✓ Auto-saved (autosave #6): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 1737 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 295 accel samples)...
+✓ Auto-saved (autosave #7): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 2032 accel | Deques cleared
+
+✓ Auto-saving data (0 GPS, 296 accel samples)...
+✓ Auto-saved (autosave #8): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz | Total: 1 GPS + 2328 accel | Deques cleared
+
+✓ Final save data assembly:
+  Accumulated GPS: 1
+  Current deque GPS: 0
+  Final GPS: 1
+  Accumulated Accel: 2328
+  Current deque Accel: 98
+  Final Accel: 2426
+✓ Validation metrics saved to: /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/metrics_20251112_183800.json
+
+✓ Final results saved:
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.json.gz
+✓ Peak memory usage: 93.0 MB
+✓ Multi-track GPX saved: /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251112_183800.gpx
+
+====================================================================================================
+FINAL COMPARISON SUMMARY
+====================================================================================================
+
+Final Velocities:
+  EKF:           0.000 m/s
+  Complementary: 0.000 m/s
+
+Gyroscope Statistics:
+  Total samples:  98
+  X-rotation (rad/s):  mean=-0.0001, max=0.0003
+  Y-rotation (rad/s):  mean=0.0002, max=0.0008
+  Z-rotation (rad/s):  mean=0.0001, max=0.0005
+  Overall magnitude:   mean=0.0004, max=0.0008
+
+====================================================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m

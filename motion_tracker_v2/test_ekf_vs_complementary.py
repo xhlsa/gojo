@@ -74,6 +74,9 @@ class PersistentGPSDaemon:
     def start(self):
         """Start GPS daemon that continuously polls termux-location"""
         try:
+            # CRITICAL: Clear stop_event before starting (allows restart after stop())
+            self.stop_event.clear()
+
             # Note: termux-location -r updates doesn't work as true continuous stream on this device
             # Instead, we poll in a loop. Even though each call has ~3.7s overhead due to DalvikVM init,
             # keeping ONE persistent process is better than spawning new processes repeatedly.
@@ -98,8 +101,13 @@ import time
 
 next_poll_time = time.time()
 last_success_time = time.time()
-max_starvation = 30.0  # Exit after 30s with no data
+max_starvation = 300.0  # Exit after 5 minutes with no data (increased from 30s)
 max_runtime = 2700    # 45 minutes max
+request_count = 0
+success_count = 0
+
+sys.stderr.write("[GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)\\n")
+sys.stderr.flush()
 
 while time.time() - next_poll_time < max_runtime:
     current_time = time.time()
@@ -107,6 +115,7 @@ while time.time() - next_poll_time < max_runtime:
     # Poll every 5 seconds
     if current_time >= next_poll_time:
         try:
+            request_count += 1
             result = subprocess.run(
                 ['termux-location', '-p', 'gps'],
                 capture_output=True,
@@ -115,21 +124,37 @@ while time.time() - next_poll_time < max_runtime:
             )
 
             if result.returncode == 0 and result.stdout.strip():
-                print(result.stdout, flush=True)
+                success_count += 1
+                # CRITICAL: Output compact JSON on single line (termux-location may output pretty-printed JSON)
+                # Parse and re-serialize as compact JSON to ensure _read_loop can parse line-by-line
+                try:
+                    import json
+                    gps_json = json.loads(result.stdout)
+                    compact_json = json.dumps(gps_json, separators=(',', ':'))
+                    print(compact_json, flush=True)
+                    sys.stderr.write(f"[GPS] ✓ Fix #{success_count} acquired\\n")
+                    sys.stderr.flush()
+                except:
+                    # Fallback: output as-is if JSON parsing fails
+                    print(result.stdout, flush=True)
                 last_success_time = time.time()
             else:
                 sys.stderr.write(f"[GPS] No output (code {result.returncode})\\n")
+                sys.stderr.flush()
 
         except subprocess.TimeoutExpired:
-            sys.stderr.write("[GPS] Request timeout (15s)\\n")
+            sys.stderr.write("[GPS] ✗ Request timeout (30s)\\n")
+            sys.stderr.flush()
         except Exception as e:
             sys.stderr.write(f"[GPS] Error: {e}\\n")
+            sys.stderr.flush()
 
         next_poll_time = current_time + 5.0
 
     # Check for starvation
     if current_time - last_success_time > max_starvation:
-        sys.stderr.write(f"[GPS] Starvation for {max_starvation}s, exiting\\n")
+        sys.stderr.write(f"[GPS] ⚠️  STARVATION: No data for {max_starvation}s (requests={request_count}, successes={success_count}), exiting\\n")
+        sys.stderr.flush()
         sys.exit(1)
 
     time.sleep(0.1)
@@ -169,50 +194,78 @@ while time.time() - next_poll_time < max_runtime:
             pass
 
     def _read_loop(self):
-        """Read GPS JSON objects from continuous stream (handles pretty-printed JSON)"""
-        try:
-            json_buffer = ""
-            brace_depth = 0
+        """Read GPS JSON objects from continuous stream (line-by-line)"""
+        import sys
+        fix_count = 0
 
+        print(f"[GPS _read_loop] Thread started", file=sys.stderr)
+        sys.stderr.flush()
+
+        try:
+            # termux-location outputs compact JSON on single lines
+            # Read line-by-line instead of complex brace counting
             for line in self.gps_process.stdout:
                 if self.stop_event.is_set():
                     break
 
-                json_buffer += line
-                brace_depth += line.count('{') - line.count('}')
+                line = line.strip()
+                if not line:
+                    continue  # Skip empty lines
 
-                # Complete JSON object when braces balance
-                if brace_depth == 0 and json_buffer.strip():
+                try:
+                    # Parse JSON from complete line
+                    data = json.loads(line)
+
+                    # Extract GPS data
+                    gps_data = {
+                        'latitude': float(data.get('latitude')),
+                        'longitude': float(data.get('longitude')),
+                        'accuracy': float(data.get('accuracy', 5.0)),
+                        'altitude': float(data.get('altitude', 0)),
+                        'bearing': float(data.get('bearing', 0)),
+                        'speed': float(data.get('speed', 0)),
+                        'provider': 'gps'  # Track GPS provider (test uses -p gps only)
+                    }
+
+                    # Queue the fix
                     try:
-                        data = json.loads(json_buffer)
-                        gps_data = {
-                            'latitude': float(data.get('latitude')),
-                            'longitude': float(data.get('longitude')),
-                            'accuracy': float(data.get('accuracy', 5.0)),
-                            'altitude': float(data.get('altitude', 0)),
-                            'bearing': float(data.get('bearing', 0)),
-                            'speed': float(data.get('speed', 0)),
-                            'provider': 'gps'  # Track GPS provider (test uses -p gps only)
-                        }
-                        try:
-                            self.data_queue.put_nowait(gps_data)
-                        except:
-                            pass  # Queue full, drop oldest
-                        json_buffer = ""
+                        self.data_queue.put_nowait(gps_data)
+                        fix_count += 1
+                        queue_size = self.data_queue.qsize()
+                        print(f"[GPS _read_loop] Fix #{fix_count} queued (lat={gps_data['latitude']:.4f}, queue_size={queue_size}, queue_id={id(self.data_queue)})", file=sys.stderr)
+                        sys.stderr.flush()
                     except Exception as e:
-                        # Log malformed JSON but continue (don't crash)
-                        pass  # Invalid JSON, skip
+                        print(f"[GPS _read_loop] ✗ Failed to queue fix: {e}", file=sys.stderr)
+                        sys.stderr.flush()
+
+                except json.JSONDecodeError as e:
+                    # Log JSON parse errors (important for debugging)
+                    print(f"[GPS _read_loop] ✗ JSON parse error: {e}, line='{line[:50]}'", file=sys.stderr)
+                    sys.stderr.flush()
+                except Exception as e:
+                    pass  # Skip processing errors silently
+
         except Exception as e:
-            # Log any errors in the read loop (but don't crash - subprocess will exit)
+            # Log fatal errors only
             print(f"⚠️  [GPSDaemon] Reader thread error: {e}", file=sys.stderr)
             import traceback
             traceback.print_exc(file=sys.stderr)
 
+        print(f"[GPS _read_loop] Thread exiting (fixes_queued={fix_count})", file=sys.stderr)
+        sys.stderr.flush()
+
     def get_data(self, timeout=0.1):
         """Non-blocking read from GPS queue"""
         try:
-            return self.data_queue.get(timeout=timeout)
+            result = self.data_queue.get(timeout=timeout)
+            return result
         except Empty:
+            # DEBUG: Log queue state when empty
+            import sys
+            queue_size = self.data_queue.qsize()
+            if queue_size > 0:
+                print(f"[GPS get_data] ⚠️  Queue has {queue_size} items but get() raised Empty! Queue ID: {id(self.data_queue)}", file=sys.stderr)
+                sys.stderr.flush()
             return None
 
     def is_alive(self):
@@ -604,12 +657,31 @@ class FilterComparison:
 
     def _gps_loop(self):
         """Read GPS data from daemon queue continuously (no blocking)"""
+        import sys
+        print(f"[GPS_LOOP] Started", file=sys.stderr)
+        sys.stderr.flush()
+        samples_processed = 0
+
         while not self.stop_event.is_set():
             # Non-blocking read from GPS daemon queue (skip if daemon failed to start)
             if not self.gps_daemon:
+                if samples_processed == 0:  # Log once
+                    print(f"[GPS_LOOP] ⚠️  gps_daemon is None, skipping queue reads", file=sys.stderr)
+                    sys.stderr.flush()
                 time.sleep(0.5)
                 continue
-            gps = self.gps_daemon.get_data(timeout=0.1)
+            # Increased timeout to 1.0s to avoid missing fixes (GPS polls every 5s)
+            gps = self.gps_daemon.get_data(timeout=1.0)
+
+            # DEBUG: Log ALL get_data() attempts to diagnose consumption issue
+            if gps is None and samples_processed < 20:  # Increased from 3 to 20 for more visibility
+                queue_size = self.gps_daemon.data_queue.qsize()
+                queue_id = id(self.gps_daemon.data_queue)
+                print(f"[GPS_LOOP] get_data() returned None (check #{samples_processed+1}), queue_size={queue_size}, queue_id={queue_id}", file=sys.stderr)
+                sys.stderr.flush()
+            elif gps:
+                print(f"[GPS_LOOP] ✓ get_data() SUCCESS (sample #{samples_processed+1}), lat={gps['latitude']:.4f}", file=sys.stderr)
+                sys.stderr.flush()
 
             if gps:
                 self.last_gps_sample_time = time.time()  # UPDATE HEALTH MONITOR
@@ -618,12 +690,20 @@ class FilterComparison:
                     with self.state_lock:
                         now = time.time()
                         # Update all 3 filters with new GPS fix
+                        print(f"[GPS_LOOP] Updating EKF...", file=sys.stderr)
+                        sys.stderr.flush()
                         v1, d1 = self.ekf.update_gps(gps['latitude'], gps['longitude'],
                                                       gps['speed'], gps['accuracy'])
+                        print(f"[GPS_LOOP] EKF done, updating Complementary...", file=sys.stderr)
+                        sys.stderr.flush()
                         v2, d2 = self.complementary.update_gps(gps['latitude'], gps['longitude'],
                                                                 gps['speed'], gps['accuracy'])
+                        print(f"[GPS_LOOP] Complementary done, updating ES-EKF...", file=sys.stderr)
+                        sys.stderr.flush()
                         v3, d3 = self.es_ekf.update_gps(gps['latitude'], gps['longitude'],  # NEW: ES-EKF update
                                                          gps['speed'], gps['accuracy'])
+                        print(f"[GPS_LOOP] ES-EKF done!", file=sys.stderr)
+                        sys.stderr.flush()
 
                         # Log trajectory positions from all 3 filters
                         timestamp_relative = now - self.start_time
@@ -696,6 +776,11 @@ class FilterComparison:
                     # FIX 6: Increment cumulative GPS counter (thread-safe)
                     with self._gps_counter_lock:
                         self.total_gps_fixes += 1
+
+                    samples_processed += 1
+                    if samples_processed <= 5 or samples_processed % 5 == 0:
+                        print(f"[GPS_LOOP] Processed sample #{samples_processed} (lat={gps['latitude']:.4f})", file=sys.stderr)
+                        sys.stderr.flush()
 
                     self.gps_samples.append({
                         'timestamp': now - self.start_time,
@@ -1171,12 +1256,10 @@ class FilterComparison:
             except Exception as e:
                 print(f"  Warning during process cleanup: {e}", file=sys.stderr)
 
-            # STEP 3: CREATE NEW DAEMON (after validated cleanup)
-            try:
-                self.gps_daemon = PersistentGPSDaemon()
-            except Exception as e:
-                print(f"  ✗ Failed to create new GPS daemon: {e}", file=sys.stderr)
-                return False
+            # STEP 3: DO NOT CREATE NEW DAEMON, RESTART EXISTING ONE
+            # The existing daemon object (self.gps_daemon) is reused.
+            # After the process cleanup, we will call start() on it again.
+            pass
 
             # STEP 4: EXTENDED COOLDOWN
             time.sleep(self.restart_cooldown + 2)
@@ -1185,8 +1268,10 @@ class FilterComparison:
             if self.gps_daemon.start():
                 print(f"  ✓ GPS daemon process started, waiting for first fix...", file=sys.stderr)
 
-                # Validate GPS actually collects data (not just process start)
-                validation_timeout = 30  # seconds to wait for first fix
+                # Validate GPS thread is running (not data collection - that may take time)
+                # CHANGED: Don't stop daemon if no fix - GPS may need time to acquire signal
+                # Instead, just validate the thread started and let it keep trying
+                validation_timeout = 10  # seconds to wait for thread startup
                 validation_start = time.time()
                 fix_received = False
 
@@ -1200,11 +1285,12 @@ class FilterComparison:
                     time.sleep(0.5)
 
                 if not fix_received:
-                    print(f"  ✗ GPS restart FAILED: No fix received after {validation_timeout}s", file=sys.stderr)
-                    self.gps_daemon.stop()
-                    return False
+                    print(f"  ⚠️ GPS restart: No fix yet (will keep trying in background)", file=sys.stderr)
+                    # DON'T stop daemon - let it keep trying to acquire signal
+                    # self.gps_daemon.stop()  # REMOVED
+                    # return False  # REMOVED
 
-                print(f"  ✓ GPS daemon restarted and validated successfully", file=sys.stderr)
+                print(f"  ✓ GPS daemon restarted (fix_received={fix_received})", file=sys.stderr)
                 self.restart_counts['gps'] += 1
                 return True
             else:
@@ -1349,7 +1435,9 @@ class FilterComparison:
                 with self.state_lock:
                     ekf_state = self.ekf.get_state() or {}
                     comp_state = self.complementary.get_state() or {}
-                    es_ekf_state = (self.es_ekf.get_state() or {}) if hasattr(self, 'es_ekf') else {}
+                    # DISABLED: ES-EKF get_state() hangs, blocking GPS_LOOP from acquiring state_lock
+                    # es_ekf_state = (self.es_ekf.get_state() or {}) if hasattr(self, 'es_ekf') else {}
+                    es_ekf_state = {}  # Skip ES-EKF to avoid deadlock
             except Exception as e:
                 # Skip display if filter states are inaccessible
                 return

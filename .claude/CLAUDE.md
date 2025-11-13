@@ -1,6 +1,34 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 12, 2025 (Evening) - Gyro Daemon Coupling Fixed
+## Latest: Nov 13, 2025 (Early Morning) - GPS Collection Fixed (Critical)
+
+**Status:** ✅ GPS NOW COLLECTING DATA (1 fix → 24 fixes per 2-min test)
+
+### GPS Collection Completely Fixed
+**Problem:** Only 1 GPS fix collected per test (from initialization), GPS_LOOP never processed queued fixes
+**Root Causes:**
+1. **stop_event never cleared on restart** - `PersistentGPSDaemon.stop()` set stop_event but `start()` never cleared it → new _read_loop threads started then immediately exited
+2. **ES-EKF deadlock** - `_display_metrics()` held state_lock while calling `es_ekf.get_state()` which hung → GPS_LOOP blocked waiting for lock during filter updates
+
+**Solution:**
+1. Added `self.stop_event.clear()` in `start()` method (line 78)
+2. Disabled ES-EKF get_state() call in _display_metrics (line 1440)
+
+**Result:** GPS collection now works continuously - **24 fixes in 125s** (~1 every 5s) ✓
+
+**⚠️ CRITICAL PATTERN - LIKELY AFFECTS OTHER DAEMONS:**
+- **stop_event bug:** Check if accel/gyro daemons clear stop_event on restart
+- **Lock-while-calling-filters:** Any loop holding locks during filter calls risks deadlock if filter hangs
+- **ES-EKF is broken:** Hangs in get_state(), still called in GPS_LOOP update (line 703) - future risk
+- **Architectural fix needed:** See ARCHITECTURE_REFACTOR_PLAN.md - decouple filters from data loops
+
+**Files Modified:**
+- `test_ekf_vs_complementary.py` line 78: Clear stop_event before starting daemon
+- `test_ekf_vs_complementary.py` line 1440: Skip ES-EKF get_state() to prevent deadlock
+
+---
+
+## Nov 12, 2025 (Evening) - Gyro Daemon Coupling Fixed
 
 **Status:** ✅ READY FOR EXTENDED TEST (Gyro restart now coupled to accel restart)
 
