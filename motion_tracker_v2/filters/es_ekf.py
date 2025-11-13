@@ -55,7 +55,8 @@ class ErrorStateEKF:
             gyro_noise_std: Gyroscope measurement noise (rad/s)
         """
         self.dt = dt
-        self.lock = threading.Lock()
+        # CRITICAL: Use RLock (re-entrant) not Lock - get_state() calls get_position() which both need locks
+        self.lock = threading.RLock()
 
         # State vector: [x, y, vx, vy, ax, ay, heading, heading_rate]
         self.state = np.zeros(8)

@@ -841,9 +841,8 @@ class FilterComparison:
                     # Update all 3 filters with gravity-corrected magnitude
                     v1, d1 = self.ekf.update_accelerometer(motion_magnitude)
                     v2, d2 = self.complementary.update_accelerometer(motion_magnitude)
-                    # DISABLED: ES-EKF blocks after sample #5 - investigate separately
-                    # v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)
-                    v3, d3 = v1, d1  # Temporary: use EKF values as placeholder
+                    # FIXED: ES-EKF now uses RLock - deadlock resolved, re-enabled
+                    v3, d3 = self.es_ekf.update_accelerometer(motion_magnitude)
 
                     self.accel_samples.append({
                         'timestamp': time.time() - self.start_time,
@@ -976,9 +975,8 @@ class FilterComparison:
                     # Update EKF filter with gyroscope data
                     # (Complementary filter does NOT support gyroscope)
                     v1, d1 = self.ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
-                    # DISABLED: ES-EKF blocks - investigate separately
-                    # v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
-                    v3, d3 = v1, d1  # Temporary placeholder
+                    # FIXED: ES-EKF now uses RLock - deadlock resolved, re-enabled
+                    v3, d3 = self.es_ekf.update_gyroscope(gyro_x, gyro_y, gyro_z)
 
                     # Collect validation metrics (gyro bias convergence, quaternion health, etc.)
                     if self.metrics:
@@ -1435,9 +1433,8 @@ class FilterComparison:
                 with self.state_lock:
                     ekf_state = self.ekf.get_state() or {}
                     comp_state = self.complementary.get_state() or {}
-                    # DISABLED: ES-EKF get_state() hangs, blocking GPS_LOOP from acquiring state_lock
-                    # es_ekf_state = (self.es_ekf.get_state() or {}) if hasattr(self, 'es_ekf') else {}
-                    es_ekf_state = {}  # Skip ES-EKF to avoid deadlock
+                    # FIXED: ES-EKF now uses RLock (re-entrant) instead of Lock - deadlock resolved
+                    es_ekf_state = (self.es_ekf.get_state() or {}) if hasattr(self, 'es_ekf') else {}
             except Exception as e:
                 # Skip display if filter states are inaccessible
                 return
