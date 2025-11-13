@@ -1,6 +1,39 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 13, 2025 (Early Morning) - All Critical Bugs Fixed
+## Latest: Nov 13, 2025 (Morning) - Filter Decoupling Refactor Complete
+
+**Status:** ✅ ARCHITECTURE REFACTORED - Independent filter threads for resilience & performance
+
+### Filter Decoupling Refactor (Nov 13, 2025)
+**Problem:** Filters ran synchronously in data loops - any filter hang blocked ALL data collection
+**Solution:** Decoupled filter processing into independent threads consuming from queues
+**Result:** Filter issues no longer block data collection ✓
+
+**Implementation:**
+- Phase 1: 12 raw data queues (3 filters × 4 sensor types)
+- Phase 2: Data loops push to queues (non-blocking)
+- Phase 3: 3 independent filter threads process in parallel
+- Phase 4: Filter threads launched at startup
+- Phase 5: Thread-safe storage with locks (17 lock points)
+- Phase 6: Queue monitoring + safe field access
+
+**Test Results (2-min run):**
+- EKF: 2421 accel, 24 GPS, 2442 gyro ✓
+- Complementary: 2421 accel, 24 GPS ✓
+- ES-EKF: 2421 accel, 24 GPS, 2442 gyro ✓
+- Clean exit, no hangs ✓
+
+**Benefits:**
+- Resilience: Filter hangs don't block collection
+- Performance: Parallel filter processing (multi-core)
+- Debugging: Per-filter logs show processing counts
+- Extensibility: Easy to add new filters
+
+**Files:** test_ekf_vs_complementary.py (+450 lines)
+
+---
+
+## Nov 13, 2025 (Early Morning) - All Critical Bugs Fixed
 
 **Status:** ✅ ALL SYSTEMS OPERATIONAL (GPS 24 fixes/2min, ES-EKF working, All daemons restart properly)
 
@@ -45,9 +78,12 @@
 
 ---
 
-### Architecture Status
-**Current:** Safe - no lock-while-calling-filters deadlocks remain (ES-EKF fixed with RLock)
-**Future:** Still worth refactoring per ARCHITECTURE_REFACTOR_PLAN.md (decouple filters from data loops)
+### Architecture Status (Post-Refactor)
+**Current:** ✅ Fully decoupled - Filters run in independent threads, data collection never blocks
+**Previous Issues Resolved:**
+- ES-EKF RLock fix (re-entrant lock prevents deadlock) ✓
+- Filter threads no longer block data loops ✓
+- Queue-based architecture enables parallel processing ✓
 
 ---
 
@@ -93,11 +129,11 @@
 
 ---
 
-### Architecture Issue: Filter Blocking (Refactor Scheduled)
-**Current Problem:** Filters run synchronously in data collection loops - if any filter hangs (e.g., ES-EKF), ALL data collection stops
+### Architecture Refactor: Filter Blocking (COMPLETED Nov 13)
+**Previous Problem:** Filters ran synchronously in data loops - any filter hang blocked ALL data collection
 **User Vision:** "we should be getting that base data from gps, accel, gyro, then the filters do their independent things"
-**Proposed:** Decouple raw data collection from filter processing via independent filter threads consuming from raw data queues
-**Status:** 📋 Detailed plan in ARCHITECTURE_REFACTOR_PLAN.md (6 phases, ~85 min implementation, scheduled for tomorrow)
+**Solution Implemented:** Decoupled raw data collection from filter processing via independent filter threads consuming from queues
+**Status:** ✅ COMPLETE - 6 phases implemented, tested, verified (see top of doc for details)
 
 ---
 
@@ -388,30 +424,34 @@ df -h | grep "storage/emulated"  # Should show 250+ GB free
 
 ## Architecture
 
-**3-Layer + Dashboard:**
-1. **Data Collection** (_accel_loop, _gps_loop, _gyro_loop) - Fast, non-blocking
-2. **Persistence** (_save_results) - Auto-save every 15s, clears deques to bound memory
-3. **Health Monitoring** (_health_monitor_loop) - Runs every 2s, detects & recovers daemon failures async
-4. **Dashboard** (live_status.json, display_loop) - Real-time monitoring file + metrics
+**4-Layer + Dashboard (Queue-Based, Decoupled):**
+1. **Data Collection** (_accel_loop, _gps_loop, _gyro_loop) - Fast, non-blocking, push to queues
+2. **Filter Processing** (_ekf_filter_thread, _comp_filter_thread, _es_ekf_filter_thread) - Independent threads consume from queues
+3. **Persistence** (_save_results) - Auto-save every 15s, clears deques to bound memory
+4. **Health Monitoring** (_health_monitor_loop) - Runs every 2s, detects & recovers daemon failures async
+5. **Dashboard** (live_status.json, display_loop) - Real-time monitoring file + metrics
 
 **Key Insights:**
-- No blocking operations in data collection path
+- Data collection pushes to queues (non-blocking put_nowait)
+- Filter threads process in parallel (3 independent threads)
+- Filter hangs/crashes no longer block data collection
 - Health monitor is single source of truth for daemon restarts
 - Live status file enables external dashboard integration
-- Memory bounded by 15s auto-save + deque clearing regardless of test duration
+- Memory bounded by 15s auto-save + deque clearing + queue limits (500/50 maxlen)
 
 ---
 
 ## Code Patterns (Brief Reference)
 
-1. **Complementary Filtering** (motion_tracker_v2.py:75-128) - GPS (70%) corrects accel drift, accel (30%) high-freq detail
-2. **Magnitude-Based Calibration** (motion_tracker_v2.py:354-433) - Remove gravity orientation-independently
-3. **Cython with Auto-Fallback** (motion_tracker_v2.py:25-30, 611-649) - Try import, fallback to Python (25x speedup optional)
-4. **Thread-Safe State** (motion_tracker_v2.py:32-180) - threading.Lock + get_state() for atomic reads
-5. **Bounded Memory Deques** (motion_tracker_v2.py:547-552, 662-670) - `deque(maxlen=N)` + clear on auto-save
-6. **Paired Sensor Init** (motion_tracker_v2.py:143-360) - Single process, dual queues (accel + gyro from same IMU chip)
-7. **Zombie Process Reaping** (test_ekf_vs_complementary.py:1093-1103) - pgrep polling loop validates actual process exit
-8. **Lock Pattern for Thread Safety** (test_ekf_vs_complementary.py:348-350, 958-1042) - Acquire lock → double-check condition inside lock
+1. **Queue-Based Filter Threading** (test_ekf_vs_complementary.py:380-395, 646-654, 990-1260) - Independent filter threads consume from queues, non-blocking data collection
+2. **Complementary Filtering** (motion_tracker_v2.py:75-128) - GPS (70%) corrects accel drift, accel (30%) high-freq detail
+3. **Magnitude-Based Calibration** (motion_tracker_v2.py:354-433) - Remove gravity orientation-independently
+4. **Cython with Auto-Fallback** (motion_tracker_v2.py:25-30, 611-649) - Try import, fallback to Python (25x speedup optional)
+5. **Thread-Safe State** (motion_tracker_v2.py:32-180) - threading.Lock + get_state() for atomic reads
+6. **Bounded Memory Deques** (motion_tracker_v2.py:547-552, 662-670) - `deque(maxlen=N)` + clear on auto-save
+7. **Paired Sensor Init** (motion_tracker_v2.py:143-360) - Single process, dual queues (accel + gyro from same IMU chip)
+8. **Zombie Process Reaping** (test_ekf_vs_complementary.py:1093-1103) - pgrep polling loop validates actual process exit
+9. **Lock Pattern for Thread Safety** (test_ekf_vs_complementary.py:348-350, 958-1042) - Acquire lock → double-check condition inside lock
 
 ---
 
