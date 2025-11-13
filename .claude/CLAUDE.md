@@ -16,15 +16,17 @@
 
 **Result:** GPS collection now works continuously - **24 fixes in 125s** (~1 every 5s) ✓
 
-**⚠️ CRITICAL PATTERN - LIKELY AFFECTS OTHER DAEMONS:**
-- **stop_event bug:** Check if accel/gyro daemons clear stop_event on restart
+**⚠️ CRITICAL PATTERN - ALL 3 DAEMONS AFFECTED:**
+- **stop_event bug:** ✅ FIXED in all 3 daemons (GPS, Accel, Gyro)
+- **Impact:** 45-min test had 24 accel restarts - all would have failed without this fix
 - **Lock-while-calling-filters:** Any loop holding locks during filter calls risks deadlock if filter hangs
 - **ES-EKF is broken:** Hangs in get_state(), still called in GPS_LOOP update (line 703) - future risk
 - **Architectural fix needed:** See ARCHITECTURE_REFACTOR_PLAN.md - decouple filters from data loops
 
 **Files Modified:**
-- `test_ekf_vs_complementary.py` line 78: Clear stop_event before starting daemon
+- `test_ekf_vs_complementary.py` line 78: Clear stop_event in GPS daemon
 - `test_ekf_vs_complementary.py` line 1440: Skip ES-EKF get_state() to prevent deadlock
+- `motion_tracker_v2.py` lines 155, 396: Clear stop_event in Accel/Gyro daemons
 
 ---
 
