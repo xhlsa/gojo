@@ -1,32 +1,53 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 13, 2025 (Early Morning) - GPS Collection Fixed (Critical)
+## Latest: Nov 13, 2025 (Early Morning) - All Critical Bugs Fixed
 
-**Status:** ✅ GPS NOW COLLECTING DATA (1 fix → 24 fixes per 2-min test)
+**Status:** ✅ ALL SYSTEMS OPERATIONAL (GPS 24 fixes/2min, ES-EKF working, All daemons restart properly)
 
-### GPS Collection Completely Fixed
+### Session Summary: 3 Critical Bugs Fixed
+**1. stop_event never cleared on restart** → All 3 daemons (GPS, Accel, Gyro) failed to restart
+**2. ES-EKF double-lock deadlock** → get_state() called get_position() with non-reentrant lock
+**3. GPS collection stalled** → stop_event + ES-EKF deadlock combination
+
+---
+
+### Bug #1: Daemon Restart Failure (stop_event)
+**Problem:** All 3 daemons failed to restart after stop() - threads started then immediately exited
+**Root Cause:** `stop()` set stop_event but `start()` never cleared it → new threads checked stop_event and exited
+**Impact:** 45-min test had 24 accel restarts - all would have silently failed
+**Solution:** Added `self.stop_event.clear()` in all 3 daemon start() methods
+**Files:**
+- `test_ekf_vs_complementary.py` line 78 (GPS)
+- `motion_tracker_v2.py` lines 155 (Accel), 396 (Gyro)
+
+---
+
+### Bug #2: ES-EKF Double-Lock Deadlock (RLock)
+**Problem:** ES-EKF completely disabled - deadlocked in get_state(), accel updates, gyro updates
+**Root Cause:** `get_state()` held lock, called `get_position()` which tried to acquire same lock (non-reentrant Lock)
+**Impact:** ES-EKF trajectory mapping (dead reckoning during GPS gaps) was non-functional
+**Solution:** Changed `threading.Lock()` to `threading.RLock()` (re-entrant lock)
+**Result:** ES-EKF fully operational in all paths ✓
+- GPS updates ✓
+- Accel updates ✓ (re-enabled)
+- Gyro updates ✓ (re-enabled)
+- get_state() display ✓ (re-enabled)
+**Files:**
+- `filters/es_ekf.py` line 59: Lock() → RLock()
+- `test_ekf_vs_complementary.py` lines 845, 979, 1439: Re-enabled ES-EKF
+
+---
+
+### Bug #3: GPS Collection Stalled
 **Problem:** Only 1 GPS fix collected per test (from initialization), GPS_LOOP never processed queued fixes
-**Root Causes:**
-1. **stop_event never cleared on restart** - `PersistentGPSDaemon.stop()` set stop_event but `start()` never cleared it → new _read_loop threads started then immediately exited
-2. **ES-EKF deadlock** - `_display_metrics()` held state_lock while calling `es_ekf.get_state()` which hung → GPS_LOOP blocked waiting for lock during filter updates
-
-**Solution:**
-1. Added `self.stop_event.clear()` in `start()` method (line 78)
-2. Disabled ES-EKF get_state() call in _display_metrics (line 1440)
-
+**Root Cause:** Combination of bugs #1 (stop_event) + #2 (ES-EKF deadlock blocking GPS_LOOP)
 **Result:** GPS collection now works continuously - **24 fixes in 125s** (~1 every 5s) ✓
 
-**⚠️ CRITICAL PATTERN - ALL 3 DAEMONS AFFECTED:**
-- **stop_event bug:** ✅ FIXED in all 3 daemons (GPS, Accel, Gyro)
-- **Impact:** 45-min test had 24 accel restarts - all would have failed without this fix
-- **Lock-while-calling-filters:** Any loop holding locks during filter calls risks deadlock if filter hangs
-- **ES-EKF is broken:** Hangs in get_state(), still called in GPS_LOOP update (line 703) - future risk
-- **Architectural fix needed:** See ARCHITECTURE_REFACTOR_PLAN.md - decouple filters from data loops
+---
 
-**Files Modified:**
-- `test_ekf_vs_complementary.py` line 78: Clear stop_event in GPS daemon
-- `test_ekf_vs_complementary.py` line 1440: Skip ES-EKF get_state() to prevent deadlock
-- `motion_tracker_v2.py` lines 155, 396: Clear stop_event in Accel/Gyro daemons
+### Architecture Status
+**Current:** Safe - no lock-while-calling-filters deadlocks remain (ES-EKF fixed with RLock)
+**Future:** Still worth refactoring per ARCHITECTURE_REFACTOR_PLAN.md (decouple filters from data loops)
 
 ---
 
