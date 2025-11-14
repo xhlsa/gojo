@@ -1,0 +1,2174 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Thu Nov 13 22:31:16 UTC 2025
+Test arguments: 10
+Log file: crash_logs/test_ekf_2025-11-13_15-31-16.log
+==============================================================================
+[1;33mAcquiring wakelock...[0m
+[0;32m✓ Wakelock acquired[0m
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[AccelDaemon] Read loop exited. Parsed 10 JSON objects, 123 lines total
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+[GPS_LOOP] Started
+[ACCEL_LOOP] Started
+[EKF_THREAD] Started
+[COMP_THREAD] Started
+[ES_EKF_THREAD] Started
+
+[DEBUG] Test start time: 1763073142.0373588, End time target: 1763073838.6131392, Duration: 10 min (600 sec)
+
+⚠️  MEMORY PRESSURE (111.5 MB) - Temporarily pausing ES-EKF filter
+   EKF + Complementary will continue (core tracking maintained)
+   ES-EKF will resume when memory drops below 90 MB
+
+[01:36] STATUS: RSS=111.5MB (peak=111.5MB) Heap=38.4MB (peak=38.5MB) | GPS=1000 (ALIVE) | Accel=150000 (DEAD (exit_code=0))
+
+⚠️  WARNING: Accelerometer daemon died at 01:36
+   Status: DEAD (exit_code=0)
+   Samples collected: 150000
+   Attempting automatic restart...
+
+🔄 Attempting to restart accelerometer daemon (attempt 1/60)...
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=None) - triggering immediate restart
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+  ✓ Accelerometer daemon restarted successfully
+   ✓ Accelerometer daemon recovered, test continues
+
+[ACCEL_LOOP] Processed sample #1
+  → Accel already alive and producing data (concurrent restart won)
+  ✓ Accel restarted after daemon death
+
+⚠️ GPS SILENT for 98.6s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[ACCEL_LOOP] Processed sample #2
+[ACCEL_LOOP] Processed sample #3
+[02:08] STATUS: RSS=111.9MB (peak=111.9MB) Heap=38.5MB (peak=38.8MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[ACCEL_LOOP] Processed sample #4
+[ACCEL_LOOP] Processed sample #5
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ GPS SILENT for 31.7s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[AccelDaemon] Parsed JSON #100
+[ACCEL_LOOP] Processed sample #100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #200
+[ACCEL_LOOP] Processed sample #200
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #300
+[ACCEL_LOOP] Processed sample #300
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #400
+[ACCEL_LOOP] Processed sample #400
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #500
+[ACCEL_LOOP] Processed sample #500
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #600
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[ACCEL_LOOP] Processed sample #600
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #700
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[ACCEL_LOOP] Processed sample #700
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #800
+[ACCEL_LOOP] Processed sample #800
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #900
+[ACCEL_LOOP] Processed sample #900
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1000
+[ACCEL_LOOP] Processed sample #1000
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+Configuration:
+  Duration: 10 minutes
+  Gyroscope: Enabled
+
+Starting in 2 seconds...
+
+====================================================================================================
+REAL-TIME FILTER COMPARISON: EKF vs Complementary
+====================================================================================================
+
+✓ Initializing sensor (brief pause for cleanup)...
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 25682)
+
+✓ Accelerometer daemon started
+
+✓ Validating sensor startup (waiting up to 10 seconds for accelerometer data)...
+  [REQUIRED] Waiting for accelerometer samples...
+  Waiting... (attempt 1/10)
+  Waiting... (attempt 2/10)
+  Waiting... (attempt 3/10)
+  Waiting... (attempt 4/10)
+  Waiting... (attempt 5/10)
+  Waiting... (attempt 6/10)
+  Waiting... (attempt 7/10)
+  ✓ Accelerometer responding with data on attempt 8
+
+✓ Calibrating accelerometer (collecting 20 stationary samples)...
+  ✓ Gravity calibrated: 9.91 m/s²
+    (collected 7 samples, range: 9.69-9.94)
+
+✓ EKF filter initialized
+✓ Complementary filter initialized
+
+✓ Starting GPS daemon (continuous polling)...
+  ✓ GPS daemon started (polling termux-location continuously)
+  ⏱ Waiting for first GPS fix (up to 30 seconds)...
+  Waiting for GPS... (1.0s)
+  Waiting for GPS... (2.0s)
+  Waiting for GPS... (3.0s)
+  Waiting for GPS... (4.0s)
+  Waiting for GPS... (5.0s)
+  Waiting for GPS... (6.0s)
+  Waiting for GPS... (7.0s)
+  Waiting for GPS... (8.0s)
+  Waiting for GPS... (9.0s)
+  Waiting for GPS... (10.0s)
+  Waiting for GPS... (11.0s)
+  Waiting for GPS... (12.0s)
+  Waiting for GPS... (13.0s)
+  Waiting for GPS... (14.0s)
+  Waiting for GPS... (15.0s)
+  Waiting for GPS... (16.0s)
+  Waiting for GPS... (17.0s)
+  Waiting for GPS... (18.0s)
+  Waiting for GPS... (19.0s)
+  Waiting for GPS... (20.0s)
+  Waiting for GPS... (21.0s)
+  Waiting for GPS... (22.0s)
+  Waiting for GPS... (23.0s)
+  Waiting for GPS... (24.0s)
+  Waiting for GPS... (25.0s)
+  Waiting for GPS... (26.0s)
+  Waiting for GPS... (27.0s)
+  Waiting for GPS... (28.0s)
+  Waiting for GPS... (29.0s)
+  Waiting for GPS... (30.0s)
+  ⚠ WARNING: No GPS fix received after 30 seconds
+  ⚠ GPS may be unavailable or location service not responding
+  ⚠ Continuing test WITHOUT GPS (EKF will use Accel only)
+
+✓ Initializing gyroscope (optional, will fallback if unavailable)...
+⚠ Failed to start gyroscope daemon: Accel daemon not alive - cannot share IMU stream
+  ⚠ WARNING: Gyroscope daemon failed to start
+  ⚠ Continuing test WITHOUT gyroscope (EKF will use GPS+Accel only)
+
+✓ Running for 10 minutes...
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #1): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 27106)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #2): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #3): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 674 accel samples)...
+✓ Auto-saved (autosave #4): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 677 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1100
+[ACCEL_LOOP] Processed sample #1100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1200
+[ACCEL_LOOP] Processed sample #1200
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1300
+[ACCEL_LOOP] Processed sample #1300
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1400
+[ACCEL_LOOP] Processed sample #1400
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[02:38] STATUS: RSS=113.9MB (peak=113.9MB) Heap=39.0MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1500
+[ACCEL_LOOP] Processed sample #1500
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ GPS SILENT for 30.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1600
+[ACCEL_LOOP] Processed sample #1600
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1700
+[ACCEL_LOOP] Processed sample #1700
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1800
+[ACCEL_LOOP] Processed sample #1800
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1900
+[ACCEL_LOOP] Processed sample #1900
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2000
+[ACCEL_LOOP] Processed sample #2000
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2100
+[ACCEL_LOOP] Processed sample #2100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2200
+[ACCEL_LOOP] Processed sample #2200
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2300
+[ACCEL_LOOP] Processed sample #2300
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2400
+[ACCEL_LOOP] Processed sample #2400
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2500
+[ACCEL_LOOP] Processed sample #2500
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2600
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[ACCEL_LOOP] Processed sample #2600
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2700
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[ACCEL_LOOP] Processed sample #2700
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2800
+[ACCEL_LOOP] Processed sample #2800
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[03:08] STATUS: RSS=114.2MB (peak=114.2MB) Heap=39.0MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #2900
+[ACCEL_LOOP] Processed sample #2900
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 2969 JSON objects, 47474 lines total
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 727 accel samples)...
+✓ Auto-saved (autosave #5): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 728 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 728 accel samples)...
+✓ Auto-saved (autosave #6): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 729 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 732 accel samples)...
+✓ Auto-saved (autosave #7): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 733 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[03:38] STATUS: RSS=113.9MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 28978)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 98 accel samples)...
+✓ Auto-saved (autosave #8): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 98 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #9): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+
+⚠️ GPS SILENT for 30.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[04:08] STATUS: RSS=113.9MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL SILENT for 59.3s - triggering auto-restart
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #3
+  → Accel already alive and producing data (concurrent restart won)
+  ✓ Accel restarted, resuming data collection
+
+⚠️ GPS SILENT for 59.1s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[AccelDaemon] Read loop exited. Parsed 37 JSON objects, 562 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #10): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #11): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 34 accel samples)...
+✓ Auto-saved (autosave #12): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 34 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 29878)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[04:38] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[05:08] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[ACCEL_LOOP] Processed sample #3000
+
+⚠️ GPS SILENT for 61.9s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 41 JSON objects, 626 lines total
+
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #13): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #14): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #15): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[05:38] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 39 accel samples)...
+✓ Auto-saved (autosave #16): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 39 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 30383)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #17): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[06:08] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+
+⚠️ GPS SILENT for 61.1s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 39 JSON objects, 587 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+✓ Auto-saved (autosave #18): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #19): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 37 accel samples)...
+✓ Auto-saved (autosave #20): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 37 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 30762)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPSDaemon] stderr: [GPS] ⚠️  STARVATION: No data for 300.0s (requests=11, successes=0), exiting
+[GPS _read_loop] Thread exiting (fixes_queued=0)
+[06:38] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (DEAD (exit_code=1)) | Accel=150000 (ALIVE) | Restarts: Accel=1, GPS=0
+
+⚠️  WARNING: GPS daemon died at 06:38
+   Status: DEAD (exit_code=1)
+   Samples collected: 1000
+   Attempting automatic restart...
+
+🔄 Attempting to restart GPS daemon (attempt 1/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 0 JSON objects, 0 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS _read_loop] Thread started
+  ✓ GPS daemon process started, waiting for first fix...
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ⚠️ GPS restart: No fix yet (will keep trying in background)
+  ✓ GPS daemon restarted (fix_received=False)
+   ✓ GPS daemon recovered, test continues
+
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[07:08] STATUS: RSS=114.0MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (DEAD (exit_code=137)) | Restarts: Accel=1, GPS=1
+
+⚠️  WARNING: Accelerometer daemon died at 07:08
+   Status: DEAD (exit_code=137)
+   Samples collected: 150000
+   Attempting automatic restart...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+
+🔄 Attempting to restart accelerometer daemon (attempt 2/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=None) - triggering immediate restart
+[GPSDaemon] stderr: [GPS] No output (code 0)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+   ✗ Restart attempt 2/60 failed
+
+[08:08] STATUS: RSS=114.1MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → Accel process alive but NOT producing data, forcing restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 3/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[AccelDaemon] Read loop exited. Parsed 0 JSON objects, 0 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #21): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #22): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #23): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=137))
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #24): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 31183)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #25): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #26): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #27): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=-9))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=-9))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=-9))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=-9))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #28): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 32706)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[08:38] STATUS: RSS=113.6MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[09:08] STATUS: RSS=113.6MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #29): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #30): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #31): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+
+⚠️ GPS SILENT for 61.0s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL SILENT for 180.9s - triggering auto-restart
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → Accel process alive but NOT producing data, forcing restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 3/60)...
+[AccelDaemon] Read loop exited. Parsed 0 JSON objects, 0 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[09:38] STATUS: RSS=113.6MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #32): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 532)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #33): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[10:08] STATUS: RSS=113.6MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed
+
+⚠️ GPS SILENT for 120.4s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL SILENT for 243.0s - triggering auto-restart
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+  → Accel already alive and producing data (concurrent restart won)
+  ✓ Accel restarted, resuming data collection
+
+⚠️ GPS SILENT for 62.1s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[AccelDaemon] Parsed JSON #3
+[ACCEL_LOOP] Processed sample #3100
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 38 JSON objects, 579 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 3/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #34): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #35): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 36 accel samples)...
+✓ Auto-saved (autosave #36): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 36 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[10:38] STATUS: RSS=113.7MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  → No data after 30.0s, retrying...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[11:08] STATUS: RSS=113.7MB (peak=114.2MB) Heap=38.8MB (peak=39.7MB) | GPS=1000 (ALIVE) | Accel=150000 (ALIVE) | Restarts: Accel=2, GPS=1
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 704)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #37): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #38): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Auto-saving data (0 GPS, 0 accel samples)...
+✓ Auto-saved (autosave #39): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 0 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+
+⚠️ GPS SILENT for 62.8s - triggering auto-restart
+  → GPS already alive (concurrent restart won)
+  ✓ GPS restarted, resuming data collection
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[AccelDaemon] Read loop exited. Parsed 34 JSON objects, 522 lines total
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+⚠️ ACCEL DAEMON DIED (exit_code=0) - triggering immediate restart
+
+🔄 Attempting to restart accelerometer daemon (attempt 3/60)...
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+
+[DEBUG] Loop exited after 696.6s. Stop event: False, Time check: False
+[EKF_THREAD] Exited after processing {'accel': 3144, 'gps': 0, 'gyro': 0}
+[COMP_THREAD] Exited after processing {'accel': 3144, 'gps': 0}
+[ES_EKF_THREAD] Exited after processing {'accel': 0, 'gps': 0, 'gyro': 0}
+[GPS_LOOP] get_data() returned None (check #1), queue_size=0, queue_id=544471568496
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+  → No data after 30.0s, retrying...
+[GPSDaemon] stderr: [GPS] ✗ Request timeout (30s)
+  ✗ Accel daemon unresponsive after retry
+  ✗ Accel restart failed after daemon death
+[AccelDaemon] Read loop exited. Parsed 0 JSON objects, 0 lines total
+[GPS _read_loop] Thread exiting (fixes_queued=0)
+
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (DEAD (exit_code=0))
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+
+✓ Auto-saving data (0 GPS, 33 accel samples)...
+✓ Auto-saved (autosave #40): /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz | Saved: 0 GPS + 33 accel | Memory cleared, indices reset
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (NOT_STARTED)
+✓ Accelerometer daemon started (50Hz, paired IMU stream)
+   Sensors: Accel + Gyro (paired from LSM6DSO chip)
+   Process: termux-sensor (PID 1020)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+----------------------------------------------------------------------------------------------------------------------------------
+GPS: 0 fixes (ALIVE) | Accel: 150000 samples (ALIVE)
+
+✓ Final save data assembly (disk + numpy arrays):
+  Last auto-save GPS: 0
+  Current numpy GPS: 0
+  Final GPS: 0
+  Last auto-save Accel: 33
+  Current numpy Accel: 0
+  Final Accel: 33
+
+✓ Final results saved:
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json
+  /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.json.gz
+✓ Peak memory usage: 114.2 MB
+✓ Multi-track GPX saved: /data/data/com.termux/files/home/gojo/motion_tracker_v2/../motion_tracker_sessions/comparison_20251113_153222.gpx
+
+====================================================================================================
+FINAL COMPARISON SUMMARY
+====================================================================================================
+
+Final Velocities:
+  EKF:           0.000 m/s
+  Complementary: 2.019 m/s
+
+====================================================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[0;32m✓ Test completed successfully[0m

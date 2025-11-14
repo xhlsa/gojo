@@ -140,7 +140,7 @@ class PersistentAccelDaemon:
     This achieves true ~100+ Hz sampling vs ~0.66 Hz with repeated script calls.
     """
 
-    def __init__(self, delay_ms=20, max_queue_size=1000):
+    def __init__(self, delay_ms=10, max_queue_size=1000):
         self.delay_ms = delay_ms
         self.data_queue = Queue(maxsize=max_queue_size)  # Accelerometer data
         self.gyro_queue = Queue(maxsize=max_queue_size)  # Gyroscope data (NEW - for shared IMU stream)
@@ -160,7 +160,7 @@ class PersistentAccelDaemon:
             # ⚠️ CRITICAL: DO NOT use stdbuf -oL
             #    stdbuf wrapper causes termux-api Sensor backend to crash (Terminated)
             #    Without stdbuf, termux-sensor outputs JSON properly and continuously
-            # -d 50 sets 50ms polling delay for ~20Hz hardware rate
+            # MEMORY LIMIT TEST: -d 10 sets 10ms polling delay for ~86Hz (was 20ms/44Hz)
             # Use specific LSM6DSO sensor IDs for reliable activation
             # -n 100000: Workaround for termux-sensor continuous mode hang after ~32 samples
             #            Request large batch, daemon will auto-restart when depleted

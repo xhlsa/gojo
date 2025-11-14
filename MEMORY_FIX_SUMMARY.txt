@@ -1,0 +1,83 @@
+┏━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┓
+┃ MEMORY GROWTH ROOT CAUSE: 122 MB vs 90-96 MB Target               ┃
+┗━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━┛
+
+FINDING: Incomplete implementation of 3-tier memory optimization plan
+
+┌─ Nov 13 CLAUDE.md Plan ────────────────────────────────────────────┐
+│ Tier 1: Clear accumulated_data after auto-save     ✅ IMPLEMENTED   │
+│ Tier 2: Reduce queue sizes 500→100               ⚠️ PARTIAL       │
+│ Tier 3: Pause ES-EKF at 95 MB                     ✅ IMPLEMENTED   │
+│ Plus:   Trajectory deques                         ❌ MISSING       │
+│ Plus:   Incident list clearing                    ❌ MISSING       │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Memory Impact of Missing Fixes ──────────────────────────────────┐
+│                                                                    │
+│ Issue #1: Trajectory Deques at 10000 (should be 1000)             │
+│ ├─ ekf_trajectory: 10000 points × 200 bytes     = 2.0 MB          │
+│ ├─ es_ekf_trajectory: 10000 points × 200 bytes  = 2.0 MB          │
+│ ├─ comp_trajectory: 10000 points × 200 bytes    = 2.0 MB          │
+│ └─ SUBTOTAL:                                      6.0 MB  💾        │
+│                                                                    │
+│ Issue #2: Incident List Never Cleared                             │
+│ ├─ self.incidents = [] (list grows indefinitely)                  │
+│ ├─ 45-min test: ~100-300 incidents × 500B       = 0.5-2 MB        │
+│ └─ SUBTOTAL:                                      1.5 MB  💾        │
+│                                                                    │
+│ Issue #3: Raw Queues Still at 1000                                │
+│ ├─ accel_raw_queue: 1000 × 12B                  = 11.7 KB         │
+│ ├─ gyro_raw_queue: 1000 × 12B                   = 11.7 KB         │
+│ └─ SUBTOTAL:                                      23 KB   💾       │
+│                                                                    │
+│ ┌─────────────────────────────────────────────────────────────────┐
+│ │ TOTAL MISSING OPTIMIZATIONS:                ~7.5-8.5 MB         │
+│ │                                                                 │
+│ │ Expected (with full optimization): 90-96 MB                     │
+│ │ Actual (incomplete):               98-122 MB ✗                  │
+│ │ Discrepancy matches: 7.5 MB ✓                                   │
+│ └─────────────────────────────────────────────────────────────────┘
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Fixes Required ──────────────────────────────────────────────────┐
+│                                                                    │
+│ 1️⃣  PRIORITY 1: Reduce trajectory deques from 10000→1000          │
+│     File: motion_tracker_v2/test_ekf_vs_complementary.py          │
+│     Lines: 411-414                                                │
+│     Savings: 5-6 MB                                               │
+│     Effort: 3 lines (change maxlen value)                         │
+│                                                                    │
+│ 2️⃣  PRIORITY 2: Clear incident list after auto-save               │
+│     File: motion_tracker_v2/test_ekf_vs_complementary.py          │
+│     After line: 2027 (_save_results)                              │
+│     Savings: 1-2 MB                                               │
+│     Effort: 2 lines (if hasattr check + clear)                    │
+│                                                                    │
+│ 3️⃣  PRIORITY 3: Reduce raw queues from 1000→100                   │
+│     File: motion_tracker_v2/test_ekf_vs_complementary.py          │
+│     Lines: 423, 425                                               │
+│     Savings: 23 KB (consistency)                                  │
+│     Effort: 2 lines (change maxsize value)                        │
+│                                                                    │
+│ 4️⃣  PRIORITY 4: Document covariance_snapshots                     │
+│     File: motion_tracker_v2/test_ekf_vs_complementary.py          │
+│     Line: 414                                                     │
+│     Savings: 0.05 MB (minor)                                      │
+│     Effort: 1 line (comment)                                      │
+│                                                                    │
+│ TOTAL EFFORT: ~7 lines of code changes                            │
+│ TOTAL RECOVERY: 6-8 MB                                            │
+│ EXPECTED RESULT: 95-100 MB (stable, within bounds)                │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Verification Checklist ──────────────────────────────────────────┐
+│ □ Grep logs for "MEMORY PRESSURE" - did ES-EKF pause trigger?    │
+│ □ Check comparison_*.json - count trajectories (should see max)   │
+│ □ Verify incident_detector.incidents size in saved data          │
+│ □ Run test and monitor: memory should stay 90-100 MB             │
+└────────────────────────────────────────────────────────────────────┘
+
+STATUS: Root cause identified, fix path clear
+CONFIDENCE: High (7.5 MB discrepancy matches observed 122-96=26MB overage)

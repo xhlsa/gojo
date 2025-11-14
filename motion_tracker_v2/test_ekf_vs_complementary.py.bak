@@ -28,7 +28,6 @@ import subprocess
 import threading
 import time
 import sys
-import tracemalloc
 import json
 import os
 import gzip
@@ -365,9 +364,6 @@ class FilterComparison:
     """Run two filters in parallel and compare"""
 
     def __init__(self, duration_minutes=5, enable_gyro=False):
-        # Start memory profiling
-        tracemalloc.start()
-
         self.duration_minutes = duration_minutes
         self.enable_gyro = enable_gyro
         self.stop_event = threading.Event()
@@ -408,9 +404,9 @@ class FilterComparison:
         self.comparison_samples = deque(maxlen=2000)
 
         # NEW: Trajectory storage for multi-track visualization
-        self.ekf_trajectory = deque(maxlen=1000)  # EKF position history
-        self.es_ekf_trajectory = deque(maxlen=1000)  # ES-EKF position history (dead reckoning)
-        self.comp_trajectory = deque(maxlen=1000)  # Complementary position history
+        self.ekf_trajectory = deque(maxlen=10000)  # EKF position history
+        self.es_ekf_trajectory = deque(maxlen=10000)  # ES-EKF position history (dead reckoning)
+        self.comp_trajectory = deque(maxlen=10000)  # Complementary position history
         self.covariance_snapshots = deque(maxlen=500)  # Covariance every 10th GPS fix (~30s intervals)
 
         # FIX 2: Thread lock for accumulated_data and deque operations
@@ -420,9 +416,9 @@ class FilterComparison:
         self._gps_counter_lock = threading.Lock()
 
         # PHASE 1: Raw sensor data queues (producers: sensor daemons, consumers: collection loops)
-        self.accel_raw_queue = Queue(maxsize=100)  # ~5s buffer @ 20Hz
+        self.accel_raw_queue = Queue(maxsize=1000)  # ~50s buffer @ 20Hz
         self.gps_raw_queue = Queue(maxsize=100)     # ~100s buffer @ 1Hz
-        self.gyro_raw_queue = Queue(maxsize=100)   # ~5s buffer @ 20Hz
+        self.gyro_raw_queue = Queue(maxsize=1000)   # ~50s buffer @ 20Hz
 
         # PHASE 1: Per-filter input queues (producers: collection loops, consumers: filter threads)
         # MEMORY OPTIMIZATION: Reduced from 500 to 100 (~5s buffer @ 20Hz instead of 25s)
@@ -1019,13 +1015,15 @@ class FilterComparison:
                     except:
                         pass
 
-                    # Create placeholder gyro sample
+                    # Create placeholder gyro sample (will be updated by filter threads)
                     with self._save_lock:
-                        if self.gyro_index < self.max_gyro_samples:
-                            self.gyro_samples[self.gyro_index] = (timestamp, magnitude)
-                            self.gyro_index += 1
-                        else:
-                            print(f"⚠️ Gyro buffer full ({self.max_gyro_samples} samples), skipping", file=sys.stderr)
+                        self.gyro_samples.append({
+                            'timestamp': timestamp,
+                            'gyro_x': gyro_x,
+                            'gyro_y': gyro_y,
+                            'gyro_z': gyro_z,
+                            'magnitude': magnitude
+                        })
                 except Exception as e:
                     print(f"ERROR in gyro loop at {time.time() - self.start_time:.2f}s: {e}", file=sys.stderr)
                     import traceback
@@ -1076,8 +1074,13 @@ class FilterComparison:
                         except:
                             pass
 
-                    # NOTE: Filter results stored in trajectory and filter object state
-                    # Numpy arrays have fixed schemas - can't dynamically add fields
+                    # Update GPS samples with EKF results
+                    with self._save_lock:
+                        for sample in reversed(self.gps_samples):
+                            if abs(sample['timestamp'] - gps_packet['timestamp']) < 0.01:
+                                sample['ekf_velocity'] = v
+                                sample['ekf_distance'] = d
+                                break
 
                 except Empty:
                     pass
@@ -1091,19 +1094,28 @@ class FilterComparison:
                         )
                         samples_processed['gyro'] += 1
 
-                        # NOTE: Filter results stored in filter object state
-                        # Numpy arrays have fixed schemas - can't dynamically add fields
+                        # Store gyro sample with EKF results
+                        ekf_state = self.ekf.get_state()
+                        with self._save_lock:
+                            for sample in reversed(self.gyro_samples):
+                                if abs(sample['timestamp'] - gyro_packet['timestamp']) < 0.01:
+                                    sample['ekf_velocity'] = v
+                                    sample['ekf_distance'] = d
+                                    sample['ekf_heading'] = ekf_state.get('heading_deg')
+                                    break
 
                         # Update metrics
                         if self.metrics:
-                            ekf_state = self.ekf.get_state()
                             gps_heading = None
-                            # NOTE: GPS dtype doesn't include bearing/heading fields - skip for now
+                            with self._save_lock:
+                                if self.gps_samples:
+                                    latest_gps = self.gps_samples[-1]
+                                    gps_heading = latest_gps.get('bearing', latest_gps.get('heading'))
 
                             accel_magnitude = 0
                             with self._save_lock:
-                                if self.accel_index > 0:
-                                    accel_magnitude = float(self.accel_samples[self.accel_index - 1]['magnitude'])
+                                if self.accel_samples:
+                                    accel_magnitude = self.accel_samples[-1].get('magnitude', 0)
 
                             self.metrics.update(
                                 ekf_state=ekf_state,
@@ -1215,9 +1227,13 @@ class FilterComparison:
                     samples_processed['accel'] += 1
                     consecutive_failures = 0
 
-                    # NOTE: Filter results stored in filter object state
-                    # Numpy arrays have fixed schemas - can't dynamically add fields
-
+                    # Update accel samples
+                    with self._save_lock:
+                        for sample in reversed(self.accel_samples):
+                            if abs(sample['timestamp'] - accel_packet['timestamp']) < 0.01:
+                                sample['es_ekf_velocity'] = v
+                                sample['es_ekf_distance'] = d
+                                break
                 except Empty:
                     pass
                 except Exception as e:
@@ -1601,15 +1617,6 @@ class FilterComparison:
                 mem_mb = self.peak_memory  # Use last known peak if current fails
                 print(f"  ⚠️  Warning: Failed to get memory info: {e}", file=sys.stderr)
 
-            # Get heap size from tracemalloc
-            try:
-                current_heap, peak_heap = tracemalloc.get_traced_memory()
-                heap_mb = current_heap / (1024 * 1024)
-                peak_heap_mb = peak_heap / (1024 * 1024)
-            except Exception:
-                heap_mb = 0
-                peak_heap_mb = 0
-
             # Sample counts
             try:
                 gps_count = len(self.gps_samples)
@@ -1629,8 +1636,7 @@ class FilterComparison:
                 gps_status = "UNKNOWN"
 
             status_msg = (
-                f"[{mins:02d}:{secs:02d}] STATUS: RSS={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) "
-                f"Heap={heap_mb:.1f}MB (peak={peak_heap_mb:.1f}MB) | "
+                f"[{mins:02d}:{secs:02d}] STATUS: Memory={mem_mb:.1f}MB (peak={self.peak_memory:.1f}MB) | "
                 f"GPS={gps_count:4d} ({gps_status}) | Accel={accel_count:5d} ({accel_status})"
             )
 
@@ -1745,7 +1751,7 @@ class FilterComparison:
 
             # Get latest sensor data
             latest_accel = self.accel_samples[-1] if self.accel_samples else None
-            latest_gps = self.gps_samples[self.gps_index - 1] if self.gps_samples else None
+            latest_gps = self.gps_samples[-1] if self.gps_samples else None
 
             print(f"\n[{mins:02d}:{secs:02d}] FILTER COMPARISON (3-way)")
             print("-" * 130)
@@ -1800,8 +1806,8 @@ class FilterComparison:
 
             # Get latest GPS if available
             latest_gps = None
-            if self.gps_index > 0:
-                last = self.gps_samples[self.gps_index - 1]
+            if self.gps_samples:
+                last = self.gps_samples[-1]
                 latest_gps = {
                     'lat': last['latitude'],
                     'lon': last['longitude'],
@@ -2171,7 +2177,7 @@ class FilterComparison:
             ]
 
             # Track 1: Raw GPS measurements
-            if self.gps_index > 0:
+            if self.gps_samples:
                 gpx_lines.append('  <trk>')
                 gpx_lines.append('    <name>Raw GPS</name>')
                 gpx_lines.append('    <desc>Unfiltered GPS measurements</desc>')
@@ -2255,9 +2261,9 @@ class FilterComparison:
         ekf_state = self.ekf.get_state()
         comp_state = self.complementary.get_state()
 
-        if self.gps_index > 0:
+        if self.gps_samples:
             first_gps = self.gps_samples[0]
-            last_gps = self.gps_samples[self.gps_index - 1]
+            last_gps = self.gps_samples[-1]
 
             # CRITICAL FIX: Calculate GPS ground truth from actual coordinates
             # NOT from EKF's estimate (that defeats the purpose of validation)

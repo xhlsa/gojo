@@ -1,0 +1,136 @@
+MEMORY GROWTH FIX - LINE-BY-LINE REFERENCE
+═══════════════════════════════════════════════════════════════════════════════
+
+FILE 1: motion_tracker_v2/test_ekf_vs_complementary.py
+────────────────────────────────────────────────────────────────────────────────
+
+FIX #1: REDUCE TRAJECTORY DEQUES (Lines 411-414)
+┌─ Current Code ─────────────────────────────────────────────────────────────┐
+│ 411: self.ekf_trajectory = deque(maxlen=10000)                             │
+│ 412: self.es_ekf_trajectory = deque(maxlen=10000)                          │
+│ 413: self.comp_trajectory = deque(maxlen=10000)                            │
+│ 414: self.covariance_snapshots = deque(maxlen=500)                         │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ Fixed Code ───────────────────────────────────────────────────────────────┐
+│ 411: self.ekf_trajectory = deque(maxlen=1000)  # Keep last ~50 GPS fixes   │
+│ 412: self.es_ekf_trajectory = deque(maxlen=1000)                           │
+│ 413: self.comp_trajectory = deque(maxlen=1000)                             │
+│ 414: self.covariance_snapshots = deque(maxlen=500)                         │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Savings: 6 MB
+Why: 10000→1000 reduces each trajectory from 2MB to 0.2MB
+
+
+FIX #2: REDUCE RAW QUEUE SIZES (Lines 423, 425)
+┌─ Current Code ─────────────────────────────────────────────────────────────┐
+│ 423: self.accel_raw_queue = Queue(maxsize=1000)  # ~50s buffer @ 20Hz      │
+│ 424: self.gps_raw_queue = Queue(maxsize=100)     # ~100s buffer @ 1Hz      │
+│ 425: self.gyro_raw_queue = Queue(maxsize=1000)   # ~50s buffer @ 20Hz      │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ Fixed Code ───────────────────────────────────────────────────────────────┐
+│ 423: self.accel_raw_queue = Queue(maxsize=100)   # ~5s buffer @ 20Hz       │
+│ 424: self.gps_raw_queue = Queue(maxsize=100)     # ~100s buffer @ 1Hz      │
+│ 425: self.gyro_raw_queue = Queue(maxsize=100)    # ~5s buffer @ 20Hz       │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Savings: 23 KB (negligible, but consistency)
+Why: CLAUDE.md specifies "Reduce queue sizes 500→100" for raw queues
+
+
+FIX #3: CLEAR INCIDENT LIST AFTER AUTO-SAVE (After Line 2027)
+┌─ Current Code ─────────────────────────────────────────────────────────────┐
+│ 2027: print(f"✓ Auto-saved (autosave #{self._accumulated_data[...         │
+│                                                                             │
+│ [NO CODE CLEARS incident_detector.incidents]                               │
+└────────────────────────────────────────────────────────────────────────────┘
+
+┌─ Fixed Code ───────────────────────────────────────────────────────────────┐
+│ 2027: print(f"✓ Auto-saved (autosave #{self._accumulated_data[...         │
+│                                                                             │
+│ 2028: # Clear incident list to prevent unbounded memory growth             │
+│ 2029: if hasattr(self, 'incident_detector'):                               │
+│ 2030:     if hasattr(self.incident_detector, 'incidents'):                 │
+│ 2031:         self.incident_detector.incidents.clear()                     │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Savings: 1-2 MB
+Why: 45-min test accumulates 100-300 incidents, each ~500B
+
+
+FILE 2: motion_tracker_v2/incident_detector.py
+────────────────────────────────────────────────────────────────────────────────
+
+NOTE: This file doesn't need changes if fix #3 above is applied.
+The issue is NOT in incident_detector.py itself - it's that the 
+test file never clears the incidents list it creates.
+
+Optional: Could add a clear_incidents() method for cleaner code:
+┌─ Optional Enhancement (Line 67+) ──────────────────────────────────────────┐
+│ def clear_incidents(self):                                                 │
+│     """Clear incidents list to free memory."""                             │
+│     with self.lock:                                                        │
+│         self.incidents.clear()                                             │
+└────────────────────────────────────────────────────────────────────────────┘
+
+Then call it as: self.incident_detector.clear_incidents() instead of .incidents.clear()
+
+
+SUMMARY OF CHANGES
+═════════════════════════════════════════════════════════════════════════════════
+
+File: motion_tracker_v2/test_ekf_vs_complementary.py
+─────────────────────────────────────────────
+Total changes: 5 lines
+- Line 411: 10000→1000
+- Line 412: 10000→1000
+- Line 413: 10000→1000
+- Line 423: 1000→100
+- Line 425: 1000→100
++ Add 3-4 lines after line 2027 (incident clearing)
+
+File: motion_tracker_v2/incident_detector.py
+────────────────────────────────────────
+Total changes: 0 lines required
+Optional: Add clear_incidents() method (4 lines) if desired
+
+VALIDATION STEPS
+═════════════════════════════════════════════════════════════════════════════════
+
+1. Apply fixes above
+2. Run 45-minute test:
+   ./test_ekf.sh 45
+
+3. Monitor memory:
+   watch -n1 'grep "memory_mb" motion_tracker_sessions/live_status.json'
+
+4. Expected behavior:
+   - Memory starts ~92 MB
+   - Stays 92-100 MB throughout test
+   - Does NOT exceed 95 MB (no "MEMORY PRESSURE" messages)
+   - Peak should be ~96 MB (not 122 MB)
+
+5. Verify data quality:
+   - Accel samples: ~2600-3000 per minute (44 Hz × 60-70s per auto-save)
+   - GPS samples: ~15 over 45 minutes (0.2 Hz)
+   - Incident count: 0-10 per CLAUDE.md shelved status
+   - Memory savings log: Shows incident list cleared
+
+TESTING CHECKLIST
+═════════════════════════════════════════════════════════════════════════════════
+
+[ ] Code changes applied (5 lines in test_ekf_vs_complementary.py)
+[ ] Code changes applied (3-4 lines for incident clearing after line 2027)
+[ ] File syntax checked (python3 -m py_compile)
+[ ] 45-minute test run started
+[ ] Memory stayed below 100 MB throughout
+[ ] Peak memory ~96 MB (not 122 MB)
+[ ] Auto-save logs show incident clearing
+[ ] Test completed successfully
+[ ] Results archived
+
+═════════════════════════════════════════════════════════════════════════════════
+Expected outcome: 122 MB → 95-100 MB memory (6-8 MB recovered)
+═════════════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,195 @@
+==============================================================================
+EKF vs Complementary Filter Test - Robust Sensor Initialization
+Session started: Thu Nov 13 20:31:25 UTC 2025
+Test arguments: 2
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+==============================================================================
+[1;33mAcquiring wakelock...[0m
+[0;32m✓ Wakelock acquired[0m
+
+[1;33mSensor initialization attempt 1/3[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+[1;33mValidating accelerometer access...[0m
+[0;32m✓ Accelerometer responding correctly[0m
+
+[1;33mGPS initialization attempt 1/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[AccelDaemon] Read loop exited. Parsed 3 JSON objects, 27 lines total
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Thu Nov 13 20:34:00 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+
+LAST 50 LINES OF OUTPUT:
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 2/3[0m
+[1;33mCleaning up GPS processes...[0m
+[cleanup_gps] Complete
+[0;32m✓ GPS cleanup complete[0m
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33mRetrying in 3 seconds...[0m
+[cleanup_gps] Starting
+
+[1;33mGPS initialization attempt 3/3[0m
+[1;33mCleaning up GPS processes...[0m
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[AccelDaemon] Read loop exited. Parsed 3 JSON objects, 27 lines total
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Thu Nov 13 20:34:00 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================
+
+[0;31m✗ TEST CRASHED - Exit code 143[0m
+[0;31m  Signal: SIGTERM (15)[0m
+[0;31m  Log: crash_logs/test_ekf_2025-11-13_13-31-25.log[0m
+[0;31m  View all crashes: python3 crash_logger.py show[0m
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[1;33mCleaning up sensor processes...[0m
+[0;32m✓ Sensor cleanup complete[0m
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Thu Nov 13 20:34:05 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+
+LAST 50 LINES OF OUTPUT:
+[0;32m✓ GPS cleanup complete[0m
+[cleanup_gps] Complete
+[1;33mValidating GPS API service...[0m
+[0;31mDEBUG: GPS command failed or timed out (exit code: 124)[0m
+[0;31mFile contents:[0m
+[1;33m⚠ GPS API not responding (test will continue with accelerometer only)[0m
+[1;33m⚠ GPS unavailable after 3 attempts, test will continue with accelerometer only[0m
+
+[0;32m✓ Sensor ready, starting test in 2 seconds...[0m
+[0;32mStarting Python test...[0m
+
+[AccelDaemon] Parsed JSON #1
+[AccelDaemon] Parsed JSON #2
+[AccelDaemon] Parsed JSON #3
+[AccelDaemon] Read loop exited. Parsed 3 JSON objects, 27 lines total
+[GPS _read_loop] Thread started
+[GPSDaemon] stderr: [GPS Wrapper] Starting (poll_interval=5s, max_starvation=300.0s)
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Thu Nov 13 20:34:00 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================
+
+[1;33mTest finished, performing final cleanup...[0m
+[1;33mReleasing wakelock...[0m
+[0;32m✓ Wakelock released[0m
+[cleanup_sensors] Starting
+[cleanup_sensors] Complete
+===================================================================
+CRASH/ERROR DETECTED
+===================================================================
+Exit code: 143
+Signal: SIGTERM (15)
+Test: test_ekf.sh 
+Timestamp: Thu Nov 13 20:34:05 UTC 2025
+Log file: crash_logs/test_ekf_2025-11-13_13-31-25.log
+
+LAST 50 LINES OF OUTPUT:
+===================================================================
+
+[0;31m✗ TEST CRASHED - Exit code 143[0m
+[0;31m  Signal: SIGTERM (15)[0m
+[0;31m  Log: crash_logs/test_ekf_2025-11-13_13-31-25.log[0m
+[0;31m  View all crashes: python3 crash_logger.py show[0m
