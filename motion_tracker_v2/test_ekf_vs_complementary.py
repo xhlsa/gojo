@@ -2291,21 +2291,15 @@ class FilterComparison:
         print(f"  Complementary: {comp_state['velocity']:.3f} m/s")
 
         # Gyro statistics (if enabled)
-        if self.enable_gyro and self.gyro_samples:
+        if self.enable_gyro and len(self.gyro_samples) > 0:
             print(f"\nGyroscope Statistics:")
             print(f"  Total samples:  {len(self.gyro_samples)}")
 
-            # Calculate rotation rate statistics
-            gyro_x_vals = [s['gyro_x'] for s in self.gyro_samples]
-            gyro_y_vals = [s['gyro_y'] for s in self.gyro_samples]
-            gyro_z_vals = [s['gyro_z'] for s in self.gyro_samples]
-            magnitude_vals = [s['magnitude'] for s in self.gyro_samples]
+            # Calculate rotation rate statistics (only magnitude available)
+            magnitude_vals = self.gyro_samples['magnitude']
 
             import statistics
-            print(f"  X-rotation (rad/s):  mean={statistics.mean(gyro_x_vals):.4f}, max={max(gyro_x_vals):.4f}")
-            print(f"  Y-rotation (rad/s):  mean={statistics.mean(gyro_y_vals):.4f}, max={max(gyro_y_vals):.4f}")
-            print(f"  Z-rotation (rad/s):  mean={statistics.mean(gyro_z_vals):.4f}, max={max(gyro_z_vals):.4f}")
-            print(f"  Overall magnitude:   mean={statistics.mean(magnitude_vals):.4f}, max={max(magnitude_vals):.4f}")
+            print(f"  Rotation magnitude (rad/s):  mean={float(np.mean(magnitude_vals)):.4f}, max={float(np.max(magnitude_vals)):.4f}, std={float(np.std(magnitude_vals)):.4f}")
         elif self.enable_gyro:
             print(f"\nGyroscope: Enabled but NO samples collected")
 
