@@ -685,3 +685,27 @@ class ExtendedKalmanFilter(SensorFusionBase):
                 })
 
             return state_dict
+
+    def get_position(self):
+        """Get current estimated position (lat, lon, uncertainty).
+
+        Returns last known GPS position since EKF tracks relative motion,
+        not absolute position. For absolute position tracking, use ES-EKF.
+        Uncertainty grows over time since last GPS fix due to inertial drift.
+
+        Returns:
+            tuple: (latitude, longitude, uncertainty_m) or (None, None, 999.0) if no GPS fix yet
+        """
+        with self.lock:
+            # EKF doesn't maintain position state - return last GPS fix if available
+            # This allows trajectory storage to work even though EKF is velocity-focused
+            if self.last_gps_lat_lon is not None:
+                lat, lon = self.last_gps_lat_lon
+                # Uncertainty grows based on time since last GPS update
+                time_since_gps = time.time() - self.last_gps_time if self.last_gps_time else 0
+                # Base 5m uncertainty + 0.5m/s growth (accounts for inertial drift), capped at 50m
+                uncertainty = min(5.0 + time_since_gps * 0.5, 50.0)
+                return lat, lon, uncertainty
+            else:
+                # No GPS fix yet - return None values with high uncertainty
+                return None, None, 999.0

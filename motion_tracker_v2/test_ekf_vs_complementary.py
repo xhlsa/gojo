@@ -408,9 +408,9 @@ class FilterComparison:
         self.comparison_samples = deque(maxlen=2000)
 
         # NEW: Trajectory storage for multi-track visualization
-        self.ekf_trajectory = deque(maxlen=10000)  # EKF position history
-        self.es_ekf_trajectory = deque(maxlen=10000)  # ES-EKF position history (dead reckoning)
-        self.comp_trajectory = deque(maxlen=10000)  # Complementary position history
+        self.ekf_trajectory = deque(maxlen=1000)  # EKF position history
+        self.es_ekf_trajectory = deque(maxlen=1000)  # ES-EKF position history (dead reckoning)
+        self.comp_trajectory = deque(maxlen=1000)  # Complementary position history
         self.covariance_snapshots = deque(maxlen=500)  # Covariance every 10th GPS fix (~30s intervals)
 
         # FIX 2: Thread lock for accumulated_data and deque operations
@@ -420,9 +420,9 @@ class FilterComparison:
         self._gps_counter_lock = threading.Lock()
 
         # PHASE 1: Raw sensor data queues (producers: sensor daemons, consumers: collection loops)
-        self.accel_raw_queue = Queue(maxsize=1000)  # ~50s buffer @ 20Hz
+        self.accel_raw_queue = Queue(maxsize=100)  # ~5s buffer @ 20Hz
         self.gps_raw_queue = Queue(maxsize=100)     # ~100s buffer @ 1Hz
-        self.gyro_raw_queue = Queue(maxsize=1000)   # ~50s buffer @ 20Hz
+        self.gyro_raw_queue = Queue(maxsize=100)   # ~5s buffer @ 20Hz
 
         # PHASE 1: Per-filter input queues (producers: collection loops, consumers: filter threads)
         # MEMORY OPTIMIZATION: Reduced from 500 to 100 (~5s buffer @ 20Hz instead of 25s)
@@ -1347,13 +1347,14 @@ class FilterComparison:
         with self._accel_restart_lock:
             # DOUBLE-CHECK: Another thread may have already restarted AND data is flowing
             if self.accel_daemon and self.accel_daemon.is_alive():
-                # VALIDATE: Process alive doesn't guarantee data flow - check queue
-                test_data = self.accel_daemon.get_data(timeout=2.0)
-                if test_data:
+                # VALIDATE: Check if data is flowing WITHOUT consuming from queue (avoid race with _accel_loop)
+                # Production loop updates last_accel_sample_time when it consumes data
+                time_since_last_sample = time.time() - self.last_accel_sample_time
+                if time_since_last_sample < 5.0:  # Got data within last 5 seconds
                     print(f"  → Accel already alive and producing data (concurrent restart won)", file=sys.stderr)
                     return True
                 else:
-                    print(f"  → Accel process alive but NOT producing data, forcing restart", file=sys.stderr)
+                    print(f"  → Accel process alive but NOT producing data ({time_since_last_sample:.1f}s since last sample), forcing restart", file=sys.stderr)
                     # Fall through to perform actual restart
 
             print(f"\n🔄 Attempting to restart accelerometer daemon (attempt {self.restart_counts['accel'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
@@ -1408,29 +1409,19 @@ class FilterComparison:
             time.sleep(self.restart_cooldown + 2)  # 12 seconds total
 
             # STEP 5: START + VALIDATE (with retry)
+            restart_start_time = time.time()
             if self.accel_daemon.start():
-                # EXTENDED timeout for post-crash recovery
-                validation_timeout = 30.0  # Increased from 15s
-                test_data = self.accel_daemon.get_data(timeout=validation_timeout)
+                # VALIDATE: Check daemon is alive and producing data WITHOUT consuming from queue
+                # Wait for initialization (daemon needs time to connect to termux-api backend)
+                time.sleep(3.0)
 
-                if test_data:
-                    print(f"  ✓ Accelerometer daemon restarted successfully", file=sys.stderr)
-                    self.restart_counts['accel'] += 1
+                # Validate using process health + queue activity + timestamp freshness
+                if self.accel_daemon.is_alive():
+                    queue_size = self.accel_daemon.data_queue.qsize() if hasattr(self.accel_daemon, 'data_queue') else 0
+                    data_freshness = self.last_accel_sample_time > restart_start_time
 
-                    # CRITICAL: Restart gyro daemon (shares accel's IMU stream)
-                    if self.enable_gyro and self.gyro_daemon:
-                        print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
-                        self._restart_gyro_after_accel()
-
-                    return True
-                else:
-                    # RETRY ONCE (backend may still be initializing)
-                    print(f"  → No data after {validation_timeout}s, retrying...",
-                          file=sys.stderr)
-                    time.sleep(5)
-                    test_data = self.accel_daemon.get_data(timeout=10.0)
-                    if test_data:
-                        print(f"  ✓ Validation succeeded on retry", file=sys.stderr)
+                    if queue_size > 0 or data_freshness:
+                        print(f"  ✓ Accel daemon restarted (alive, queue_size={queue_size}, fresh_data={data_freshness})", file=sys.stderr)
                         self.restart_counts['accel'] += 1
 
                         # CRITICAL: Restart gyro daemon (shares accel's IMU stream)
@@ -1439,8 +1430,30 @@ class FilterComparison:
                             self._restart_gyro_after_accel()
 
                         return True
+                    else:
+                        # RETRY ONCE (backend may still be initializing)
+                        print(f"  → Queue empty and no fresh data, retrying after 5s...", file=sys.stderr)
+                        time.sleep(5)
 
-                    print(f"  ✗ Accel daemon unresponsive after retry", file=sys.stderr)
+                        # Re-check after wait
+                        queue_size = self.accel_daemon.data_queue.qsize() if hasattr(self.accel_daemon, 'data_queue') else 0
+                        data_freshness = self.last_accel_sample_time > restart_start_time
+
+                        if queue_size > 0 or data_freshness:
+                            print(f"  ✓ Validation succeeded on retry (queue_size={queue_size}, fresh_data={data_freshness})", file=sys.stderr)
+                            self.restart_counts['accel'] += 1
+
+                            # CRITICAL: Restart gyro daemon (shares accel's IMU stream)
+                            if self.enable_gyro and self.gyro_daemon:
+                                print(f"  ✓ Accel restarted, resuming data collection", file=sys.stderr)
+                                self._restart_gyro_after_accel()
+
+                            return True
+
+                        print(f"  ✗ Accel daemon unresponsive after retry (queue still empty)", file=sys.stderr)
+                        return False
+                else:
+                    print(f"  ✗ Daemon process died during initialization", file=sys.stderr)
                     return False
             else:
                 print(f"  ✗ Failed to start accelerometer daemon process", file=sys.stderr)
@@ -1489,6 +1502,19 @@ class FilterComparison:
                 return True
 
             print(f"\n🔄 Attempting to restart GPS daemon (attempt {self.restart_counts['gps'] + 1}/{self.max_restart_attempts})...", file=sys.stderr)
+
+            # CRITICAL FIX: Pause accel daemon before GPS restart
+            # When GPS daemon restarts, it kills termux-api processes that accel also depends on
+            # Without pause, accel loses sensor I/O access within 30-50ms of termux-api kill
+            accel_was_alive = False
+            if self.accel_daemon and self.accel_daemon.is_alive():
+                accel_was_alive = True
+                print("  → Pausing accel daemon during GPS restart (prevents cascade kill)...", file=sys.stderr)
+                try:
+                    self.accel_daemon.stop()
+                    time.sleep(1.0)  # Allow graceful shutdown
+                except Exception as e:
+                    print(f"  ⚠️  Warning pausing accel: {e}", file=sys.stderr)
 
             # STEP 1: GRACEFUL STOP
             try:
@@ -1546,15 +1572,20 @@ class FilterComparison:
 
                 # Validate GPS thread is running (not data collection - that may take time)
                 # CHANGED: Don't stop daemon if no fix - GPS may need time to acquire signal
-                # Instead, just validate the thread started and let it keep trying
+                # VALIDATE: Check GPS daemon is producing fixes WITHOUT consuming from queue
+                # Avoid race with main GPS loop (_gps_loop) which processes fixes
                 validation_timeout = 10  # seconds to wait for thread startup
-                validation_start = time.time()
+                restart_start_time = time.time()
                 fix_received = False
 
-                while time.time() - validation_start < validation_timeout:
-                    gps_data = self.gps_daemon.get_data(timeout=1.0)
-                    if gps_data:
-                        print(f"  ✓ GPS restart validated: {gps_data['latitude']:.4f}, {gps_data['longitude']:.4f}", file=sys.stderr)
+                while time.time() - restart_start_time < validation_timeout:
+                    # Check queue activity without consuming (non-blocking inspection)
+                    queue_size = self.gps_daemon.data_queue.qsize() if hasattr(self.gps_daemon, 'data_queue') else 0
+                    # Check if main GPS loop has consumed any fixes since restart
+                    data_freshness = self.last_gps_sample_time > restart_start_time
+
+                    if queue_size > 0 or data_freshness:
+                        print(f"  ✓ GPS restart validated (queue_size={queue_size}, fresh_data={data_freshness})", file=sys.stderr)
                         fix_received = True
                         break
                     # Brief wait before retrying
@@ -1568,6 +1599,21 @@ class FilterComparison:
 
                 print(f"  ✓ GPS daemon restarted (fix_received={fix_received})", file=sys.stderr)
                 self.restart_counts['gps'] += 1
+
+                # CRITICAL FIX: Resume accel daemon after GPS restart completes
+                # GPS daemon restart is now isolated - accel can safely restart
+                if accel_was_alive:
+                    print("  → Resuming accel daemon after GPS restart...", file=sys.stderr)
+                    try:
+                        self.accel_daemon = PersistentAccelDaemon(delay_ms=20)
+                        self.accel_daemon.start()
+                        time.sleep(2.0)  # Allow initialization
+                        # Restart gyro as well (paired with accel)
+                        if self.enable_gyro and self.gyro_daemon:
+                            self._restart_gyro_after_accel()
+                    except Exception as e:
+                        print(f"  ⚠️  Warning resuming accel: {e}", file=sys.stderr)
+
                 return True
             else:
                 print(f"  ✗ Failed to restart GPS daemon", file=sys.stderr)
@@ -2017,14 +2063,14 @@ class FilterComparison:
                         gps_count_saved = len(self._accumulated_data['gps_samples'])
                         accel_count_saved = len(self._accumulated_data['accel_samples'])
 
-                        self._accumulated_data['gps_samples'].clear()
-                        self._accumulated_data['accel_samples'].clear()
-                        self._accumulated_data['gyro_samples'].clear()
+                        # FIX 1: DO NOT clear accumulated_data - keeps growing so final save has all data
+                        # Each auto-save is a checkpoint on disk; accumulated_data accumulates continuously
+                        # Final save combines disk checkpoints with current numpy array state
 
                         # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
                         # Resetting velocity to 0 mid-test creates fake physics
 
-                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Saved: {gps_count_saved} GPS + {accel_count_saved} accel | Memory cleared, indices reset")
+                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count_saved} GPS + {accel_count_saved} accel | Indices reset")
                     else:
                         gps_count_display = len(self._accumulated_data['gps_samples'])
                         accel_count_display = len(self._accumulated_data['accel_samples'])
@@ -2291,21 +2337,16 @@ class FilterComparison:
         print(f"  Complementary: {comp_state['velocity']:.3f} m/s")
 
         # Gyro statistics (if enabled)
-        if self.enable_gyro and self.gyro_samples:
+        if self.enable_gyro and self.gyro_index > 0:
             print(f"\nGyroscope Statistics:")
-            print(f"  Total samples:  {len(self.gyro_samples)}")
+            print(f"  Total samples:  {self.gyro_index}")
 
-            # Calculate rotation rate statistics
-            gyro_x_vals = [s['gyro_x'] for s in self.gyro_samples]
-            gyro_y_vals = [s['gyro_y'] for s in self.gyro_samples]
-            gyro_z_vals = [s['gyro_z'] for s in self.gyro_samples]
-            magnitude_vals = [s['magnitude'] for s in self.gyro_samples]
+            # Calculate rotation rate statistics (only magnitude field available in GYRO_DTYPE)
+            magnitude_vals = [s['magnitude'] for s in self.gyro_samples[:self.gyro_index]]
 
             import statistics
-            print(f"  X-rotation (rad/s):  mean={statistics.mean(gyro_x_vals):.4f}, max={max(gyro_x_vals):.4f}")
-            print(f"  Y-rotation (rad/s):  mean={statistics.mean(gyro_y_vals):.4f}, max={max(gyro_y_vals):.4f}")
-            print(f"  Z-rotation (rad/s):  mean={statistics.mean(gyro_z_vals):.4f}, max={max(gyro_z_vals):.4f}")
-            print(f"  Overall magnitude:   mean={statistics.mean(magnitude_vals):.4f}, max={max(magnitude_vals):.4f}")
+            if magnitude_vals:
+                print(f"  Rotation magnitude:  mean={statistics.mean(magnitude_vals):.4f} rad/s, max={max(magnitude_vals):.4f} rad/s")
         elif self.enable_gyro:
             print(f"\nGyroscope: Enabled but NO samples collected")
 
