@@ -17,6 +17,7 @@ Usage:
     detector.check_swerving(angular_velocity=1.2) # Logs swerving (rad/s)
 """
 
+import copy
 import json
 import math
 import os
@@ -69,6 +70,12 @@ class IncidentDetector:
         self.incidents = deque(maxlen=20)  # Keep last 20 for get_incidents() (was 100, saves ~16 MB)
         self.last_incident_time = None
         self.incident_cooldown = 5.0  # seconds (prevent duplicate logging)
+
+        # Persistent counters
+        self.total_incidents = 0
+        self.incidents_by_type = {}
+        self.counters_path = os.path.join(self.session_dir, 'session_counters.json')
+        self._load_persistent_counters()
 
         # Thread safety
         self.lock = threading.Lock()
@@ -159,8 +166,13 @@ class IncidentDetector:
                 'threshold': self.THRESHOLDS[incident_type]
             }
 
+            # Update counters before deque truncation
+            self.total_incidents += 1
+            self.incidents_by_type[incident_type] = self.incidents_by_type.get(incident_type, 0) + 1
+
             self.incidents.append(incident)
             self._save_incident(incident)
+            self._persist_counters()
 
     def _extract_context(self, buffer, event_time):
         """Extract data points within context window of event time."""
@@ -201,33 +213,94 @@ class IncidentDetector:
         """Get summary of incidents."""
         with self.lock:
             summary = {
-                'total_incidents': len(self.incidents),
-                'by_type': {},
+                'total_incidents': self.total_incidents,
+                'by_type': dict(self.incidents_by_type),
                 'latest_incident': None
             }
 
-            for incident in self.incidents:
-                event_type = incident['event_type']
-                if event_type not in summary['by_type']:
-                    summary['by_type'][event_type] = 0
-                summary['by_type'][event_type] += 1
-
             if self.incidents:
-                summary['latest_incident'] = {
-                    'type': self.incidents[-1]['event_type'],
-                    'magnitude': self.incidents[-1]['magnitude'],
-                    'time': self.incidents[-1]['datetime']
-                }
+                summary['latest_incident'] = copy.deepcopy(self.incidents[-1])
 
             return summary
+
+    def _load_persistent_counters(self):
+        """Load counters from disk or rebuild from existing incidents."""
+        if os.path.exists(self.counters_path):
+            try:
+                with open(self.counters_path, 'r') as f:
+                    data = json.load(f)
+                self.total_incidents = int(data.get('total_incidents', 0))
+                stored_by_type = data.get('incidents_by_type', {})
+                if isinstance(stored_by_type, dict):
+                    self.incidents_by_type = {
+                        key: int(value) for key, value in stored_by_type.items()
+                    }
+                else:
+                    self.incidents_by_type = {}
+                return
+            except Exception as exc:
+                print(f"⚠ Failed to load incident counters: {exc}. Rebuilding...")
+
+        self._rebuild_counters_from_files()
+
+    def _rebuild_counters_from_files(self):
+        """Recalculate counters by scanning existing incident files."""
+        total = 0
+        by_type = {}
+
+        for root, _, files in os.walk(self.session_dir):
+            for filename in files:
+                if not filename.startswith('incident_') or not filename.endswith('.json'):
+                    continue
+                filepath = os.path.join(root, filename)
+                try:
+                    with open(filepath, 'r') as f:
+                        incident = json.load(f)
+                except Exception:
+                    continue
+
+                event_type = incident.get('event_type')
+                if not event_type:
+                    continue
+
+                total += 1
+                by_type[event_type] = by_type.get(event_type, 0) + 1
+
+        self.total_incidents = total
+        self.incidents_by_type = by_type
+        self._persist_counters()
+
+    def _persist_counters(self):
+        """Persist counters to disk so they survive restarts."""
+        data = {
+            'total_incidents': self.total_incidents,
+            'incidents_by_type': self.incidents_by_type,
+            'updated_at': datetime.utcnow().isoformat() + 'Z'
+        }
+
+        tmp_path = f"{self.counters_path}.tmp"
+        try:
+            with open(tmp_path, 'w') as f:
+                json.dump(data, f, indent=2)
+            os.replace(tmp_path, self.counters_path)
+        except Exception as exc:
+            print(f"⚠ Failed to persist incident counters: {exc}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except OSError:
+                    pass
 
 
 # Example usage and testing
 if __name__ == '__main__':
     print("Incident Detector Test\n" + "="*60)
 
-    # Use persistent logs directory instead of /tmp (Termux doesn't persist /tmp)
-    test_incidents_dir = os.path.expanduser('~/gojo/motion_tracker_sessions/test_incidents')
+    # Use a unique persistent logs directory for repeatable testing
+    base_test_dir = os.path.expanduser('~/gojo/motion_tracker_sessions')
+    os.makedirs(base_test_dir, exist_ok=True)
+    unique_suffix = int(time.time())
+    test_incidents_dir = os.path.join(base_test_dir, f'test_incidents_{unique_suffix}')
     detector = IncidentDetector(session_dir=test_incidents_dir)
 
     # Simulate some sensor data
@@ -267,8 +340,27 @@ if __name__ == '__main__':
     print(f"  Total incidents: {summary['total_incidents']}")
     print(f"  By type: {summary['by_type']}")
     if summary['latest_incident']:
-        print(f"  Latest: {summary['latest_incident']['type']} "
-              f"({summary['latest_incident']['magnitude']:.2f}) "
-              f"at {summary['latest_incident']['time']}")
+        latest = summary['latest_incident']
+        print(f"  Latest: {latest['event_type']} "
+              f"({latest['magnitude']:.2f}) at {latest['datetime']}")
+
+    # Stress test: ensure counters stay accurate beyond 20 incidents
+    detector.incident_cooldown = 0.0
+    stress_events = 25
+    pre_stress_total = summary['total_incidents']
+    stress_start_time = base_time + 400
+    print("\n5. Stress testing counters with >20 additional swerving events...")
+    for i in range(stress_events):
+        timestamp = stress_start_time + i * 0.1
+        detector.add_gyroscope_sample(angular_velocity=1.3, timestamp=timestamp)
+        detector.check_swerving(1.3)
+
+    post_stress_summary = detector.get_summary()
+    expected_total = pre_stress_total + stress_events
+    print(f"  Expected total incidents: {expected_total}")
+    print(f"  Reported total incidents: {post_stress_summary['total_incidents']}")
+    if post_stress_summary['total_incidents'] != expected_total:
+        raise SystemExit("✗ Counter mismatch detected!")
+    print("  ✓ Counters remain accurate even when deque truncates old incidents.")
 
     print(f"\n✓ Test complete - incidents saved to {test_incidents_dir}")
