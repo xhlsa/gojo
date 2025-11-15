@@ -1863,9 +1863,9 @@ class FilterComparison:
         # CRITICAL: Verify accelerometer data was collected
         # FIX 1: Check both accumulated_data and current deques
         total_accel_samples = 0
-        if hasattr(self, '_accumulated_data'):
-            total_accel_samples = len(self._accumulated_data['accel_samples'])
-        total_accel_samples += len(self.accel_samples)
+        if hasattr(self, '_autosave_state'):
+            total_accel_samples = self._autosave_state['chunk_totals'].get('accel', 0)
+        total_accel_samples += self.accel_index
 
         if total_accel_samples == 0:
             print(f"\n✗ FATAL ERROR: Test completed but NO accelerometer samples were collected")
@@ -1903,6 +1903,36 @@ class FilterComparison:
             ]
         else:
             return []
+
+    def _ensure_autosave_state(self, base_filename):
+        """Lazy-initialize autosave state used for chunk persistence."""
+        if not hasattr(self, '_autosave_state'):
+            manifest_path = f"{base_filename}_chunks.json"
+            self._autosave_state = {
+                'autosave_count': 0,
+                'chunk_files': [],
+                'chunk_totals': {'gps': 0, 'accel': 0, 'gyro': 0},
+                'manifest_path': manifest_path,
+                'base_filename': base_filename
+            }
+        return self._autosave_state
+
+    def _write_chunk_manifest(self):
+        """Persist chunk metadata so final save can reconstruct history."""
+        if not hasattr(self, '_autosave_state'):
+            return
+
+        manifest_path = self._autosave_state['manifest_path']
+        manifest_tmp = f"{manifest_path}.tmp"
+        manifest_payload = {
+            'base_filename': self._autosave_state['base_filename'],
+            'chunks': self._autosave_state['chunk_files'],
+            'totals': self._autosave_state['chunk_totals']
+        }
+
+        with open(manifest_tmp, 'w') as f:
+            json.dump(manifest_payload, f, separators=(',', ':'))
+        os.rename(manifest_tmp, manifest_path)
 
     def _save_results(self, auto_save=False, clear_after_save=False):
         """Save results to JSON file (with auto-save and clear support)"""
@@ -1946,135 +1976,154 @@ class FilterComparison:
         if auto_save:
             # FIX 2: Acquire lock before accessing shared data structures
             with self._save_lock:
-                # Auto-save appends to file to preserve all historical data
-                # Initialize accumulated data on first auto-save
-                if not hasattr(self, '_accumulated_data'):
-                    self._accumulated_data = {
-                        'gps_samples': [],
-                        'accel_samples': [],
-                        'gyro_samples': [],
-                        'autosave_count': 0
-                    }
+                autosave_state = self._ensure_autosave_state(base_filename)
 
-                # Append current samples to accumulated history (don't overwrite)
-                self._accumulated_data['gps_samples'].extend(self._numpy_to_list(self.gps_samples, self.gps_index, 'gps'))
-                self._accumulated_data['accel_samples'].extend(self._numpy_to_list(self.accel_samples, self.accel_index, 'accel'))
+                chunk_index = autosave_state['autosave_count'] + 1
+                chunk_gps = self._numpy_to_list(self.gps_samples, self.gps_index, 'gps')
+                chunk_accel = self._numpy_to_list(self.accel_samples, self.accel_index, 'accel')
+                chunk_gyro = []
                 if self.enable_gyro:
-                    self._accumulated_data['gyro_samples'].extend(self._numpy_to_list(self.gyro_samples, self.gyro_index, 'gyro'))
-                self._accumulated_data['autosave_count'] += 1
+                    chunk_gyro = self._numpy_to_list(self.gyro_samples, self.gyro_index, 'gyro')
 
-                # Write accumulated data with current metrics
-                accumulated_results = {
-                    'test_duration': self.duration_minutes,
-                    'actual_duration': time.time() - self.start_time,
-                    'peak_memory_mb': self.peak_memory,
-                    'auto_save': auto_save,
-                    'autosave_number': self._accumulated_data['autosave_count'],
-                    'gps_available': self.total_gps_fixes > 0,
-                    'gps_fixes_collected': self.total_gps_fixes,
-                    'gps_first_fix_latency_seconds': self.gps_first_fix_latency,
-                    'gps_daemon_restart_count': self.restart_counts['gps'],
-                    'gps_samples': self._accumulated_data['gps_samples'],
-                    'accel_samples': self._accumulated_data['accel_samples'],
-                    'gyro_samples': self._accumulated_data['gyro_samples'],
+                chunk_payload = {
+                    'chunk_index': chunk_index,
+                    'chunk_timestamp': time.time(),
+                    'gps_samples': chunk_gps,
+                    'accel_samples': chunk_accel,
+                    'gyro_samples': chunk_gyro,
                     'trajectories': {
                         'ekf': list(self.ekf_trajectory) if hasattr(self, 'ekf_trajectory') else [],
                         'es_ekf': list(self.es_ekf_trajectory) if hasattr(self, 'es_ekf_trajectory') else [],
                         'complementary': list(self.comp_trajectory) if hasattr(self, 'comp_trajectory') else []
-                    },
-                    'covariance_snapshots': list(self.covariance_snapshots) if hasattr(self, 'covariance_snapshots') else [],
-                    'final_metrics': {
-                        'ekf': self.ekf.get_state(),
-                        'complementary': self.complementary.get_state()
                     }
                 }
 
-                filename = f"{base_filename}.json.gz"
-                temp_filename = f"{filename}.tmp"
+                chunk_filename = f"{base_filename}_chunk_{chunk_index:04d}.json.gz"
+                temp_filename = f"{chunk_filename}.tmp"
 
                 try:
                     with gzip.open(temp_filename, 'wt', encoding='utf-8') as f:
-                        json.dump(accumulated_results, f, separators=(',', ':'))
+                        json.dump(chunk_payload, f, separators=(',', ':'))
 
-                    # Atomic rename - only clears deques AFTER confirming save succeeded
-                    os.rename(temp_filename, filename)
+                    os.rename(temp_filename, chunk_filename)
 
-                    # ✅ Save confirmed - NOW clear samples to free memory
+                    autosave_state['autosave_count'] = chunk_index
+                    autosave_state['chunk_totals']['gps'] += len(chunk_gps)
+                    autosave_state['chunk_totals']['accel'] += len(chunk_accel)
+                    autosave_state['chunk_totals']['gyro'] += len(chunk_gyro)
+                    autosave_state['chunk_files'].append({
+                        'file': chunk_filename,
+                        'gps_samples': len(chunk_gps),
+                        'accel_samples': len(chunk_accel),
+                        'gyro_samples': len(chunk_gyro)
+                    })
+                    self._write_chunk_manifest()
+
                     if clear_after_save:
-                        # Reset numpy array indices (reuse pre-allocated memory)
-                        gps_count = self.gps_index
-                        accel_count = self.accel_index
-                        gyro_count = self.gyro_index
-
                         self.gps_index = 0
                         self.accel_index = 0
                         self.gyro_index = 0
 
-                        # MEMORY OPTIMIZATION: Clear accumulated_data after successful save
-                        # Data is preserved on disk in gzip format, no need to keep in memory
-                        # This prevents memory growth for long tests (45+ min)
-                        gps_count_saved = len(self._accumulated_data['gps_samples'])
-                        accel_count_saved = len(self._accumulated_data['accel_samples'])
-
-                        self._accumulated_data['gps_samples'].clear()
-                        self._accumulated_data['accel_samples'].clear()
-                        self._accumulated_data['gyro_samples'].clear()
-
-                        # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
-                        # Resetting velocity to 0 mid-test creates fake physics
-
-                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Saved: {gps_count_saved} GPS + {accel_count_saved} accel | Memory cleared, indices reset")
+                        print(f"✓ Auto-saved chunk #{chunk_index}: {chunk_filename} | Saved: {len(chunk_gps)} GPS + {len(chunk_accel)} accel + {len(chunk_gyro)} gyro | Memory cleared, indices reset")
                     else:
-                        gps_count_display = len(self._accumulated_data['gps_samples'])
-                        accel_count_display = len(self._accumulated_data['accel_samples'])
-                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Total: {gps_count_display} GPS + {accel_count_display} accel")
+                        print(f"✓ Auto-saved chunk #{chunk_index}: {chunk_filename} | Total chunk counts updated")
                 except Exception as e:
                     print(f"\n⚠️ WARNING: Auto-save failed (test will continue, data kept in memory): {e}", file=sys.stderr)
-                    # Clean up temp file if it exists
                     try:
                         os.remove(temp_filename)
                     except:
                         pass
-                    # Do NOT clear deques on failure - keep data in memory for final save
+                    # Do NOT clear arrays on failure - keep data in memory for final save
         else:
-            # Final save: Read last auto-save from disk + current deque contents
-            # (accumulated_data is now cleared after each auto-save to save memory)
+            # Final save: stitch together chunk files + any remaining in-memory samples
             with self._save_lock:
-                if hasattr(self, '_accumulated_data') and self._accumulated_data['autosave_count'] > 0:
-                    # Read last auto-save from disk (memory was cleared to prevent growth)
-                    autosave_filename = f"{base_filename}.json.gz"
-                    try:
-                        with gzip.open(autosave_filename, 'rt', encoding='utf-8') as f:
-                            last_autosave = json.load(f)
-
-                        # Combine disk data with current numpy array contents (samples since last auto-save)
-                        final_gps = last_autosave['gps_samples'] + self._numpy_to_list(self.gps_samples, self.gps_index, 'gps')
-                        final_accel = last_autosave['accel_samples'] + self._numpy_to_list(self.accel_samples, self.accel_index, 'accel')
-                        final_gyro = last_autosave['gyro_samples'] + self._numpy_to_list(self.gyro_samples, self.gyro_index, 'gyro')
-
-                        # DEBUG: Validate data is being assembled correctly
-                        print(f"\n✓ Final save data assembly (disk + numpy arrays):")
-                        print(f"  Last auto-save GPS: {len(last_autosave['gps_samples'])}")
-                        print(f"  Current numpy GPS: {self.gps_index}")
-                        print(f"  Final GPS: {len(final_gps)}")
-                        print(f"  Last auto-save Accel: {len(last_autosave['accel_samples'])}")
-                        print(f"  Current numpy Accel: {self.accel_index}")
-                        print(f"  Final Accel: {len(final_accel)}")
-
-                        results['gps_samples'] = final_gps
-                        results['accel_samples'] = final_accel
-                        results['gyro_samples'] = final_gyro
-                        results['total_autosaves'] = self._accumulated_data['autosave_count']
-                    except FileNotFoundError:
-                        # Auto-save file missing (shouldn't happen), fall back to deques only
-                        print(f"⚠️ Warning: Auto-save file not found, using deques only")
-                        pass
-                    except Exception as e:
-                        print(f"⚠️ Warning: Failed to read auto-save ({e}), using deques only")
-                        pass
+                manifest_path = None
+                if hasattr(self, '_autosave_state'):
+                    manifest_path = self._autosave_state['manifest_path']
                 else:
-                    # No auto-saves occurred, use current deques (already set in results dict above)
-                    pass
+                    manifest_path = f"{base_filename}_chunks.json"
+
+                chunk_entries = []
+                chunk_totals = {'gps': 0, 'accel': 0, 'gyro': 0}
+
+                if manifest_path and os.path.exists(manifest_path):
+                    try:
+                        with open(manifest_path, 'r') as f:
+                            manifest = json.load(f)
+                        chunk_entries = manifest.get('chunks', [])
+                        manifest_totals = manifest.get('totals', {})
+                        for key in chunk_totals.keys():
+                            chunk_totals[key] = manifest_totals.get(key, 0)
+                    except Exception as e:
+                        print(f"⚠️ Warning: Failed to read chunk manifest ({e}); attempting best-effort reconstruction")
+
+                if not chunk_entries and hasattr(self, '_autosave_state'):
+                    chunk_entries = list(self._autosave_state['chunk_files'])
+                    for key in chunk_totals.keys():
+                        chunk_totals[key] = self._autosave_state['chunk_totals'].get(key, 0)
+
+                chunk_data_gps = []
+                chunk_data_accel = []
+                chunk_data_gyro = []
+                trajectory_keys = ['ekf', 'es_ekf', 'complementary']
+                chunk_trajectories = {key: [] for key in trajectory_keys}
+
+                for entry in chunk_entries:
+                    chunk_file = entry.get('file')
+                    if not chunk_file:
+                        continue
+                    try:
+                        with gzip.open(chunk_file, 'rt', encoding='utf-8') as f:
+                            chunk_payload = json.load(f)
+                        chunk_data_gps.extend(chunk_payload.get('gps_samples', []))
+                        chunk_data_accel.extend(chunk_payload.get('accel_samples', []))
+                        chunk_data_gyro.extend(chunk_payload.get('gyro_samples', []))
+                        chunk_traj_payload = chunk_payload.get('trajectories', {})
+                        for key in trajectory_keys:
+                            chunk_trajectories[key].extend(chunk_traj_payload.get(key, []))
+                    except FileNotFoundError:
+                        print(f"⚠️ Warning: Chunk file missing ({chunk_file})")
+                    except Exception as e:
+                        print(f"⚠️ Warning: Failed to read chunk file {chunk_file}: {e}")
+
+                # Samples still in memory since last auto-save
+                current_gps = self._numpy_to_list(self.gps_samples, self.gps_index, 'gps')
+                current_accel = self._numpy_to_list(self.accel_samples, self.accel_index, 'accel')
+                current_gyro = self._numpy_to_list(self.gyro_samples, self.gyro_index, 'gyro') if self.enable_gyro else []
+
+                # Combine chunks + current samples
+                final_gps = chunk_data_gps + current_gps
+                final_accel = chunk_data_accel + current_accel
+                final_gyro = chunk_data_gyro + current_gyro
+
+                results['gps_samples'] = final_gps
+                results['accel_samples'] = final_accel
+                results['gyro_samples'] = final_gyro
+
+                current_trajectories = {
+                    'ekf': list(self.ekf_trajectory) if hasattr(self, 'ekf_trajectory') else [],
+                    'es_ekf': list(self.es_ekf_trajectory) if hasattr(self, 'es_ekf_trajectory') else [],
+                    'complementary': list(self.comp_trajectory) if hasattr(self, 'comp_trajectory') else []
+                }
+                for key in trajectory_keys:
+                    chunk_trajectories[key].extend(current_trajectories.get(key, []))
+                results['trajectories'] = chunk_trajectories
+
+                if hasattr(self, '_autosave_state'):
+                    results['total_autosaves'] = self._autosave_state['autosave_count']
+                elif chunk_entries:
+                    results['total_autosaves'] = len(chunk_entries)
+
+                # Sanity check: make sure manifest totals align with reconstructed data
+                if chunk_entries:
+                    print("\n✓ Final chunk reconstruction sanity check:")
+                    for key, label in [('gps', 'GPS'), ('accel', 'Accel'), ('gyro', 'Gyro')]:
+                        expected = chunk_totals.get(key, 0) + (len(current_gps) if key == 'gps' else len(current_accel) if key == 'accel' else len(current_gyro))
+                        actual = len(final_gps) if key == 'gps' else len(final_accel) if key == 'accel' else len(final_gyro)
+                        if actual == expected:
+                            print(f"  • {label}: OK ({actual} samples matches chunk manifest)")
+                        else:
+                            print(f"  • {label}: MISMATCH (manifest expected {expected}, reconstructed {actual})")
 
             # Final save - both compressed and uncompressed
             try:
