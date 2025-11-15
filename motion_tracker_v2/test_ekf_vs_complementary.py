@@ -404,14 +404,12 @@ class FilterComparison:
         self.accel_index = 0
         self.gyro_index = 0
 
-        # Keep comparison_samples as deque (small size, dict-based OK)
-        self.comparison_samples = deque(maxlen=2000)
-
-        # NEW: Trajectory storage for multi-track visualization
-        self.ekf_trajectory = deque(maxlen=1000)  # EKF position history
-        self.es_ekf_trajectory = deque(maxlen=1000)  # ES-EKF position history (dead reckoning)
-        self.comp_trajectory = deque(maxlen=1000)  # Complementary position history
-        self.covariance_snapshots = deque(maxlen=500)  # Covariance every 10th GPS fix (~30s intervals)
+        # MEMORY OPTIMIZATION: Reduced trajectory buffers (GPS @ 0.2 Hz = ~8 min history at maxlen=100)
+        # Data integrity: Auto-save captures everything in accumulated_data, these are just for visualization
+        self.ekf_trajectory = deque(maxlen=100)  # EKF position history (was 1000, saves ~2.7 MB)
+        self.es_ekf_trajectory = deque(maxlen=100)  # ES-EKF position history (was 1000, saves ~2.7 MB)
+        self.comp_trajectory = deque(maxlen=100)  # Complementary position history (was 1000, saves ~2.7 MB)
+        self.covariance_snapshots = deque(maxlen=50)  # Covariance snapshots (was 500, saves ~2 MB)
 
         # FIX 2: Thread lock for accumulated_data and deque operations
         self._save_lock = threading.Lock()
@@ -453,7 +451,8 @@ class FilterComparison:
         self.es_ekf_paused = False  # Track if ES-EKF temporarily paused due to memory pressure
 
         # Auto-save configuration
-        self.auto_save_interval = 15  # Save every 15 seconds (for live dashboard)
+        # MEMORY OPTIMIZATION: Reduced 15s → 5s to clear accumulated_data more frequently
+        self.auto_save_interval = 5  # Save every 5 seconds (reduces peak memory by ~10-15 MB)
 
         # Metrics collector (for gyro-EKF validation)
         self.metrics = None

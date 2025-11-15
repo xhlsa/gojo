@@ -64,9 +64,9 @@ class IncidentDetector:
         self.gps_buffer = deque(maxlen=buffer_size)
 
         # Incident tracking
-        # MEMORY FIX: Don't accumulate incidents in memory (saved to disk already)
-        # Use deque with maxlen to bound memory for summary stats
-        self.incidents = deque(maxlen=100)  # Keep last 100 for get_incidents(), ~20 MB max
+        # MEMORY OPTIMIZATION: Incidents saved to disk, only keep recent ones in memory
+        # Each incident ~200 KB (30s context @ 44 Hz), so 20 * 200 KB = ~4 MB
+        self.incidents = deque(maxlen=20)  # Keep last 20 for get_incidents() (was 100, saves ~16 MB)
         self.last_incident_time = None
         self.incident_cooldown = 5.0  # seconds (prevent duplicate logging)
 
