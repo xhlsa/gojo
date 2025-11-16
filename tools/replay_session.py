@@ -229,15 +229,14 @@ def write_gpx(
         lines.append("    </trkseg>")
         lines.append("  </trk>")
 
-    write_track("GPS", "Raw GPS fixes", tracks.get("gps", []))
+    write_track("ES-EKF", "Error-state EKF trajectory", tracks.get("es_ekf", []))
     write_track("EKF", "Extended Kalman Filter trajectory", tracks.get("ekf", []))
+    write_track("GPS", "Raw GPS fixes", tracks.get("gps", []))
     write_track(
         "Complementary",
         "Complementary filter (GPS-weighted fusion)",
         tracks.get("complementary", []),
     )
-    if "es_ekf" in tracks:
-        write_track("ES-EKF", "Error-state EKF trajectory", tracks["es_ekf"])
 
     lines.append("</gpx>")
     output_path.write_text("\n".join(lines), encoding="utf-8")
@@ -259,10 +258,18 @@ def parse_args() -> argparse.Namespace:
         "--start-time",
         help="ISO8601 timestamp to use for GPX metadata (default: current UTC)",
     )
+    parser.set_defaults(include_es_ekf=True)
     parser.add_argument(
         "--include-es-ekf",
+        dest="include_es_ekf",
         action="store_true",
-        help="Replay the ES-EKF track if data and module are available",
+        help="(default) replay the ES-EKF track if data and module are available",
+    )
+    parser.add_argument(
+        "--no-es-ekf",
+        dest="include_es_ekf",
+        action="store_false",
+        help="Disable ES-EKF replay (only GPS/EKF/Complementary)",
     )
     return parser.parse_args()
 

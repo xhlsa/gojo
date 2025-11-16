@@ -88,7 +88,7 @@ def _maybe_replay_trajectories(data):
         events, start_offset = replay_mod.build_events(data)
         if not events:
             return trajectories
-        include_es = bool(data.get('gyro_samples'))
+        include_es = True
         replayed = replay_mod.replay_session(data, start_timestamp=-start_offset, include_es=include_es)
     except Exception as exc:
         print(f"Replay fallback failed: {exc}")
@@ -132,10 +132,9 @@ def generate_gpx(json_filepath: str, output_filepath: str = None):
 
     print(f"Extracted {len(gps_points)} GPS coordinates")
 
+    trajectories = _maybe_replay_trajectories(data)
     if not gps_points and trajectories.get('gps'):
         gps_points = trajectories['gps']
-
-    trajectories = _maybe_replay_trajectories(data)
     ekf_track = trajectories.get('ekf', [])
     comp_track = trajectories.get('complementary', [])
     es_track = trajectories.get('es_ekf', [])
@@ -155,10 +154,10 @@ def generate_gpx(json_filepath: str, output_filepath: str = None):
         '  </metadata>'
     ]
 
-    _append_track(gpx_lines, 'GPS', 'Raw GPS fixes', gps_points, start_dt)
+    _append_track(gpx_lines, 'ES-EKF', 'Error-state EKF trajectory (smoothed path)', es_track, start_dt)
     _append_track(gpx_lines, 'EKF', 'Extended Kalman Filter trajectory', ekf_track, start_dt)
+    _append_track(gpx_lines, 'GPS', 'Raw GPS fixes', gps_points, start_dt)
     _append_track(gpx_lines, 'Complementary', 'Complementary filter trajectory', comp_track, start_dt)
-    _append_track(gpx_lines, 'ES-EKF', 'Error-state EKF trajectory', es_track, start_dt)
 
     gpx_lines.append('</gpx>')
     gpx = '\n'.join(gpx_lines) + '\n'

@@ -47,7 +47,7 @@ def maybe_replay_trajectories(data: dict) -> dict:
         events, start_offset = replay_mod.build_events(data)
         if not events:
             return trajectories
-        include_es = bool(data.get("gyro_samples"))
+        include_es = True
         replayed = replay_mod.replay_session(
             data,
             start_timestamp=-start_offset,
@@ -1845,13 +1845,19 @@ def root():
     <script>
         let map = null;
         let trackLayers = {};
-        let trackVisibility = {};
+        let trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
         let currentGpxLayers = [];
         const TRACK_COLORS = {
             'GPS': '#2563eb',
             'EKF': '#22c55e',
             'Complementary': '#f97316',
             'ES-EKF': '#a855f7'
+        };
+        const DEFAULT_TRACK_VISIBILITY = {
+            'ES-EKF': true,
+            'GPS': false,
+            'EKF': false,
+            'Complementary': false
         };
         let drives = [];
         let displayedDrives = [];
@@ -2192,7 +2198,7 @@ def root():
                     currentGpxLayers.forEach(layer => map.removeLayer(layer));
                     currentGpxLayers = [];
                     trackLayers = {};
-                    trackVisibility = {};
+                    trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
                     const legend = document.getElementById('trackLegend');
                     if (legend) {
                         legend.innerHTML = '<div class="track-toggle">No tracks available</div>';
@@ -2280,7 +2286,7 @@ def root():
                 currentGpxLayers.forEach(layer => map.removeLayer(layer));
                 currentGpxLayers = [];
                 trackLayers = {};
-                trackVisibility = {};
+                trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
 
                 // Parse GPX
                 showStatus('Parsing GPS data...', 'info', 0);
@@ -2326,10 +2332,14 @@ def root():
                     });
 
                     trackLayers[name] = layer;
-                    if (trackVisibility[name] !== false) {
+                    if (!(name in trackVisibility)) {
+                        trackVisibility[name] = Object.prototype.hasOwnProperty.call(DEFAULT_TRACK_VISIBILITY, name)
+                            ? DEFAULT_TRACK_VISIBILITY[name]
+                            : true;
+                    }
+                    if (trackVisibility[name]) {
                         layer.addTo(map);
                         currentGpxLayers.push(layer);
-                        trackVisibility[name] = true;
                     }
                 });
 
@@ -2365,6 +2375,14 @@ def root():
                 legend.innerHTML = '<div class=\"track-toggle\">No tracks available</div>';
                 return;
             }
+
+            trackNames.forEach(name => {
+                if (!(name in trackVisibility)) {
+                    trackVisibility[name] = Object.prototype.hasOwnProperty.call(DEFAULT_TRACK_VISIBILITY, name)
+                        ? DEFAULT_TRACK_VISIBILITY[name]
+                        : true;
+                }
+            });
 
             legend.innerHTML = trackNames.map(name => `
                 <label class=\"track-toggle\">
@@ -2511,47 +2529,3 @@ if __name__ == "__main__":
     print(f"Starting Motion Tracker Dashboard on http://localhost:{port}")
     print(f"Sessions directory: {SESSIONS_DIR}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
-def maybe_replay_trajectories(data: dict) -> dict:
-    """Reconstruct EKF/complementary trajectories if the session lacks step-by-step points."""
-    trajectories = data.get("trajectories") or {}
-    has_dense = any(len(trajectories.get(key, [])) >= 20 for key in ("ekf", "complementary", "es_ekf"))
-    if has_dense or replay_mod is None:
-        return trajectories
-
-    try:
-        events, start_offset = replay_mod.build_events(data)
-        if not events:
-            return trajectories
-        include_es = bool(data.get("gyro_samples"))
-        replayed = replay_mod.replay_session(
-            data,
-            start_timestamp=-start_offset,
-            include_es=include_es,
-        )
-    except Exception as exc:
-        print(f"Replay fallback failed: {exc}")
-        return trajectories
-
-    def convert(points):
-        converted = []
-        for pt in points or []:
-            lat = pt.get("lat")
-            lon = pt.get("lon")
-            if lat is None or lon is None:
-                continue
-            converted.append({
-                "lat": lat,
-                "lon": lon,
-                "timestamp": pt.get("timestamp"),
-                "uncertainty_m": pt.get("uncertainty_m"),
-            })
-        return converted
-
-    result = dict(trajectories)
-    result["ekf"] = convert(replayed.get("ekf"))
-    result["complementary"] = convert(replayed.get("complementary"))
-    if "es_ekf" in replayed:
-        result["es_ekf"] = convert(replayed.get("es_ekf"))
-    if "gps" in replayed and not trajectories.get("gps"):
-        result["gps"] = convert(replayed.get("gps"))
-    return result
