@@ -27,6 +27,7 @@ import threading
 import time
 import numpy as np
 from .base import SensorFusionBase
+from .utils import haversine_distance, latlon_to_meters
 
 # Try to import filterpy for reference (optional)
 try:
@@ -108,9 +109,11 @@ class ExtendedKalmanFilter(SensorFusionBase):
             self.Q[8, 8] = q_gyro**2  # q2
             self.Q[9, 9] = q_gyro**2  # q3
 
-            # Gyro bias random walk: slow drift model (very small process noise)
-            # Measured LSM6DSO drift: 0.000064 rad/s max, conservative: 0.0003
-            q_bias = 0.0003  # rad/s² - very slow bias drift rate
+            # Gyro bias random walk: slow drift model
+            # Measured LSM6DSO drift: 0.000064 rad/s max
+            # Tuned: 0.0005 rad/s² allows 3x faster convergence vs 0.0003
+            # Still conservative but enables quicker bias learning during GPS gaps
+            q_bias = 0.0005  # rad/s² - allows reasonable drift model learning
             self.Q[10, 10] = q_bias**2  # bx (bias X)
             self.Q[11, 11] = q_bias**2  # by (bias Y)
             self.Q[12, 12] = q_bias**2  # bz (bias Z)
@@ -152,33 +155,6 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
         # Thread safety
         self.lock = threading.Lock()
-
-    def latlon_to_meters(self, lat, lon, origin_lat, origin_lon):
-        """Convert lat/lon to local x/y meters from origin using equirectangular projection."""
-        R = 6371000  # Earth radius in meters
-
-        lat_rad = math.radians(lat)
-        origin_lat_rad = math.radians(origin_lat)
-
-        x = R * math.radians(lon - origin_lon) * math.cos(origin_lat_rad)
-        y = R * math.radians(lat - origin_lat)
-
-        return x, y
-
-    def haversine_distance(self, lat1, lon1, lat2, lon2):
-        """Calculate distance between two GPS coordinates in meters."""
-        R = 6371000  # Earth radius in meters
-
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        delta_phi = math.radians(lat2 - lat1)
-        delta_lambda = math.radians(lon2 - lon1)
-
-        a = (math.sin(delta_phi/2) ** 2 +
-             math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2) ** 2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-        return R * c
 
     def quaternion_multiply(self, q1, q2):
         """
@@ -380,30 +356,37 @@ class ExtendedKalmanFilter(SensorFusionBase):
                 return self.velocity, self.distance
 
             # Convert lat/lon to local meters
-            x, y = self.latlon_to_meters(latitude, longitude,
-                                        self.origin_lat_lon[0],
-                                        self.origin_lat_lon[1])
+            x, y = latlon_to_meters(latitude, longitude,
+                                    self.origin_lat_lon[0],
+                                    self.origin_lat_lon[1])
             self.last_gps_xy = np.array([x, y])
 
             # Update distance traveled
             if self.last_gps_lat_lon is not None:
-                dist_increment = self.haversine_distance(
+                dist_increment = haversine_distance(
                     self.last_gps_lat_lon[0], self.last_gps_lat_lon[1],
                     latitude, longitude
                 )
 
                 # Use GPS accuracy as noise floor for distance accumulation
                 # This filters out GPS jitter while capturing real movement
-                if gps_accuracy is not None:
+                if gps_accuracy is not None and gps_accuracy > 0:
                     # Subtract GPS noise floor to get true movement
                     true_movement = max(0.0, dist_increment - gps_accuracy)
                     self.distance += true_movement
                 else:
-                    # If no accuracy info, accumulate all movement
-                    self.distance += dist_increment
+                    # If no accuracy info or accuracy=0, assume 2.5m minimum floor
+                    # (GPS providers may report 0 if unknown, use conservative default)
+                    accuracy_floor = 2.5 if gps_accuracy == 0 else 0.0
+                    true_movement = max(0.0, dist_increment - accuracy_floor)
+                    self.distance += true_movement
 
                 # Stationary detection (still used for other purposes like recalibration)
-                movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
+                # Handle accuracy=0 as unknown accuracy (use conservative 5.0m floor)
+                if gps_accuracy is not None and gps_accuracy > 0:
+                    movement_threshold = max(5.0, gps_accuracy * 1.5)
+                else:
+                    movement_threshold = 5.0  # Default if accuracy unknown or zero
                 speed_threshold = 0.1  # m/s
 
                 if gps_speed is not None:
@@ -467,16 +450,24 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
             # CRITICAL FIX: Velocity bounds and GPS drift correction
             # GPS velocity is ground truth - use it to correct Kalman state drift
-            if gps_speed is not None and gps_speed >= 0:
+            # But validate GPS speed is physically reasonable first (< 100 m/s ~360 km/h)
+            MAX_GPS_SPEED = 100.0  # m/s - absolute upper bound for vehicles
+
+            if gps_speed is not None and gps_speed >= 0 and gps_speed <= MAX_GPS_SPEED:
                 # Strong correction: reset velocity to GPS ground truth
                 # This prevents unbounded accumulation of velocity errors
                 if self.velocity > 1.0:  # Only correct when moving
                     speed_ratio = gps_speed / self.velocity if self.velocity > 0.1 else 0.0
+                    # Clamp speed_ratio to prevent extreme scaling (2x max/min)
+                    speed_ratio = np.clip(speed_ratio, 0.5, 2.0)
                     self.state[2] *= speed_ratio  # Scale vx
                     self.state[3] *= speed_ratio  # Scale vy
                     self.velocity = gps_speed
                 else:
                     self.velocity = gps_speed
+            elif gps_speed is not None and gps_speed > MAX_GPS_SPEED:
+                # GPS speed is unreasonably high, log warning and ignore
+                print(f"[EKF GPS] Warning: GPS speed {gps_speed:.2f} m/s exceeds max {MAX_GPS_SPEED} m/s, ignoring GPS speed correction", file=sys.stderr)
 
             # Sanity check: velocity should never exceed 60 m/s (~216 km/h)
             # This catches numerical divergence before it becomes critical

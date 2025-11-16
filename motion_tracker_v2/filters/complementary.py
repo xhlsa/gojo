@@ -13,6 +13,7 @@ import threading
 import time
 from collections import deque
 from .base import SensorFusionBase
+from .utils import haversine_distance
 
 
 class ComplementaryFilter(SensorFusionBase):
@@ -63,20 +64,6 @@ class ComplementaryFilter(SensorFusionBase):
         # Thread safety
         self.lock = threading.Lock()
 
-    def haversine_distance(self, lat1, lon1, lat2, lon2):
-        """Calculate distance between two GPS coordinates in meters"""
-        R = 6371000  # Earth radius in meters
-
-        phi1 = math.radians(lat1)
-        phi2 = math.radians(lat2)
-        delta_phi = math.radians(lat2 - lat1)
-        delta_lambda = math.radians(lon2 - lon1)
-
-        a = (math.sin(delta_phi/2) ** 2 +
-             math.cos(phi1) * math.cos(phi2) * math.sin(delta_lambda/2) ** 2)
-        c = 2 * math.atan2(math.sqrt(a), math.sqrt(1-a))
-
-        return R * c
 
     def update_gps(self, latitude, longitude, gps_speed=None, gps_accuracy=None):
         """Update with GPS data - thread safe"""
@@ -89,7 +76,7 @@ class ComplementaryFilter(SensorFusionBase):
 
                 if dt > 0:
                     # Distance from last GPS position
-                    dist = self.haversine_distance(
+                    dist = haversine_distance(
                         self.last_gps_position[0], self.last_gps_position[1],
                         latitude, longitude
                     )
@@ -103,16 +90,23 @@ class ComplementaryFilter(SensorFusionBase):
 
                     # Use GPS accuracy as noise floor for distance accumulation
                     # This filters out GPS jitter while capturing real movement
-                    if gps_accuracy is not None:
+                    if gps_accuracy is not None and gps_accuracy > 0:
                         # Subtract GPS noise floor to get true movement
                         true_movement = max(0.0, dist - gps_accuracy)
                         self.distance += true_movement
                     else:
-                        # If no accuracy info, accumulate all movement
-                        self.distance += dist
+                        # If no accuracy info or accuracy=0, assume 2.5m minimum floor
+                        # (GPS providers may report 0 if unknown, use conservative default)
+                        accuracy_floor = 2.5 if gps_accuracy == 0 else 0.0
+                        true_movement = max(0.0, dist - accuracy_floor)
+                        self.distance += true_movement
 
                     # STATIONARY DETECTION - Filter GPS noise (still used for velocity zeroing)
-                    movement_threshold = max(5.0, gps_accuracy * 1.5) if gps_accuracy else 5.0
+                    # Handle accuracy=0 as unknown accuracy (use conservative 5.0m floor)
+                    if gps_accuracy is not None and gps_accuracy > 0:
+                        movement_threshold = max(5.0, gps_accuracy * 1.5)
+                    else:
+                        movement_threshold = 5.0  # Default if accuracy unknown or zero
                     speed_threshold = 0.1  # m/s (~0.36 km/h) - optimized from testing
 
                     is_stationary = (dist < movement_threshold and gps_velocity < speed_threshold)
@@ -125,10 +119,12 @@ class ComplementaryFilter(SensorFusionBase):
                         self.accel_velocity = 0.0
                     else:
                         # Moving - fuse velocities
-                        if self.accel_velocity is not None:
+                        # Only fuse with accel if we've received actual accel data (not just init value 0.0)
+                        if self.last_accel_time is not None:
                             self.velocity = (self.gps_weight * gps_velocity +
                                            self.accel_weight * self.accel_velocity)
                         else:
+                            # No accel data yet, use GPS velocity as ground truth
                             self.velocity = gps_velocity
 
                         # Reset accelerometer velocity to GPS velocity (drift correction)
