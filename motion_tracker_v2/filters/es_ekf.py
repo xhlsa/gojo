@@ -291,7 +291,6 @@ class ErrorStateEKF:
                 self.origin_set = True
                 self.last_position = (latitude, longitude)
                 self.last_gps_timestamp = time.time()
-                self.last_gps_timestamp = time.time()
                 self.state[0] = 0.0  # x = 0 at origin
                 self.state[1] = 0.0  # y = 0 at origin
                 self.gps_update_count += 1
@@ -358,6 +357,7 @@ class ErrorStateEKF:
                 self.accumulated_distance += delta_dist
 
             self.last_position = (latitude, longitude)
+            self.last_gps_timestamp = time.time()
             self.gps_update_count += 1
 
             # Return velocity magnitude and distance
