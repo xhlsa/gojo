@@ -92,15 +92,46 @@ def compute_distance_accuracy(data):
     }
 
 
+def _extract_velocity_series(data):
+    """
+    Return aligned EKF/complementary velocity lists even when gps_samples
+    does not embed per-sample velocities (older session format).
+    """
+    gps_samples = data.get('gps_samples', [])
+    if not gps_samples:
+        return None, None
+
+    # Preferred path: gps_samples already include velocities
+    if all('ekf_velocity' in sample and 'comp_velocity' in sample for sample in gps_samples):
+        ekf_velocities = [sample['ekf_velocity'] for sample in gps_samples]
+        comp_velocities = [sample['comp_velocity'] for sample in gps_samples]
+        return ekf_velocities, comp_velocities
+
+    # Fallback: derive from trajectories (matching GPS length to avoid skew)
+    trajectories = data.get('trajectories', {})
+    ekf_track = trajectories.get('ekf') or []
+    comp_track = trajectories.get('complementary') or []
+
+    aligned_len = min(len(gps_samples), len(ekf_track), len(comp_track))
+    if aligned_len < 2:
+        return None, None
+
+    ekf_velocities = [
+        ekf_track[i].get('velocity', 0.0)
+        for i in range(aligned_len)
+    ]
+    comp_velocities = [
+        comp_track[i].get('velocity', 0.0)
+        for i in range(aligned_len)
+    ]
+    return ekf_velocities, comp_velocities
+
+
 def compute_velocity_smoothness(data):
     """Analyze velocity stability and filter divergence"""
-    gps_samples = data['gps_samples']
-
-    if len(gps_samples) < 2:
+    ekf_velocities, comp_velocities = _extract_velocity_series(data)
+    if not ekf_velocities or not comp_velocities:
         return None
-
-    ekf_velocities = [s['ekf_velocity'] for s in gps_samples]
-    comp_velocities = [s['comp_velocity'] for s in gps_samples]
 
     # Standard deviation indicates smoothness (lower = smoother)
     ekf_std = np.std(ekf_velocities)
@@ -133,12 +164,7 @@ def compute_accel_tracking(data):
     if not accel_samples:
         return None
 
-    raw_magnitudes = [s['magnitude'] for s in accel_samples]
-    ekf_magnitudes = [s['ekf_velocity'] for s in accel_samples]  # Using velocity as proxy
-    comp_magnitudes = [s['comp_velocity'] for s in accel_samples]
-
-    # RMS of magnitude
-    ekf_mean = np.mean([s.get('ekf_accel', 0) for s in data.get('final_metrics', {}).get('ekf', {}).values()])
+    raw_magnitudes = [s.get('magnitude', 0.0) for s in accel_samples]
 
     return {
         'raw_mean_magnitude': np.mean(raw_magnitudes),

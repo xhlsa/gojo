@@ -672,6 +672,7 @@ class GPSThread(threading.Thread):
         self.stop_event = stop_event
 
         # Async state tracking
+        self.local_stop_event = threading.Event()
         self.current_process = None
         self.request_start_time = None
         self.last_success_time = time.time()
@@ -681,11 +682,15 @@ class GPSThread(threading.Thread):
         self.poll_interval = 1.0  # Target 1 Hz polling
         self.max_request_duration = 5.0  # Kill requests after 5s (not 15s)
         self.starvation_threshold = 30.0  # Alert if no data for 30s
+        self.starvation_restart_interval = self.starvation_threshold  # seconds
+        self.starvation_restart_cooldown = 5.0  # don't thrash resets
+        self.last_restart_time = 0.0
 
         # Statistics (for health monitoring)
         self.requests_sent = 0
         self.requests_completed = 0
         self.requests_timeout = 0
+        self.forced_restart_count = 0
 
         # NEW: Multi-provider support + quality filtering
         self.current_provider = 'gps'  # Track active provider
@@ -802,15 +807,39 @@ class GPSThread(threading.Thread):
             'success_rate': success_rate,
             'has_process_running': self.current_process is not None,
             'current_provider': self.current_provider,  # NEW: Track active provider
-            'low_quality_rejections': self.low_quality_rejections  # NEW: Track filtered fixes
+            'low_quality_rejections': self.low_quality_rejections,  # NEW: Track filtered fixes
+            'forced_restart_count': self.forced_restart_count
         }
+
+    def request_stop(self):
+        """Stop only this GPS thread without signalling the global tracker stop_event."""
+        self.local_stop_event.set()
+
+    def _force_process_reset(self, reason):
+        """Kill the current termux-location process and mark a forced restart."""
+        if not self.stop_event.is_set() and not self.local_stop_event.is_set():
+            print(f"\n⚠ GPS: {reason} – resetting termux-location")
+
+        if self.current_process:
+            try:
+                self.current_process.kill()
+                self.current_process.wait(timeout=1)
+            except Exception:
+                pass
+
+        self.current_process = None
+        self.requests_timeout += 1
+        self.forced_restart_count += 1
+        self.last_restart_time = time.time()
+        # Treat restart as a pseudo-success to avoid thrashing until the next poll
+        self.last_success_time = time.time()
 
     def run(self):
         """Main GPS polling loop - never blocks main thread"""
         try:
             next_poll_time = time.time()
 
-            while not self.stop_event.is_set():
+            while not self.stop_event.is_set() and not self.local_stop_event.is_set():
                 current_time = time.time()
 
                 # Check if current request finished (non-blocking)
@@ -829,8 +858,22 @@ class GPSThread(threading.Thread):
                         # Failed to start, try again soon
                         next_poll_time = current_time + 0.5
 
+                # Watchdog: force-reset GPS process if no fixes have landed recently
+                time_since_last = current_time - self.last_success_time
+                if (
+                    self.requests_sent > 0 and
+                    time_since_last > self.starvation_restart_interval and
+                    current_time - self.last_restart_time > self.starvation_restart_cooldown
+                ):
+                    self._force_process_reset(f"No GPS fix for {time_since_last:.1f}s")
+                    next_poll_time = current_time
+                    continue
+
                 # Sleep briefly (100ms check interval, never blocks long)
-                self.stop_event.wait(0.1)
+                if self.stop_event.wait(0.1):
+                    break
+                if self.local_stop_event.is_set():
+                    break
 
         except Exception as e:
             print(f"\n⚠ GPS thread FATAL error: {e}")
@@ -1229,6 +1272,10 @@ class MotionTrackerV2:
         self.save_count = 0
         self.last_save_time = None
         self.shutdown_requested = False
+        self.last_gps_sample_time = None
+        self.gps_starvation_restart_interval = 45.0  # seconds without GPS data before restart
+        self.gps_restart_cooldown = 60.0  # seconds between restart attempts
+        self.last_gps_restart_time = 0.0
 
         # Memory monitoring
         self.memory_threshold = 80  # Percent - warn/throttle at this level
@@ -1384,7 +1431,7 @@ class MotionTrackerV2:
         try:
             # Stop existing thread if any
             if self.gps_thread:
-                self.gps_thread.stop_event.set()  # Signal thread to stop
+                self.gps_thread.request_stop()
                 self.gps_thread.join(timeout=1)
 
             # Force kill any stuck termux-location processes
@@ -1581,6 +1628,7 @@ class MotionTrackerV2:
                         gps_data.get('speed'),
                         gps_data.get('accuracy')
                     )
+                    self.last_gps_sample_time = time.time()
                     gps_locked = True
             except Empty:
                 pass
@@ -1670,6 +1718,7 @@ class MotionTrackerV2:
                         gps_data = self.gps_queue.get_nowait()
 
                         if gps_data and gps_data.get('latitude'):
+                            self.last_gps_sample_time = current_time
                             velocity, distance = self.fusion.update_gps(
                                 gps_data['latitude'],
                                 gps_data['longitude'],
@@ -1717,6 +1766,22 @@ class MotionTrackerV2:
 
                 except Empty:
                     pass
+
+                # Trigger GPS restart if queue has been dry for too long
+                if (
+                    self.last_gps_sample_time and
+                    current_time - self.last_gps_sample_time >= self.gps_starvation_restart_interval and
+                    current_time - self.last_gps_restart_time >= self.gps_restart_cooldown
+                ):
+                    gap = current_time - self.last_gps_sample_time
+                    print(f"\n⚠ GPS data stalled for {gap:.0f}s – restarting GPS thread for recovery...")
+                    if self.restart_gps_thread():
+                        print("  ✓ GPS thread restart requested")
+                        self.last_gps_restart_time = current_time
+                        self.last_gps_sample_time = current_time  # reset timer until first fix lands
+                    else:
+                        print("  ⚠ GPS thread restart failed; continuing to monitor")
+                        self.last_gps_restart_time = current_time
 
                 # Process accelerometer queue (non-blocking, drain multiple samples)
                 accel_batch_count = 0
