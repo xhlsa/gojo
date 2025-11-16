@@ -11,14 +11,16 @@ Simple, privacy-focused vehicle incident logging using GPS + accelerometer + gyr
 ```bash
 cd ~/gojo
 
-# Run 30-minute session (production deployment)
-./motion_tracker_v2.sh 30
-
-# With full metrics validation
+# Primary workflow (sensor cleanup + EKF metrics)
 ./test_ekf.sh 30 --gyro
+
+# Lightweight production session (no comparison output)
+./motion_tracker_v2.sh 30
 
 # Data saves to: ~/gojo/motion_tracker_sessions/motion_track_v2_*.json
 ```
+
+`./test_ekf.sh` is the canonical harness—use it for validation, debugging, and demos so accelerometer/GPS prep, logging, and analyzer outputs stay consistent.
 
 **Output Example:**
 ```
@@ -30,6 +32,10 @@ cd ~/gojo
 
 ## 📖 Full Documentation
 
+**→ See `AGENTS.md` for:**
+- Repository structure, build/test commands, and coding style conventions
+- Test expectations plus how to package logs and metrics for review
+
 **→ See `.claude/CLAUDE.md` for:**
 - Complete operational guide
 - Real-time metric interpretation
@@ -38,6 +44,11 @@ cd ~/gojo
 - Production readiness checklist
 - 7 reusable code patterns with line references
 - Session logs & technical decisions
+
+**→ See `GEMINI.md` for:**
+- Quick orientation for Gemini-based agents and automation
+- Links back to README + AGENTS to keep instructions in sync
+- Notes on how to hand off CLAUDE findings into scripted workflows
 
 **→ See `motion_tracker_v2/docs/INCIDENT_DETECTION.md` for:**
 - Detailed incident types & thresholds

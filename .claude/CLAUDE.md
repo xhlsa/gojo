@@ -1,8 +1,35 @@
 # Gojo Motion Tracker V2 - Project Reference
 
-## Latest: Nov 13, 2025 (Afternoon) - Memory Optimizations + Sensor Rate Discovery
+> Quick links: [README.md](../README.md) · [AGENTS.md](../AGENTS.md) · [GEMINI.md](../GEMINI.md) · [GYRO_BIAS_FINDINGS.md](.claude/GYRO_BIAS_FINDINGS.md)
+>
+> Default entrypoint for validation/debugging: `./test_ekf.sh`
 
-**Status:** ✅ READY FOR 45-MIN DRIVE TEST (Memory bounded, 2.5x faster sampling)
+## Latest: Nov 15, 2025 (Evening) - Gyroscope Bias Characterization Complete
+
+**Status:** ✅ READY FOR 45-MIN DRIVE TEST (EKF optimized with measured gyro parameters)
+
+### Gyroscope Bias & Noise Characterization (Nov 15, 2025)
+**Problem:** Need accurate EKF gyro parameters to optimize filter tuning
+**Solution:** Stationary bias test (60s) + dynamic noise analysis (30s) on LSM6DSO
+
+**Key Findings:**
+- **Hardware Bias:** 0.000072 rad/s max (negligible - 250x better than spec guarantee)
+- **Measurement Noise:** 0.000189 rad/s std dev (excellent for MEMS)
+- **Thermal Drift:** 0.000064 rad/s over 60s (extremely stable)
+
+**EKF Parameters Updated:**
+- `gyro_noise_std`: 0.0005 rad/s (was 0.1) - conservative 1.5x multiplier
+- `q_bias`: 0.0003 rad/s² (was 0.01) - conservative 2x multiplier
+- **Files modified:** motion_tracker_v2/filters/ekf.py (lines 54, 102)
+- **Full analysis:** [GYRO_BIAS_FINDINGS.md](.claude/GYRO_BIAS_FINDINGS.md)
+
+**Impact:** EKF now trusts gyro more during GPS gaps, improving trajectory stability on 2-3s gaps.
+
+---
+
+## Nov 13, 2025 (Afternoon) - Memory Optimizations + Sensor Rate Discovery
+
+**Status:** ✅ MEMORY BOUNDED (92-95 MB stable on 45-min tests)
 
 ### Memory Optimizations + Sensor Discovery (Nov 13, 2025 Afternoon)
 **Problem:** Previous 45-min test hit 99+ MB → Android LMK killed daemons → death spiral
