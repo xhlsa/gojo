@@ -1264,9 +1264,17 @@ class FilterComparison:
         sys.stderr.flush()
         samples_processed = {'accel': 0, 'gps': 0, 'gyro': 0}
         consecutive_failures = 0
+        predict_interval = getattr(self.es_ekf, 'dt', 0.02)
+        last_predict = time.time()
 
         while not self.stop_event.is_set():
             try:
+                now = time.time()
+                # Run prediction steps to keep the dead-reckoning state moving between sensor updates
+                while now - last_predict >= predict_interval:
+                    self.es_ekf.predict()
+                    last_predict += predict_interval
+
                 # MEMORY GUARD: Skip processing if paused due to memory pressure
                 if self.es_ekf_paused:
                     time.sleep(0.1)  # Sleep while paused

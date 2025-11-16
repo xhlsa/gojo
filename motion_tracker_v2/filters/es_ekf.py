@@ -94,6 +94,7 @@ class ErrorStateEKF:
         # Track accumulated distance
         self.accumulated_distance = 0.0
         self.last_position = None
+        self.last_gps_timestamp = None
 
         # Gravity magnitude for accel processing
         self.gravity_magnitude = 9.81
@@ -269,6 +270,12 @@ class ErrorStateEKF:
 
             self.predict_count += 1
 
+            vel_mag = math.sqrt(self.state[2]**2 + self.state[3]**2)
+            if self.last_position is not None:
+                now = time.time()
+                if self.last_gps_timestamp is None or (now - self.last_gps_timestamp) > 1.0:
+                    self.accumulated_distance += max(0.0, vel_mag * self.dt)
+
     def update_gps(self, latitude, longitude, gps_speed=None, gps_accuracy=None):
         """
         GPS position correction. Also initializes heading from GPS bearing
@@ -283,6 +290,8 @@ class ErrorStateEKF:
                 self.origin_lon = longitude
                 self.origin_set = True
                 self.last_position = (latitude, longitude)
+                self.last_gps_timestamp = time.time()
+                self.last_gps_timestamp = time.time()
                 self.state[0] = 0.0  # x = 0 at origin
                 self.state[1] = 0.0  # y = 0 at origin
                 self.gps_update_count += 1
@@ -395,6 +404,11 @@ class ErrorStateEKF:
             self.P = I_KH @ self.P @ I_KH.T + K @ self.R_accel @ K.T
 
             # Decompose velocity by heading
+            accel_delta = accel_magnitude * self.dt
+            if self.heading_initialized:
+                self.state[2] += accel_delta * np.cos(self.state[6])
+                self.state[3] += accel_delta * np.sin(self.state[6])
+
             vel_mag = np.sqrt(self.state[2]**2 + self.state[3]**2)
             if not self.heading_initialized:
                 # Use first velocity direction as initial heading
