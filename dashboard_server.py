@@ -1845,7 +1845,7 @@ def root():
     <script>
         let map = null;
         let trackLayers = {};
-        let trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
+        let trackVisibility = {};
         let currentGpxLayers = [];
         const TRACK_COLORS = {
             'GPS': '#2563eb',
@@ -1853,12 +1853,7 @@ def root():
             'Complementary': '#f97316',
             'ES-EKF': '#a855f7'
         };
-        const DEFAULT_TRACK_VISIBILITY = {
-            'ES-EKF': true,
-            'GPS': false,
-            'EKF': false,
-            'Complementary': false
-        };
+        const TRACK_PRIORITY = ['ES-EKF', 'EKF', 'GPS', 'Complementary'];
         let drives = [];
         let displayedDrives = [];
         const DRIVES_PER_PAGE = 15;
@@ -2198,7 +2193,7 @@ def root():
                     currentGpxLayers.forEach(layer => map.removeLayer(layer));
                     currentGpxLayers = [];
                     trackLayers = {};
-                    trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
+                    trackVisibility = {};
                     const legend = document.getElementById('trackLegend');
                     if (legend) {
                         legend.innerHTML = '<div class="track-toggle">No tracks available</div>';
@@ -2286,7 +2281,7 @@ def root():
                 currentGpxLayers.forEach(layer => map.removeLayer(layer));
                 currentGpxLayers = [];
                 trackLayers = {};
-                trackVisibility = Object.assign({}, DEFAULT_TRACK_VISIBILITY);
+                trackVisibility = {};
 
                 // Parse GPX
                 showStatus('Parsing GPS data...', 'info', 0);
@@ -2294,14 +2289,27 @@ def root():
                 console.log('GeoJSON features:', geoJSON.features.length);
 
                 const trackFeatures = {};
+                const trackHasRoute = {};
                 geoJSON.features.forEach(feature => {
                     const trackName = feature.properties.trackName || 'GPS';
                     if (!trackFeatures[trackName]) trackFeatures[trackName] = [];
+                    if (!trackHasRoute[trackName]) trackHasRoute[trackName] = false;
+                    if (feature.geometry?.type === 'LineString' && feature.geometry.coordinates?.length > 1) {
+                        trackHasRoute[trackName] = true;
+                    }
                     trackFeatures[trackName].push(feature);
                 });
 
                 const trackNames = Object.keys(trackFeatures);
                 showStatus(`Parsed ${trackNames.length} track(s)`, 'info', 2000);
+
+                const primaryTrack = TRACK_PRIORITY.find(name => trackHasRoute[name]) ||
+                                     trackNames.find(name => trackHasRoute[name]) ||
+                                     trackNames[0];
+                trackVisibility = {};
+                trackNames.forEach(name => {
+                    trackVisibility[name] = name === primaryTrack;
+                });
 
                 trackNames.forEach(name => {
                     const layer = L.geoJSON({type: 'FeatureCollection', features: trackFeatures[name]}, {
@@ -2386,7 +2394,7 @@ def root():
 
             legend.innerHTML = trackNames.map(name => `
                 <label class=\"track-toggle\">
-                    <input type=\"checkbox\" data-track=\"${name}\" ${trackVisibility[name] !== false ? 'checked' : ''}>
+                    <input type=\"checkbox\" data-track=\"${name}\" ${trackVisibility[name] ? 'checked' : ''}>
                     <span class=\"track-color\" style=\"background:${TRACK_COLORS[name] || '#667eea'}\"></span>
                     <span>${name}</span>
                 </label>
