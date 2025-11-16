@@ -32,6 +32,7 @@ import tracemalloc
 import json
 import os
 import gzip
+import sqlite3
 import psutil
 import numpy as np
 from queue import Queue, Empty
@@ -445,6 +446,9 @@ class FilterComparison:
         self.session_timestamp = datetime.fromtimestamp(self.start_time).strftime("%Y%m%d_%H%M%S")
         self.buffer_chunk_dir = os.path.join(SESSIONS_DIR, 'buffer_chunks', self.session_timestamp)
         os.makedirs(self.buffer_chunk_dir, exist_ok=True)
+        self._sensor_db_conn = None
+        self._sensor_db_path = os.path.join(self.buffer_chunk_dir, "sensor_cache.sqlite")
+        self._init_sensor_cache()
 
         # FIX 2: Thread lock for accumulated_data and buffer operations
         self._save_lock = threading.RLock()
@@ -1993,6 +1997,146 @@ class FilterComparison:
             for i in range(count)
         ]
 
+    def _init_sensor_cache(self):
+        """Initialize SQLite cache used to store auto-saved sensor samples."""
+        try:
+            conn = sqlite3.connect(self._sensor_db_path, check_same_thread=False)
+            conn.execute("PRAGMA journal_mode=WAL;")
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS gps_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    latitude REAL,
+                    longitude REAL,
+                    accuracy REAL,
+                    speed REAL,
+                    provider TEXT
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS accel_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    magnitude REAL
+                )
+            """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS gyro_samples (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    timestamp REAL,
+                    magnitude REAL
+                )
+            """)
+            conn.commit()
+            self._sensor_db_conn = conn
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to initialize sensor cache database ({e})", file=sys.stderr)
+            self._sensor_db_conn = None
+
+    def _persist_sensor_samples(self, sensor_type, samples):
+        """Persist sensor samples to SQLite so they survive memory clears."""
+        if not samples or not self._sensor_db_conn:
+            return
+
+        if sensor_type == 'gps':
+            sql = """
+                INSERT INTO gps_samples (timestamp, latitude, longitude, accuracy, speed, provider)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """
+            rows = [
+                (
+                    float(sample.get('timestamp', 0.0)),
+                    float(sample.get('latitude', 0.0)),
+                    float(sample.get('longitude', 0.0)),
+                    float(sample.get('accuracy', 0.0)),
+                    float(sample.get('speed', 0.0)),
+                    str(sample.get('provider', 'gps'))
+                )
+                for sample in samples
+            ]
+        elif sensor_type == 'accel':
+            sql = "INSERT INTO accel_samples (timestamp, magnitude) VALUES (?, ?)"
+            rows = [
+                (
+                    float(sample.get('timestamp', 0.0)),
+                    float(sample.get('magnitude', 0.0))
+                )
+                for sample in samples
+            ]
+        elif sensor_type == 'gyro':
+            sql = "INSERT INTO gyro_samples (timestamp, magnitude) VALUES (?, ?)"
+            rows = [
+                (
+                    float(sample.get('timestamp', 0.0)),
+                    float(sample.get('magnitude', 0.0))
+                )
+                for sample in samples
+            ]
+        else:
+            return
+
+        try:
+            with self._sensor_db_conn:
+                self._sensor_db_conn.executemany(sql, rows)
+        except Exception as e:
+            print(f"⚠️ Warning: Failed to persist {sensor_type} samples to SQLite ({e})", file=sys.stderr)
+
+    def _load_sensor_samples(self, sensor_type):
+        """Load all persisted samples for a sensor type."""
+        if not self._sensor_db_conn:
+            return []
+
+        if sensor_type == 'gps':
+            sql = "SELECT timestamp, latitude, longitude, accuracy, speed, provider FROM gps_samples ORDER BY id"
+            try:
+                rows = self._sensor_db_conn.execute(sql).fetchall()
+                return [
+                    {
+                        'timestamp': float(ts),
+                        'latitude': float(lat),
+                        'longitude': float(lon),
+                        'accuracy': float(acc),
+                        'speed': float(spd),
+                        'provider': provider or 'gps'
+                    }
+                    for ts, lat, lon, acc, spd, provider in rows
+                ]
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to load GPS samples from SQLite ({e})", file=sys.stderr)
+                return []
+        elif sensor_type == 'accel':
+            sql = "SELECT timestamp, magnitude FROM accel_samples ORDER BY id"
+            try:
+                rows = self._sensor_db_conn.execute(sql).fetchall()
+                return [
+                    {'timestamp': float(ts), 'magnitude': float(mag)}
+                    for ts, mag in rows
+                ]
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to load accel samples from SQLite ({e})", file=sys.stderr)
+                return []
+        elif sensor_type == 'gyro':
+            sql = "SELECT timestamp, magnitude FROM gyro_samples ORDER BY id"
+            try:
+                rows = self._sensor_db_conn.execute(sql).fetchall()
+                return [
+                    {'timestamp': float(ts), 'magnitude': float(mag)}
+                    for ts, mag in rows
+                ]
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to load gyro samples from SQLite ({e})", file=sys.stderr)
+                return []
+        return []
+
+    def _close_sensor_cache(self):
+        """Close SQLite connection after final save."""
+        if self._sensor_db_conn:
+            try:
+                self._sensor_db_conn.close()
+            except Exception:
+                pass
+            self._sensor_db_conn = None
+
     def _read_chunk_file(self, path):
         try:
             with gzip.open(path, 'rt', encoding='utf-8') as f:
@@ -2250,6 +2394,12 @@ class FilterComparison:
 
                     # ✅ Save confirmed - NOW clear samples to free memory
                     if clear_after_save:
+                        # Persist chunk to SQLite cache
+                        self._persist_sensor_samples('gps', self._accumulated_data['gps_samples'])
+                        self._persist_sensor_samples('accel', self._accumulated_data['accel_samples'])
+                        if self.enable_gyro:
+                            self._persist_sensor_samples('gyro', self._accumulated_data['gyro_samples'])
+
                         # Reset numpy array indices (reuse pre-allocated memory)
                         gps_count = self.gps_index
                         accel_count = self.accel_index
@@ -2272,7 +2422,7 @@ class FilterComparison:
                         # FIX 4: REMOVED filter reset - filters should maintain state across auto-saves
                         # Resetting velocity to 0 mid-test creates fake physics
 
-                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Saved: {gps_count_saved} GPS + {accel_count_saved} accel | Memory cleared, indices reset")
+                        print(f"✓ Auto-saved (autosave #{self._accumulated_data['autosave_count']}): {filename} | Saved: {gps_count_saved} GPS + {accel_count_saved} accel | Persisted chunk to SQLite + memory cleared")
                     else:
                         gps_count_display = len(self._accumulated_data['gps_samples'])
                         accel_count_display = len(self._accumulated_data['accel_samples'])
@@ -2289,37 +2439,24 @@ class FilterComparison:
                 # Final save: Read last auto-save from disk + current buffer contents
                 # (accumulated_data is now cleared after each auto-save to save memory)
                 if hasattr(self, '_accumulated_data') and self._accumulated_data['autosave_count'] > 0:
-                    # Read last auto-save from disk (memory was cleared to prevent growth)
-                    autosave_filename = f"{base_filename}.json.gz"
-                    try:
-                        with gzip.open(autosave_filename, 'rt', encoding='utf-8') as f:
-                            last_autosave = json.load(f)
+                    persisted_gps = self._load_sensor_samples('gps')
+                    persisted_accel = self._load_sensor_samples('accel')
+                    persisted_gyro = self._load_sensor_samples('gyro') if self.enable_gyro else []
 
-                        # Combine disk data with current numpy array contents (samples since last auto-save)
-                        final_gps = last_autosave['gps_samples'] + gps_samples_current
-                        final_accel = last_autosave['accel_samples'] + accel_samples_current
-                        final_gyro = last_autosave['gyro_samples'] + gyro_samples_current
+                    final_gps = persisted_gps + self._accumulated_data['gps_samples'] + gps_samples_current
+                    final_accel = persisted_accel + self._accumulated_data['accel_samples'] + accel_samples_current
+                    final_gyro = persisted_gyro + self._accumulated_data['gyro_samples'] + gyro_samples_current
 
-                        # DEBUG: Validate data is being assembled correctly
-                        print(f"\n✓ Final save data assembly (disk + numpy arrays):")
-                        print(f"  Last auto-save GPS: {len(last_autosave['gps_samples'])}")
-                        print(f"  Current numpy GPS: {len(gps_samples_current)}")
-                        print(f"  Final GPS: {len(final_gps)}")
-                        print(f"  Last auto-save Accel: {len(last_autosave['accel_samples'])}")
-                        print(f"  Current numpy Accel: {len(accel_samples_current)}")
-                        print(f"  Final Accel: {len(final_accel)}")
+                    print(f"\n✓ Final save data assembly (SQLite + in-memory):")
+                    print(f"  Persisted GPS: {len(persisted_gps)} | Current numpy: {len(gps_samples_current)}")
+                    print(f"  Persisted Accel: {len(persisted_accel)} | Current numpy: {len(accel_samples_current)}")
+                    if self.enable_gyro:
+                        print(f"  Persisted Gyro: {len(persisted_gyro)} | Current numpy: {len(gyro_samples_current)}")
 
-                        results['gps_samples'] = final_gps
-                        results['accel_samples'] = final_accel
-                        results['gyro_samples'] = final_gyro
-                        results['total_autosaves'] = self._accumulated_data['autosave_count']
-                    except FileNotFoundError:
-                        # Auto-save file missing (shouldn't happen), fall back to current buffers only
-                        print(f"⚠️ Warning: Auto-save file not found, using in-memory buffers only")
-                        pass
-                    except Exception as e:
-                        print(f"⚠️ Warning: Failed to read auto-save ({e}), using in-memory buffers only")
-                        pass
+                    results['gps_samples'] = final_gps
+                    results['accel_samples'] = final_accel
+                    results['gyro_samples'] = final_gyro
+                    results['total_autosaves'] = self._accumulated_data['autosave_count']
                 else:
                     # No auto-saves occurred, use current buffers (already set in results dict above)
                     pass
@@ -2357,6 +2494,9 @@ class FilterComparison:
                 print(f"\n✗ ERROR: Final save failed: {e}", file=sys.stderr)
                 print(f"⚠️  Test data may be incomplete but test completed", file=sys.stderr)
                 # Don't crash - test has completed even if final save failed
+            finally:
+                if not auto_save:
+                    self._close_sensor_cache()
             # Print summary only on final save
             self._print_summary()
 
