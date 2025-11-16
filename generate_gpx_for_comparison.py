@@ -4,11 +4,108 @@ Generate GPX file from comparison JSON for map viewing
 """
 import json
 import gzip
-from datetime import datetime
+import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+REPO_ROOT = SCRIPT_DIR.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+try:
+    from tools import replay_session as replay_mod
+except ImportError:
+    replay_mod = None
+
+def _format_timestamp(value, start_dt):
+    """Convert stored timestamps (float seconds or ISO strings) to ISO8601."""
+    if not value:
+        return None
+    if isinstance(value, str):
+        if value.endswith('Z'):
+            return value
+        return value + 'Z'
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        return None
+    return (start_dt + timedelta(seconds=seconds)).isoformat() + 'Z'
+
+
+def _append_track(lines, name, desc, points, start_dt):
+    if not points:
+        return
+    lines.append('  <trk>')
+    lines.append(f'    <name>{name}</name>')
+    lines.append(f'    <desc>{desc}</desc>')
+    lines.append('    <trkseg>')
+    for pt in points:
+        lat = pt.get('lat')
+        lon = pt.get('lon')
+        if lat is None or lon is None:
+            continue
+        lines.append(f'      <trkpt lat="{lat}" lon="{lon}">')
+        iso_ts = _format_timestamp(pt.get('time') or pt.get('timestamp'), start_dt)
+        if 'ele' in pt and pt['ele'] is not None:
+            lines.append(f'        <ele>{pt["ele"]}</ele>')
+        if iso_ts:
+            lines.append(f'        <time>{iso_ts}</time>')
+        unc = pt.get('uncertainty_m')
+        if unc is not None:
+            lines.append(f'        <extensions><uncertainty>{unc:.2f}</uncertainty></extensions>')
+        lines.append('      </trkpt>')
+    lines.append('    </trkseg>')
+    lines.append('  </trk>')
+
+
+def _convert_points(points):
+    converted = []
+    for pt in points or []:
+        lat = pt.get('lat')
+        lon = pt.get('lon')
+        if lat is None or lon is None:
+            continue
+        converted.append({
+            'lat': lat,
+            'lon': lon,
+            'timestamp': pt.get('timestamp'),
+            'uncertainty_m': pt.get('uncertainty_m')
+        })
+    return converted
+
+
+def _maybe_replay_trajectories(data):
+    trajectories = data.get('trajectories') or {}
+    if replay_mod is None:
+        return trajectories
+
+    has_dense = any(len(trajectories.get(key, [])) >= 20 for key in ('ekf', 'complementary', 'es_ekf'))
+    if has_dense:
+        return trajectories
+
+    try:
+        events, start_offset = replay_mod.build_events(data)
+        if not events:
+            return trajectories
+        include_es = bool(data.get('gyro_samples'))
+        replayed = replay_mod.replay_session(data, start_timestamp=-start_offset, include_es=include_es)
+    except Exception as exc:
+        print(f"Replay fallback failed: {exc}")
+        return trajectories
+
+    result = dict(trajectories)
+    result['ekf'] = _convert_points(replayed.get('ekf'))
+    result['complementary'] = _convert_points(replayed.get('complementary'))
+    if 'es_ekf' in replayed:
+        result['es_ekf'] = _convert_points(replayed.get('es_ekf'))
+    if 'gps' in replayed and not result.get('gps'):
+        result['gps'] = _convert_points(replayed.get('gps'))
+    return result
+
+
 def generate_gpx(json_filepath: str, output_filepath: str = None):
-    """Generate GPX from comparison JSON file"""
+    """Generate multi-track GPX from comparison JSON file"""
 
     # Load JSON
     print(f"Loading: {json_filepath}")
@@ -35,31 +132,36 @@ def generate_gpx(json_filepath: str, output_filepath: str = None):
 
     print(f"Extracted {len(gps_points)} GPS coordinates")
 
-    if not gps_points:
-        print("ERROR: No GPS coordinates found!")
+    if not gps_points and trajectories.get('gps'):
+        gps_points = trajectories['gps']
+
+    trajectories = _maybe_replay_trajectories(data)
+    ekf_track = trajectories.get('ekf', [])
+    comp_track = trajectories.get('complementary', [])
+    es_track = trajectories.get('es_ekf', [])
+
+    if not gps_points and not ekf_track and not comp_track:
+        print("ERROR: No trajectory data found!")
         return
 
-    # Generate GPX content
-    gpx = '<?xml version="1.0" encoding="UTF-8"?>\n'
-    gpx += '<gpx version="1.1" creator="Motion Tracker Dashboard" xmlns="http://www.topografix.com/GPX/1/1">\n'
-    gpx += '  <metadata>\n'
-    gpx += f'    <time>{datetime.now().isoformat()}Z</time>\n'
-    gpx += '  </metadata>\n'
-    gpx += '  <trk>\n'
-    gpx += '    <name>Drive Track</name>\n'
-    gpx += '    <trkseg>\n'
+    start_dt = datetime.now(timezone.utc)
 
-    for point in gps_points:
-        gpx += f'      <trkpt lat="{point["lat"]}" lon="{point["lon"]}">\n'
-        if point['ele']:
-            gpx += f'        <ele>{point["ele"]}</ele>\n'
-        if point['time']:
-            gpx += f'        <time>{point["time"]}Z</time>\n'
-        gpx += '      </trkpt>\n'
+    gpx_lines = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<gpx version="1.1" creator="Motion Tracker Dashboard" xmlns="http://www.topografix.com/GPX/1/1">',
+        '  <metadata>',
+        f'    <time>{start_dt.isoformat()}Z</time>',
+        '    <desc>GPS + filtered trajectories</desc>',
+        '  </metadata>'
+    ]
 
-    gpx += '    </trkseg>\n'
-    gpx += '  </trk>\n'
-    gpx += '</gpx>\n'
+    _append_track(gpx_lines, 'GPS', 'Raw GPS fixes', gps_points, start_dt)
+    _append_track(gpx_lines, 'EKF', 'Extended Kalman Filter trajectory', ekf_track, start_dt)
+    _append_track(gpx_lines, 'Complementary', 'Complementary filter trajectory', comp_track, start_dt)
+    _append_track(gpx_lines, 'ES-EKF', 'Error-state EKF trajectory', es_track, start_dt)
+
+    gpx_lines.append('</gpx>')
+    gpx = '\n'.join(gpx_lines) + '\n'
 
     # Determine output path
     if output_filepath is None:

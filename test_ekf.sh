@@ -40,6 +40,7 @@
 #   - Validation MUST check for JSON "values" field, not empty objects
 
 set -e
+set -o pipefail
 
 # Get directory
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -49,6 +50,7 @@ cd "$SCRIPT_DIR" || exit 1
 CRASH_LOGGER_FILE="crash_logs/active_session.log"
 mkdir -p crash_logs
 LOG_FILE="crash_logs/test_ekf_$(date +%Y-%m-%d_%H-%M-%S).log"
+SCRIPT_ARGS="$@"
 
 # Log function that writes to both stdout and crash log
 log_event() {
@@ -274,7 +276,7 @@ cleanup_on_exit() {
             if [ ! -z "$signal_name" ]; then
                 echo "Signal: $signal_name"
             fi
-            echo "Test: test_ekf.sh $@"
+            echo "Test: test_ekf.sh $SCRIPT_ARGS"
             echo "Timestamp: $(date -u)"
             echo "Log file: $LOG_FILE"
             echo ""

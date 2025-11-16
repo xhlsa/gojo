@@ -15,6 +15,7 @@ from pathlib import Path
 import math
 import pickle
 import time
+import sys
 
 app = FastAPI(title="Motion Tracker Dashboard")
 
@@ -23,6 +24,62 @@ BASE_DIR = os.path.expanduser("~/gojo")
 SESSIONS_DIR = os.path.join(BASE_DIR, "motion_tracker_sessions")
 SESSIONS_SUBDIR = os.path.join(BASE_DIR, "sessions")  # Also check here for motion_tracker_v2 runs
 os.makedirs(SESSIONS_DIR, exist_ok=True)
+
+# Ensure repo modules (tools, motion_tracker_v2) are importable
+# Insert BASE_DIR so FastAPI worker loads the same file we're editing
+if BASE_DIR not in sys.path:
+    sys.path.insert(0, BASE_DIR)
+
+try:
+    from tools import replay_session as replay_mod
+except ImportError:
+    replay_mod = None
+
+
+def maybe_replay_trajectories(data: dict) -> dict:
+    """Reconstruct EKF/complementary trajectories if the session lacks step-by-step points."""
+    trajectories = data.get("trajectories") or {}
+    has_dense = any(len(trajectories.get(key, [])) >= 20 for key in ("ekf", "complementary", "es_ekf"))
+    if has_dense or replay_mod is None:
+        return trajectories
+
+    try:
+        events, start_offset = replay_mod.build_events(data)
+        if not events:
+            return trajectories
+        include_es = bool(data.get("gyro_samples"))
+        replayed = replay_mod.replay_session(
+            data,
+            start_timestamp=-start_offset,
+            include_es=include_es,
+        )
+    except Exception as exc:
+        print(f"Replay fallback failed: {exc}")
+        return trajectories
+
+    def convert(points):
+        converted = []
+        for pt in points or []:
+            lat = pt.get("lat")
+            lon = pt.get("lon")
+            if lat is None or lon is None:
+                continue
+            converted.append({
+                "lat": lat,
+                "lon": lon,
+                "timestamp": pt.get("timestamp"),
+                "uncertainty_m": pt.get("uncertainty_m"),
+            })
+        return converted
+
+    result = dict(trajectories)
+    result["ekf"] = convert(replayed.get("ekf"))
+    result["complementary"] = convert(replayed.get("complementary"))
+    if "es_ekf" in replayed:
+        result["es_ekf"] = convert(replayed.get("es_ekf"))
+    if "gps" in replayed and not trajectories.get("gps"):
+        result["gps"] = convert(replayed.get("gps"))
+    return result
 
 # Metadata cache configuration
 CACHE_FILE = os.path.join(SESSIONS_DIR, '.drive_cache.pkl')
@@ -153,32 +210,73 @@ def generate_gpx_from_json(json_filepath: str) -> str:
                             "time": sample.get("timestamp", "")
                         })
 
+        trajectories = maybe_replay_trajectories(data)
+        if not gps_points and trajectories.get("gps"):
+            gps_points = trajectories["gps"]
+
         if not gps_points:
             raise ValueError("No GPS data found in JSON file")
+        # trajectories already replayed (above)
+        ekf_track = trajectories.get("ekf", [])
+        comp_track = trajectories.get("complementary", [])
+        es_track = trajectories.get("es_ekf", [])
 
-        # Generate GPX (without namespace to ensure JavaScript parsing works)
-        gpx = '<?xml version="1.0" encoding="UTF-8"?>\n'
-        gpx += '<gpx version="1.1" creator="Motion Tracker Dashboard">\n'
-        gpx += '  <metadata>\n'
-        gpx += f'    <time>{datetime.now().isoformat()}Z</time>\n'
-        gpx += '  </metadata>\n'
-        gpx += '  <trk>\n'
-        gpx += '    <name>Drive Track</name>\n'
-        gpx += '    <trkseg>\n'
+        if not gps_points and not ekf_track and not comp_track and not es_track:
+            raise ValueError("No trajectory data available")
 
-        for point in gps_points:
-            gpx += f'      <trkpt lat="{point["lat"]}" lon="{point["lon"]}">\n'
-            if point["ele"]:
-                gpx += f'        <ele>{point["ele"]}</ele>\n'
-            if point["time"]:
-                gpx += f'        <time>{point["time"]}Z</time>\n'
-            gpx += '      </trkpt>\n'
+        def fmt_time(value):
+            if value is None or value == "":
+                return ""
+            if isinstance(value, str):
+                return value if value.endswith("Z") else f"{value}Z"
+            # Numeric timestamps in comparison files are relative seconds; omit if not ISO
+            try:
+                float(value)
+            except (TypeError, ValueError):
+                return ""
+            return ""
 
-        gpx += '    </trkseg>\n'
-        gpx += '  </trk>\n'
-        gpx += '</gpx>\n'
+        def append_track(lines, name, desc, points):
+            if not points:
+                return
+            lines.append("  <trk>")
+            lines.append(f"    <name>{name}</name>")
+            lines.append(f"    <desc>{desc}</desc>")
+            lines.append("    <trkseg>")
+            for p in points:
+                lat = p.get("latitude") or p.get("lat")
+                lon = p.get("longitude") or p.get("lon")
+                if lat is None or lon is None:
+                    continue
+                lines.append(f'      <trkpt lat="{lat}" lon="{lon}">')
+                if "altitude" in p:
+                    lines.append(f'        <ele>{p["altitude"]}</ele>')
+                ts = p.get("timestamp") or p.get("time")
+                ts_fmt = fmt_time(ts)
+                if ts_fmt:
+                    lines.append(f"        <time>{ts_fmt}</time>")
+                unc = p.get("uncertainty_m")
+                if unc is not None:
+                    lines.append(f'        <extensions><uncertainty>{unc:.2f}</uncertainty></extensions>')
+                lines.append("      </trkpt>")
+            lines.append("    </trkseg>")
+            lines.append("  </trk>")
 
-        return gpx
+        gpx_lines = [
+            '<?xml version="1.0" encoding="UTF-8"?>',
+            '<gpx version="1.1" creator="Motion Tracker Dashboard">',
+            '  <metadata>',
+            f'    <time>{datetime.now().isoformat()}Z</time>',
+            '    <desc>GPS + filtered trajectories</desc>',
+            '  </metadata>'
+        ]
+        append_track(gpx_lines, "GPS", "Raw GPS fixes", gps_points)
+        append_track(gpx_lines, "EKF", "Extended Kalman Filter trajectory", ekf_track)
+        append_track(gpx_lines, "Complementary", "Complementary filter trajectory", comp_track)
+        append_track(gpx_lines, "ES-EKF", "Error-state EKF trajectory", es_track)
+        gpx_lines.append("</gpx>\n")
+
+        return "\n".join(gpx_lines)
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to generate GPX: {str(e)}")
 
@@ -1554,6 +1652,32 @@ def root():
             max-width: 250px;
         }
 
+        .track-legend {
+            margin-top: 12px;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .track-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+        }
+
+        .track-toggle input {
+            accent-color: var(--accent-color);
+        }
+
+        .track-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+
         .loading {
             text-align: center;
             padding: 40px 20px;
@@ -1712,6 +1836,7 @@ def root():
             <div id="map"></div>
             <div class="map-info" id="mapInfo" style="display:none;">
                 <div id="driveInfoContent"></div>
+                <div id="trackLegend" class="track-legend"></div>
             </div>
             <div id="statusIndicator" style="display:none; position:absolute; top:10px; left:50%; transform:translateX(-50%); background:#fff; padding:10px 20px; border-radius:4px; box-shadow:0 2px 4px rgba(0,0,0,0.2); z-index:1000; font-size:13px;"></div>
         </div>
@@ -1719,7 +1844,15 @@ def root():
 
     <script>
         let map = null;
-        let currentGpxLayer = null;
+        let trackLayers = {};
+        let trackVisibility = {};
+        let currentGpxLayers = [];
+        const TRACK_COLORS = {
+            'GPS': '#2563eb',
+            'EKF': '#22c55e',
+            'Complementary': '#f97316',
+            'ES-EKF': '#a855f7'
+        };
         let drives = [];
         let displayedDrives = [];
         const DRIVES_PER_PAGE = 15;
@@ -2056,9 +2189,13 @@ def root():
                 } else {
                     console.log('Drive has no GPX data');
                     showStatus('No GPS data available for this drive', 'error', 5000);
-                    if (currentGpxLayer) {
-                        map.removeLayer(currentGpxLayer);
-                        currentGpxLayer = null;
+                    currentGpxLayers.forEach(layer => map.removeLayer(layer));
+                    currentGpxLayers = [];
+                    trackLayers = {};
+                    trackVisibility = {};
+                    const legend = document.getElementById('trackLegend');
+                    if (legend) {
+                        legend.innerHTML = '<div class="track-toggle">No tracks available</div>';
                     }
                 }
             } catch (error) {
@@ -2139,59 +2276,77 @@ def root():
                 console.log(`GPX loaded: ${gpxText.length} chars`);
                 showStatus(`GPX loaded: ${gpxText.length} chars`, 'info', 2000);
 
-                // Remove previous layer
-                if (currentGpxLayer) {
-                    map.removeLayer(currentGpxLayer);
-                }
+                // Remove previous layers
+                currentGpxLayers.forEach(layer => map.removeLayer(layer));
+                currentGpxLayers = [];
+                trackLayers = {};
+                trackVisibility = {};
 
-                // Parse and display GPX
+                // Parse GPX
                 showStatus('Parsing GPS data...', 'info', 0);
                 const geoJSON = gpxToGeoJSON(gpxText);
                 console.log('GeoJSON features:', geoJSON.features.length);
-                console.log('Coordinates count:', geoJSON.features[1]?.geometry?.coordinates?.length || 0);
 
-                const coordCount = geoJSON.features[1]?.geometry?.coordinates?.length || 0;
-                showStatus(`Parsed ${coordCount} GPS points`, 'info', 2000);
-
-                const gpxLayer = L.geoJSON(geoJSON, {
-                    style: {
-                        color: '#667eea',
-                        weight: 3,
-                        opacity: 0.8,
-                    },
-                    pointToLayer: (feature, latlng) => {
-                        if (feature.properties.type === 'start') {
-                            return L.circleMarker(latlng, {
-                                radius: 6,
-                                fillColor: '#4caf50',
-                                color: '#fff',
-                                weight: 2,
-                                opacity: 1,
-                                fillOpacity: 0.8,
-                            });
-                        } else if (feature.properties.type === 'end') {
-                            return L.circleMarker(latlng, {
-                                radius: 6,
-                                fillColor: '#f44336',
-                                color: '#fff',
-                                weight: 2,
-                                opacity: 1,
-                                fillOpacity: 0.8,
-                            });
-                        }
-                        return L.circleMarker(latlng, {radius: 2, color: '#667eea'});
-                    },
+                const trackFeatures = {};
+                geoJSON.features.forEach(feature => {
+                    const trackName = feature.properties.trackName || 'GPS';
+                    if (!trackFeatures[trackName]) trackFeatures[trackName] = [];
+                    trackFeatures[trackName].push(feature);
                 });
 
-                showStatus('Rendering map...', 'info', 0);
-                gpxLayer.addTo(map);
-                currentGpxLayer = gpxLayer;
+                const trackNames = Object.keys(trackFeatures);
+                showStatus(`Parsed ${trackNames.length} track(s)`, 'info', 2000);
 
-                // Fit map to bounds
-                const bounds = gpxLayer.getBounds();
-                console.log('Bounds valid:', bounds.isValid());
-                if (bounds.isValid()) {
-                    map.fitBounds(bounds, {padding: [50, 50]});
+                trackNames.forEach(name => {
+                    const layer = L.geoJSON({type: 'FeatureCollection', features: trackFeatures[name]}, {
+                        style: (feature) => {
+                            if (feature.geometry.type === 'LineString') {
+                                return {
+                                    color: TRACK_COLORS[name] || '#667eea',
+                                    weight: 3,
+                                    opacity: 0.85,
+                                };
+                            }
+                            return {color: TRACK_COLORS[name] || '#667eea'};
+                        },
+                        pointToLayer: (feature, latlng) => {
+                            const color = TRACK_COLORS[name] || '#667eea';
+                            if (feature.properties.type === 'start' || feature.properties.type === 'end') {
+                                return L.circleMarker(latlng, {
+                                    radius: 6,
+                                    fillColor: color,
+                                    color: '#fff',
+                                    weight: 2,
+                                    opacity: 1,
+                                    fillOpacity: 0.85,
+                                });
+                            }
+                            return L.circleMarker(latlng, {radius: 2, color, opacity: 0.9, fillOpacity: 0.9});
+                        },
+                    });
+
+                    trackLayers[name] = layer;
+                    if (trackVisibility[name] !== false) {
+                        layer.addTo(map);
+                        currentGpxLayers.push(layer);
+                        trackVisibility[name] = true;
+                    }
+                });
+
+                updateTrackLegend(trackNames);
+
+                let combinedBounds = null;
+                Object.entries(trackLayers).forEach(([name, layer]) => {
+                    if (trackVisibility[name] === false) return;
+                    const bounds = layer.getBounds();
+                    if (bounds.isValid()) {
+                        combinedBounds = combinedBounds ? combinedBounds.extend(bounds) : bounds;
+                    }
+                });
+
+                if (combinedBounds && combinedBounds.isValid()) {
+                    showStatus('Rendering map...', 'info', 0);
+                    map.fitBounds(combinedBounds, {padding: [50, 50]});
                     showStatus('Route loaded successfully!', 'success', 3000);
                 } else {
                     showStatus('Warning: Invalid bounds - route may not display', 'error', 5000);
@@ -2201,6 +2356,38 @@ def root():
                 console.error('Error loading GPX:', error);
                 showStatus(`Error loading route: ${error.message}`, 'error', 10000);
             }
+        }
+
+        function updateTrackLegend(trackNames) {
+            const legend = document.getElementById('trackLegend');
+            if (!legend) return;
+            if (!trackNames || trackNames.length === 0) {
+                legend.innerHTML = '<div class=\"track-toggle\">No tracks available</div>';
+                return;
+            }
+
+            legend.innerHTML = trackNames.map(name => `
+                <label class=\"track-toggle\">
+                    <input type=\"checkbox\" data-track=\"${name}\" ${trackVisibility[name] !== false ? 'checked' : ''}>
+                    <span class=\"track-color\" style=\"background:${TRACK_COLORS[name] || '#667eea'}\"></span>
+                    <span>${name}</span>
+                </label>
+            `).join('');
+
+            legend.querySelectorAll('input').forEach(input => {
+                input.addEventListener('change', (event) => {
+                    const track = event.target.dataset.track;
+                    const visible = event.target.checked;
+                    trackVisibility[track] = visible;
+                    const layer = trackLayers[track];
+                    if (!layer) return;
+                    if (visible) {
+                        layer.addTo(map);
+                    } else {
+                        map.removeLayer(layer);
+                    }
+                });
+            });
         }
 
         // Simple GPX to GeoJSON converter
@@ -2215,63 +2402,66 @@ def root():
                 throw new Error('Failed to parse GPX XML');
             }
 
-            const coordinates = [];
+            const features = [];
+            const tracks = Array.from(xmlDoc.getElementsByTagName('trk'));
+            console.log(`Found ${tracks.length} track(s) in GPX`);
 
-            // Get trackpoints - now without namespace handling needed
-            const trackpoints = Array.from(xmlDoc.getElementsByTagName('trkpt'));
-            console.log(`Parsing ${trackpoints.length} trackpoints`);
+            tracks.forEach((trk, trackIndex) => {
+                const nameEl = trk.getElementsByTagName('name')[0];
+                const trackName = nameEl ? nameEl.textContent.trim() : `Track ${trackIndex + 1}`;
 
-            trackpoints.forEach((pt, idx) => {
-                const lat = pt.getAttribute('lat');
-                const lon = pt.getAttribute('lon');
+                const pts = Array.from(trk.getElementsByTagName('trkpt'));
+                const coords = [];
 
-                if (lat === null || lon === null) {
-                    console.warn(`Sample ${idx}: Missing lat/lon attributes`);
+                pts.forEach((pt, idx) => {
+                    const lat = pt.getAttribute('lat');
+                    const lon = pt.getAttribute('lon');
+                    if (lat === null || lon === null) {
+                        console.warn(`[${trackName}] Sample ${idx}: Missing lat/lon`);
+                        return;
+                    }
+                    const latNum = parseFloat(lat);
+                    const lonNum = parseFloat(lon);
+                    if (isNaN(latNum) || isNaN(lonNum)) {
+                        console.warn(`[${trackName}] Sample ${idx}: Invalid numbers`);
+                        return;
+                    }
+                    if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) {
+                        console.warn(`[${trackName}] Sample ${idx}: Out of range lat/lon`);
+                        return;
+                    }
+                    coords.push([lonNum, latNum]);
+                });
+
+                if (coords.length === 0) {
+                    console.warn(`[${trackName}] Track has no valid coordinates`);
                     return;
                 }
 
-                const latNum = parseFloat(lat);
-                const lonNum = parseFloat(lon);
-
-                if (isNaN(latNum) || isNaN(lonNum)) {
-                    console.warn(`Sample ${idx}: Invalid numeric values - lat=${lat}, lon=${lon}`);
-                    return;
-                }
-
-                if (latNum < -90 || latNum > 90 || lonNum < -180 || lonNum > 180) {
-                    console.warn(`Sample ${idx}: Out of range - lat=${latNum}, lon=${lonNum}`);
-                    return;
-                }
-
-                coordinates.push([lonNum, latNum]);
+                features.push({
+                    type: 'Feature',
+                    properties: {type: 'start', trackName},
+                    geometry: {type: 'Point', coordinates: coords[0]}
+                });
+                features.push({
+                    type: 'Feature',
+                    properties: {type: 'route', trackName},
+                    geometry: {type: 'LineString', coordinates: coords}
+                });
+                features.push({
+                    type: 'Feature',
+                    properties: {type: 'end', trackName},
+                    geometry: {type: 'Point', coordinates: coords[coords.length - 1]}
+                });
             });
 
-            console.log(`Extracted ${coordinates.length} valid coordinates`);
-            console.log(`Coordinate sample:`, coordinates.slice(0, 3));
-
-            if (coordinates.length === 0) {
-                throw new Error(`No valid coordinates found in GPX (processed ${trackpoints.length} trackpoints)`);
+            if (features.length === 0) {
+                throw new Error('No valid tracks found in GPX');
             }
 
             return {
                 type: 'FeatureCollection',
-                features: [
-                    {
-                        type: 'Feature',
-                        properties: {type: 'start'},
-                        geometry: {type: 'Point', coordinates: coordinates[0]}
-                    },
-                    {
-                        type: 'Feature',
-                        properties: {type: 'route'},
-                        geometry: {type: 'LineString', coordinates}
-                    },
-                    {
-                        type: 'Feature',
-                        properties: {type: 'end'},
-                        geometry: {type: 'Point', coordinates: coordinates[coordinates.length - 1]}
-                    }
-                ]
+                features
             };
         }
 
@@ -2321,3 +2511,47 @@ if __name__ == "__main__":
     print(f"Starting Motion Tracker Dashboard on http://localhost:{port}")
     print(f"Sessions directory: {SESSIONS_DIR}")
     uvicorn.run(app, host="0.0.0.0", port=port, log_level="info")
+def maybe_replay_trajectories(data: dict) -> dict:
+    """Reconstruct EKF/complementary trajectories if the session lacks step-by-step points."""
+    trajectories = data.get("trajectories") or {}
+    has_dense = any(len(trajectories.get(key, [])) >= 20 for key in ("ekf", "complementary", "es_ekf"))
+    if has_dense or replay_mod is None:
+        return trajectories
+
+    try:
+        events, start_offset = replay_mod.build_events(data)
+        if not events:
+            return trajectories
+        include_es = bool(data.get("gyro_samples"))
+        replayed = replay_mod.replay_session(
+            data,
+            start_timestamp=-start_offset,
+            include_es=include_es,
+        )
+    except Exception as exc:
+        print(f"Replay fallback failed: {exc}")
+        return trajectories
+
+    def convert(points):
+        converted = []
+        for pt in points or []:
+            lat = pt.get("lat")
+            lon = pt.get("lon")
+            if lat is None or lon is None:
+                continue
+            converted.append({
+                "lat": lat,
+                "lon": lon,
+                "timestamp": pt.get("timestamp"),
+                "uncertainty_m": pt.get("uncertainty_m"),
+            })
+        return converted
+
+    result = dict(trajectories)
+    result["ekf"] = convert(replayed.get("ekf"))
+    result["complementary"] = convert(replayed.get("complementary"))
+    if "es_ekf" in replayed:
+        result["es_ekf"] = convert(replayed.get("es_ekf"))
+    if "gps" in replayed and not trajectories.get("gps"):
+        result["gps"] = convert(replayed.get("gps"))
+    return result

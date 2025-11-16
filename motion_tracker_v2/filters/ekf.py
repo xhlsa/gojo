@@ -27,7 +27,7 @@ import threading
 import time
 import numpy as np
 from .base import SensorFusionBase
-from .utils import haversine_distance, latlon_to_meters
+from .utils import haversine_distance, latlon_to_meters, meters_to_latlon
 
 # Try to import filterpy for reference (optional)
 try:
@@ -743,25 +743,35 @@ class ExtendedKalmanFilter(SensorFusionBase):
             return state_dict
 
     def get_position(self):
-        """Get current estimated position (lat, lon, uncertainty).
+        """
+        Get current EKF position estimate as (latitude, longitude, uncertainty_m).
 
-        Returns last known GPS position since EKF tracks relative motion,
-        not absolute position. For absolute position tracking, use ES-EKF.
-        Uncertainty grows over time since last GPS fix due to inertial drift.
-
-        Returns:
-            tuple: (latitude, longitude, uncertainty_m) or (None, None, 999.0) if no GPS fix yet
+        Converts the local [x, y] state back to geographic coordinates using the
+        same origin as the GPS measurements so we can visualize the EKF track.
         """
         with self.lock:
-            # EKF doesn't maintain position state - return last GPS fix if available
-            # This allows trajectory storage to work even though EKF is velocity-focused
-            if self.last_gps_lat_lon is not None:
-                lat, lon = self.last_gps_lat_lon
-                # Uncertainty grows based on time since last GPS update
-                time_since_gps = time.time() - self.last_gps_time if self.last_gps_time else 0
-                # Base 5m uncertainty + 0.5m/s growth (accounts for inertial drift), capped at 50m
-                uncertainty = min(5.0 + time_since_gps * 0.5, 50.0)
-                return lat, lon, uncertainty
-            else:
-                # No GPS fix yet - return None values with high uncertainty
+            if self.origin_lat_lon is None:
+                # No GPS origin yet
                 return None, None, 999.0
+
+            # Local Cartesian position in meters relative to origin
+            x_m = float(self.state[0])
+            y_m = float(self.state[1])
+            origin_lat, origin_lon = self.origin_lat_lon
+
+            # Convert back to lat/lon for visualization
+            lat, lon = meters_to_latlon(x_m, y_m, origin_lat, origin_lon)
+
+            # Estimate horizontal uncertainty from covariance diag (P00/P11)
+            if hasattr(self, 'P') and self.P.shape[0] >= 2:
+                pos_var = max(self.P[0, 0], 0.0) + max(self.P[1, 1], 0.0)
+                uncertainty = math.sqrt(pos_var / 2.0)
+            else:
+                uncertainty = 5.0
+
+            # Inflate uncertainty if GPS has been stale for a while
+            if self.last_gps_time:
+                time_since_gps = max(0.0, time.time() - self.last_gps_time)
+                uncertainty += time_since_gps * 0.5  # 0.5 m growth per second without GPS
+
+            return lat, lon, min(uncertainty, 100.0)
