@@ -179,8 +179,15 @@ while time.time() - next_poll_time < max_runtime:
                     print(compact_json, flush=True)
                     sys.stderr.write(f"[GPS] ✓ Fix #{success_count} acquired\\n")
                     sys.stderr.flush()
-                except:
-                    # Fallback: output as-is if JSON parsing fails
+                except json.JSONDecodeError as je:
+                    # Log JSON parsing errors but output as-is
+                    sys.stderr.write(f"[GPS] Warning: JSON parse error {je}, outputting raw\\n")
+                    sys.stderr.flush()
+                    print(result.stdout, flush=True)
+                except Exception as e:
+                    # Log any other errors during JSON processing
+                    sys.stderr.write(f"[GPS] Warning: Error processing GPS output: {type(e).__name__}: {e}\\n")
+                    sys.stderr.flush()
                     print(result.stdout, flush=True)
                 last_success_time = time.time()
             else:
@@ -222,21 +229,23 @@ while time.time() - next_poll_time < max_runtime:
             reader.start()
             return True
         except Exception as e:
-            import sys
             print(f"Failed to start GPS daemon: {e}", file=sys.stderr)
             return False
 
     def _capture_stderr(self):
         """Capture stderr from GPS daemon to detect API/connection errors"""
-        import sys
         try:
             for line in self.gps_process.stderr:
                 line = line.strip()
                 if line:
                     # Log any stderr output - likely error messages or connection issues
                     print(f"[GPSDaemon] stderr: {line}", file=sys.stderr)
-        except:
+        except StopIteration:
+            # Normal end of stream when process closes stderr
             pass
+        except Exception as e:
+            # Log unexpected errors in stderr reading (but don't crash)
+            print(f"[GPSDaemon] Error reading stderr: {type(e).__name__}: {e}", file=sys.stderr)
 
     def _read_loop(self):
         """Read GPS JSON objects from continuous stream (line-by-line)"""
@@ -288,7 +297,9 @@ while time.time() - next_poll_time < max_runtime:
                     print(f"[GPS _read_loop] ✗ JSON parse error: {e}, line='{line[:50]}'", file=sys.stderr)
                     sys.stderr.flush()
                 except Exception as e:
-                    pass  # Skip processing errors silently
+                    # Log unexpected processing errors instead of silently dropping
+                    print(f"[GPS _read_loop] ⚠️  Unexpected error processing GPS data: {type(e).__name__}: {e}", file=sys.stderr)
+                    sys.stderr.flush()
 
         except Exception as e:
             # Log fatal errors only
@@ -1921,8 +1932,12 @@ class FilterComparison:
         try:
             if os.path.exists(self.status_file):
                 os.remove(self.status_file)
-        except:
+        except FileNotFoundError:
+            # Status file already deleted, no problem
             pass
+        except Exception as e:
+            # Log any other file operation errors but don't crash
+            print(f"Warning: Failed to clean up status file: {type(e).__name__}: {e}", file=sys.stderr)
 
         # CRITICAL: Verify accelerometer data was collected
         # FIX 1: Check both accumulated_data and current buffers
@@ -2339,7 +2354,9 @@ class FilterComparison:
                     'ekf': self.ekf.get_state(),
                     'complementary': self.complementary.get_state()
                 }
-            except:
+            except Exception as e:
+                # Log error but don't crash - filters may still be processing
+                print(f"Warning: Failed to get final filter states: {type(e).__name__}: {e}", file=sys.stderr)
                 results['final_metrics'] = {'ekf': {}, 'complementary': {}}
 
             if auto_save:

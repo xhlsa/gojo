@@ -33,7 +33,7 @@ import signal
 import os
 import sys
 import threading
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from datetime import datetime
 from collections import deque
 from statistics import mean
@@ -587,18 +587,27 @@ class PersistentGyroDaemon:
                             samples_read += 1
                             if samples_read <= 5 or samples_read % 100 == 0:
                                 print(f"[GyroDaemon] Transferred sample #{samples_read}: x={gyro_data.get('x', 0):.4f}", file=sys.stderr)
-                        except queue.Full:
-                            # Output queue full - consumer too slow, drop oldest samples
+                        except Full:
+                            # Output queue full - consumer too slow, drain oldest samples
+                            drained_count = 0
                             try:
-                                # Drain 100 old samples to make room
+                                # Drain up to 100 old samples to make room
                                 for _ in range(100):
-                                    self.data_queue.get_nowait()
-                                # Retry putting current sample
+                                    try:
+                                        self.data_queue.get_nowait()
+                                        drained_count += 1
+                                    except Empty:
+                                        break  # No more items in queue
+
+                                # Retry putting current sample after draining
                                 self.data_queue.put_nowait(gyro_data)
                                 if samples_read < 10:  # Only log first few times
-                                    print(f"[GyroDaemon] Queue full, drained 100 old samples", file=sys.stderr)
-                            except:
-                                pass  # If still fails, just drop this sample
+                                    print(f"[GyroDaemon] Queue full, drained {drained_count} old samples, put_nowait succeeded", file=sys.stderr)
+                            except Full:
+                                # Still full after drain - consumer is severely backlogged, drop this sample
+                                print(f"[GyroDaemon] Warning: Queue overflow, dropped gyro sample #{samples_read} (drained {drained_count}, still full)", file=sys.stderr)
+                            except Exception as e:
+                                print(f"[GyroDaemon] Error during queue drain: {type(e).__name__}: {e}", file=sys.stderr)
                         except Exception as qe:
                             print(f"[GyroDaemon] Output queue unexpected error: {type(qe).__name__}: {qe}", file=sys.stderr)
                 except Exception as re:
@@ -781,6 +790,9 @@ class GPSThread(threading.Thread):
 
                 if gps_data.get('latitude'):
                     self.last_success_time = time.time()
+                    # CRITICAL FIX: Reset provider to 'gps' on ANY successful fix
+                    # This allows GPS to be retried after fallback to network provider
+                    self.current_provider = 'gps'
                     self.last_gps_data = gps_data
                     self.requests_completed += 1
                     return gps_data
@@ -1291,6 +1303,10 @@ class MotionTrackerV2:
         self.thread_restart_count = {'gps': 0, 'accel': 0}
         self.max_thread_restarts = 3  # Max restart attempts per thread
 
+        # Thread safety: Locks for protecting thread restart logic and thread state
+        self.thread_restart_lock = threading.Lock()  # Protects thread_restart_count
+        self.thread_state_lock = threading.Lock()    # Protects thread object references (gps_thread, accel_thread)
+
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGTERM, self._signal_handler)
         signal.signal(signal.SIGINT, self._signal_handler)
@@ -1320,21 +1336,27 @@ class MotionTrackerV2:
         Returns dict with thread status and recommendations.
         Detects GPS starvation (no data for 30s) in addition to thread death.
         """
+        # CRITICAL: Lock protects thread object access
+        # Prevents race where thread is deleted during restart while we call methods on it
+        with self.thread_state_lock:
+            gps_thread_ref = self.gps_thread
+            accel_thread_ref = self.accel_thread
+
         status = {
-            'gps_alive': self.gps_thread.is_alive() if self.gps_thread else False,
-            'accel_alive': self.accel_thread.is_alive() if self.accel_thread else False,
+            'gps_alive': gps_thread_ref.is_alive() if gps_thread_ref else False,
+            'accel_alive': accel_thread_ref.is_alive() if accel_thread_ref else False,
             'healthy': True,
             'warnings': []
         }
 
         # Check GPS thread - both alive status AND starvation
-        if self.gps_thread:
+        if gps_thread_ref:
             if not status['gps_alive']:
                 status['healthy'] = False
                 status['warnings'].append("GPS thread died unexpectedly")
             else:
                 # Thread is alive, but check for starvation (data production stall)
-                health = self.gps_thread.get_health_status()
+                health = gps_thread_ref.get_health_status()
                 if health['starved']:
                     status['healthy'] = False
                     status['warnings'].append(f"GPS starved: No data for {health['time_since_last_gps']:.1f}s")
@@ -1342,7 +1364,7 @@ class MotionTrackerV2:
                     status['warnings'].append(f"GPS low success rate: {health['success_rate']*100:.1f}%")
 
         # Check accelerometer thread
-        if self.accel_thread and not status['accel_alive']:
+        if accel_thread_ref and not status['accel_alive']:
             status['healthy'] = False
             status['warnings'].append("Accelerometer thread died unexpectedly")
 
@@ -1378,95 +1400,104 @@ class MotionTrackerV2:
 
     def restart_accel_thread(self):
         """Attempt to restart the accelerometer thread after failure"""
-        if self.thread_restart_count['accel'] >= self.max_thread_restarts:
-            print(f"⚠ Accelerometer thread failed {self.max_thread_restarts} times, not restarting")
-            return False
+        # CRITICAL: Lock protects restart_count check and modification
+        # Prevents race condition where multiple threads both see count < max and both increment
+        with self.thread_restart_lock:
+            if self.thread_restart_count['accel'] >= self.max_thread_restarts:
+                print(f"⚠ Accelerometer thread failed {self.max_thread_restarts} times, not restarting")
+                return False
 
-        print(f"\n⚡ Attempting to restart accelerometer thread (attempt {self.thread_restart_count['accel'] + 1}/{self.max_thread_restarts})...")
+            print(f"\n⚡ Attempting to restart accelerometer thread (attempt {self.thread_restart_count['accel'] + 1}/{self.max_thread_restarts})...")
 
-        try:
-            # Stop existing thread if any
-            if self.accel_thread:
-                self.accel_thread.join(timeout=1)
+            try:
+                # CRITICAL: Lock also protects thread object modification
+                with self.thread_state_lock:
+                    # Stop existing thread if any
+                    if self.accel_thread:
+                        self.accel_thread.join(timeout=1)
 
-            # Clear the queue to prevent stale data
-            while not self.accel_queue.empty():
-                try:
-                    self.accel_queue.get_nowait()
-                except:
-                    break
+                    # Clear the queue to prevent stale data
+                    while not self.accel_queue.empty():
+                        try:
+                            self.accel_queue.get_nowait()
+                        except:
+                            break
 
-            # Restart with pure Python version (safer fallback)
-            self.accel_thread = AccelerometerThread(
-                self.accel_queue,
-                self.stop_event,
-                self.sensor_daemon,
-                fusion=self.fusion,
-                sample_rate=self.accel_sample_rate
-            )
-            self.accel_thread.start()
+                    # Restart with pure Python version (safer fallback)
+                    self.accel_thread = AccelerometerThread(
+                        self.accel_queue,
+                        self.stop_event,
+                        self.sensor_daemon,
+                        fusion=self.fusion,
+                        sample_rate=self.accel_sample_rate
+                    )
+                    self.accel_thread.start()
 
-            self.thread_restart_count['accel'] += 1
-            print(f"✓ Accelerometer thread restarted successfully")
+                self.thread_restart_count['accel'] += 1
+                print(f"✓ Accelerometer thread restarted successfully")
 
-            # CRITICAL: Restart gyro daemon when accel restarts
-            # Gyro shares the IMU stream with accel, so it loses sync when accel restarts
-            if self.enable_gyro:
-                self.restart_gyro_daemon()
+                # CRITICAL: Restart gyro daemon when accel restarts
+                # Gyro shares the IMU stream with accel, so it loses sync when accel restarts
+                if self.enable_gyro:
+                    self.restart_gyro_daemon()
 
-            return True
+                return True
 
-        except Exception as e:
-            print(f"⚠ Failed to restart accelerometer thread: {e}")
-            return False
+            except Exception as e:
+                print(f"⚠ Failed to restart accelerometer thread: {e}")
+                return False
 
     def restart_gps_thread(self):
         """Attempt to restart the GPS thread after failure, with process cleanup"""
-        if self.thread_restart_count['gps'] >= self.max_thread_restarts:
-            print(f"⚠ GPS thread failed {self.max_thread_restarts} times, not restarting")
-            return False
+        # CRITICAL: Lock protects restart_count check and modification
+        with self.thread_restart_lock:
+            if self.thread_restart_count['gps'] >= self.max_thread_restarts:
+                print(f"⚠ GPS thread failed {self.max_thread_restarts} times, not restarting")
+                return False
 
-        print(f"\n⚡ Attempting to restart GPS thread (attempt {self.thread_restart_count['gps'] + 1}/{self.max_thread_restarts})...")
+            print(f"\n⚡ Attempting to restart GPS thread (attempt {self.thread_restart_count['gps'] + 1}/{self.max_thread_restarts})...")
 
-        try:
-            # Stop existing thread if any
-            if self.gps_thread:
-                self.gps_thread.request_stop()
-                self.gps_thread.join(timeout=1)
-
-            # Force kill any stuck termux-location processes
-            # (async GPS may have left a process running if it timed out)
             try:
-                subprocess.run(['pkill', '-9', 'termux-location'], timeout=1)
-            except:
-                pass
+                # CRITICAL: Lock also protects thread object modification
+                with self.thread_state_lock:
+                    # Stop existing thread if any
+                    if self.gps_thread:
+                        self.gps_thread.request_stop()
+                        self.gps_thread.join(timeout=1)
 
-            # Also kill GPS backend (Location service) to reset socket state
-            try:
-                subprocess.run(['pkill', '-9', '-f', 'termux-api Location'], timeout=1)
-            except:
-                pass
+                    # Force kill any stuck termux-location processes
+                    # (async GPS may have left a process running if it timed out)
+                    try:
+                        subprocess.run(['pkill', '-9', 'termux-location'], timeout=1)
+                    except:
+                        pass
 
-            time.sleep(0.5)  # Brief delay for OS cleanup
+                    # Also kill GPS backend (Location service) to reset socket state
+                    try:
+                        subprocess.run(['pkill', '-9', '-f', 'termux-api Location'], timeout=1)
+                    except:
+                        pass
 
-            # Clear the queue
-            while not self.gps_queue.empty():
-                try:
-                    self.gps_queue.get_nowait()
-                except:
-                    break
+                    time.sleep(0.5)  # Brief delay for OS cleanup
 
-            # Restart GPS thread
-            self.gps_thread = GPSThread(self.gps_queue, self.stop_event)
-            self.gps_thread.start()
+                    # Clear the queue
+                    while not self.gps_queue.empty():
+                        try:
+                            self.gps_queue.get_nowait()
+                        except:
+                            break
 
-            self.thread_restart_count['gps'] += 1
-            print(f"✓ GPS thread restarted successfully")
-            return True
+                    # Restart GPS thread
+                    self.gps_thread = GPSThread(self.gps_queue, self.stop_event)
+                    self.gps_thread.start()
 
-        except Exception as e:
-            print(f"⚠ Failed to restart GPS thread: {e}")
-            return False
+                self.thread_restart_count['gps'] += 1
+                print(f"✓ GPS thread restarted successfully")
+                return True
+
+            except Exception as e:
+                print(f"⚠ Failed to restart GPS thread: {e}")
+                return False
 
     def start_threads(self):
         """Start background sensor threads"""
@@ -1798,9 +1829,12 @@ class MotionTrackerV2:
                             velocity, distance = self.fusion.update_accelerometer(motion_accel)
 
                             # Log accelerometer sample (full detail)
+                            # CRITICAL FIX: Use current time for elapsed (matching GPS behavior)
+                            # This ensures consistent timestamps between GPS and accel for filter fusion
+                            current_time = time.time()
                             self.accel_samples.append({
                                 'timestamp': accel_data['timestamp'],
-                                'elapsed': accel_data['timestamp'] - self.start_time.timestamp(),
+                                'elapsed': (current_time - self.start_time.timestamp()),
                                 'x': accel_data['x'],
                                 'y': accel_data['y'],
                                 'z': accel_data['z'],
