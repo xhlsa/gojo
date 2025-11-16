@@ -22,6 +22,7 @@ Measurements:
 """
 
 import math
+import sys
 import threading
 import time
 import numpy as np
@@ -49,6 +50,16 @@ class ExtendedKalmanFilter(SensorFusionBase):
     Accel measurements: Forward acceleration magnitude (non-linear)
     Gyro measurements: Angular velocity rates (ωx, ωy, ωz) for quaternion dynamics
     """
+
+    def _has_invalid_values(self, arr):
+        """Check if array contains NaN or Inf values."""
+        if isinstance(arr, (int, float)):
+            return math.isnan(arr) or math.isinf(arr)
+        return np.any(np.isnan(arr)) or np.any(np.isinf(arr))
+
+    def _enforce_covariance_symmetry(self):
+        """Enforce P matrix symmetry to prevent numerical drift."""
+        self.P = 0.5 * (self.P + self.P.T)
 
     def __init__(self, dt=0.02, gps_noise_std=8.0, accel_noise_std=0.5,
                  enable_gyro=False, gyro_noise_std=0.0005):
@@ -426,14 +437,29 @@ class ExtendedKalmanFilter(SensorFusionBase):
                 # Numerical issue, use pseudoinverse as fallback
                 K = self.P @ H.T @ np.linalg.pinv(S)
 
+            # CHECK FOR NaN/Inf IN KALMAN GAIN - prevents state corruption
+            if self._has_invalid_values(K):
+                print(f"[EKF GPS] Warning: Invalid Kalman gain (NaN/Inf detected), skipping update", file=sys.stderr)
+                return self.velocity, self.distance
+
             # Update state
             self.state = (self.state.reshape(-1, 1) + K @ y).flatten()
+
+            # CHECK FOR NaN/Inf IN STATE after update - prevents propagation
+            if self._has_invalid_values(self.state):
+                print(f"[EKF GPS] Warning: Invalid state (NaN/Inf detected), resetting to origin", file=sys.stderr)
+                self.state = np.zeros(self.n_state)
+                if self.enable_gyro:
+                    self.state[6] = 1.0  # Reset quaternion to identity
+                return self.velocity, self.distance
 
             # Update covariance using Joseph form for numerical stability
             # P = (I - KH)P(I - KH)' + KRK'
             # This preserves symmetry better than standard form
             I_KH = np.eye(self.n_state) - K @ H
             self.P = I_KH @ self.P @ I_KH.T + K @ self.R_gps @ K.T
+            # Enforce symmetry to prevent numerical drift
+            self._enforce_covariance_symmetry()
 
             # Extract velocity (magnitude of velocity vector)
             vx, vy = self.state[2], self.state[3]
@@ -525,14 +551,25 @@ class ExtendedKalmanFilter(SensorFusionBase):
                 # Kalman gain
                 K = self.P @ H.T / S[0, 0]
 
+                # CHECK FOR NaN/Inf IN KALMAN GAIN - prevents state corruption
+                if self._has_invalid_values(K):
+                    return self.velocity, self.distance
+
                 # Update state
                 self.state = self.state.reshape(-1, 1) + K * y
                 self.state = self.state.flatten()
+
+                # CHECK FOR NaN/Inf IN STATE after update
+                if self._has_invalid_values(self.state):
+                    print(f"[EKF Accel] Warning: Invalid state (NaN/Inf detected), skipping update", file=sys.stderr)
+                    return self.velocity, self.distance
 
                 # Update covariance using Joseph form for numerical stability
                 # P = (I - KH)P(I - KH)' + KRK'
                 I_KH = np.eye(self.n_state) - K @ H
                 self.P = I_KH @ self.P @ I_KH.T + K @ self.R_accel @ K.T
+                # Enforce symmetry to prevent numerical drift
+                self._enforce_covariance_symmetry()
 
             # Extract velocity
             vx, vy = self.state[2], self.state[3]
@@ -622,15 +659,32 @@ class ExtendedKalmanFilter(SensorFusionBase):
             except np.linalg.LinAlgError:
                 K = self.P @ H.T @ np.linalg.pinv(S)
 
+            # CHECK FOR NaN/Inf IN KALMAN GAIN
+            if self._has_invalid_values(K):
+                return self.velocity, self.distance
+
             # Update state (primarily corrects bias estimates)
             self.state = (self.state.reshape(-1, 1) + K @ y).flatten()
 
-            # Normalize quaternion after update (ensure q0² + q1² + q2² + q3² = 1)
-            self.state[6:10] = self.quaternion_normalize(self.state[6:10])
+            # CHECK FOR NaN/Inf IN STATE after update
+            if self._has_invalid_values(self.state):
+                print(f"[EKF Gyro] Warning: Invalid state (NaN/Inf detected), skipping quaternion update", file=sys.stderr)
+                return self.velocity, self.distance
+
+            # Validate quaternion before normalization - catch NaN that would propagate
+            q = self.state[6:10]
+            if self._has_invalid_values(q):
+                print(f"[EKF Gyro] Warning: Invalid quaternion (NaN/Inf detected), resetting to identity", file=sys.stderr)
+                self.state[6:10] = np.array([1.0, 0.0, 0.0, 0.0])
+            else:
+                # Normalize quaternion after update (ensure q0² + q1² + q2² + q3² = 1)
+                self.state[6:10] = self.quaternion_normalize(self.state[6:10])
 
             # Update covariance using Joseph form for numerical stability
             I_KH = np.eye(self.n_state) - K @ H
             self.P = I_KH @ self.P @ I_KH.T + K @ self.R_gyro @ K.T
+            # Enforce symmetry to prevent numerical drift
+            self._enforce_covariance_symmetry()
 
             self.last_gyro_time = current_time
 
@@ -647,6 +701,10 @@ class ExtendedKalmanFilter(SensorFusionBase):
             # State: [px, py, vx, vy, ax, ay, q0, q1, q2, q3, bx, by, bz]
             self.state[0:2] = 0.0  # Position
             self.state[2:4] = 0.0  # Velocity
+
+            # CRITICAL FIX: Reset covariance matrix to prevent accumulated uncertainty
+            # from auto-save window affecting next window's filter behavior
+            self.P = np.eye(self.n_state) * 1000  # Reset to initial high uncertainty
 
             # Reset sensor timing
             self.last_gps_time = None

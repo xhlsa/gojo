@@ -35,7 +35,7 @@ import gzip
 import sqlite3
 import psutil
 import numpy as np
-from queue import Queue, Empty
+from queue import Queue, Empty, Full
 from datetime import datetime
 
 # Try orjson for speed
@@ -821,16 +821,25 @@ class FilterComparison:
                     # PHASE 2: Distribute to ALL filter queues (non-blocking)
                     try:
                         self.ekf_gps_queue.put_nowait(gps_packet)
-                    except:
-                        pass  # Queue full, drop oldest
+                    except Full:
+                        # Queue full - drop this sample, filter thread will catch up on next data
+                        pass
+                    except Exception as e:
+                        print(f"[GPS_LOOP] Error distributing to EKF GPS queue: {type(e).__name__}: {e}", file=sys.stderr)
+
                     try:
                         self.comp_gps_queue.put_nowait(gps_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[GPS_LOOP] Error distributing to Complementary GPS queue: {type(e).__name__}: {e}", file=sys.stderr)
+
                     try:
                         self.es_ekf_gps_queue.put_nowait(gps_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[GPS_LOOP] Error distributing to ES-EKF GPS queue: {type(e).__name__}: {e}", file=sys.stderr)
 
                     # Add GPS sample for incident context (30s before/after events)
                     self.incident_detector.add_gps_sample(
@@ -912,16 +921,24 @@ class FilterComparison:
                     # PHASE 2: Distribute to ALL filter queues (non-blocking)
                     try:
                         self.ekf_accel_queue.put_nowait(accel_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[ACCEL_LOOP] Error distributing to EKF accel queue: {type(e).__name__}: {e}", file=sys.stderr)
+
                     try:
                         self.comp_accel_queue.put_nowait(accel_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[ACCEL_LOOP] Error distributing to Complementary accel queue: {type(e).__name__}: {e}", file=sys.stderr)
+
                     try:
                         self.es_ekf_accel_queue.put_nowait(accel_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[ACCEL_LOOP] Error distributing to ES-EKF accel queue: {type(e).__name__}: {e}", file=sys.stderr)
 
                     # Create placeholder accel sample (will be updated by filter threads)
                     with self._save_lock:
@@ -1061,12 +1078,17 @@ class FilterComparison:
                     # PHASE 2: Distribute to filter queues (only EKF and ES-EKF support gyro)
                     try:
                         self.ekf_gyro_queue.put_nowait(gyro_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[GYRO_LOOP] Error distributing to EKF gyro queue: {type(e).__name__}: {e}", file=sys.stderr)
+
                     try:
                         self.es_ekf_gyro_queue.put_nowait(gyro_packet)
-                    except:
+                    except Full:
                         pass
+                    except Exception as e:
+                        print(f"[GYRO_LOOP] Error distributing to ES-EKF gyro queue: {type(e).__name__}: {e}", file=sys.stderr)
 
                     # Create placeholder gyro sample
                     with self._save_lock:
