@@ -51,7 +51,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
     """
 
     def __init__(self, dt=0.02, gps_noise_std=8.0, accel_noise_std=0.5,
-                 enable_gyro=False, gyro_noise_std=0.1):
+                 enable_gyro=False, gyro_noise_std=0.0005):
         """
         Initialize Extended Kalman Filter.
 
@@ -61,6 +61,7 @@ class ExtendedKalmanFilter(SensorFusionBase):
             accel_noise_std (float): Accel noise std dev (m/s²)
             enable_gyro (bool): If True, extend state to 10D with quaternion
             gyro_noise_std (float): Gyro angular velocity noise std dev (rad/s)
+                                    (Measured LSM6DSO: 0.000283, conservative: 0.0005)
         """
         self.enable_gyro = enable_gyro
         self.dt = dt
@@ -97,7 +98,8 @@ class ExtendedKalmanFilter(SensorFusionBase):
             self.Q[9, 9] = q_gyro**2  # q3
 
             # Gyro bias random walk: slow drift model (very small process noise)
-            q_bias = 0.001  # rad/s² - very slow bias drift rate
+            # Measured LSM6DSO drift: 0.000064 rad/s max, conservative: 0.0003
+            q_bias = 0.0003  # rad/s² - very slow bias drift rate
             self.Q[10, 10] = q_bias**2  # bx (bias X)
             self.Q[11, 11] = q_bias**2  # by (bias Y)
             self.Q[12, 12] = q_bias**2  # bz (bias Z)
