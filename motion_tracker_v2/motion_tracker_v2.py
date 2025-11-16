@@ -768,7 +768,14 @@ class GPSThread(threading.Thread):
 
             if returncode == 0 and stdout:
                 data = json_loads(stdout)
-                accuracy = data.get('accuracy', 999)
+                accuracy = data.get('accuracy')
+                if accuracy is None:
+                    accuracy = 999.0
+                else:
+                    try:
+                        accuracy = float(accuracy)
+                    except (TypeError, ValueError):
+                        accuracy = 999.0
 
                 # NEW: Quality filtering - reject low-quality fixes
                 if accuracy > self.quality_threshold:

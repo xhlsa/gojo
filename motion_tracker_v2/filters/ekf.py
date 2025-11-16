@@ -370,20 +370,21 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
                 # Use GPS accuracy as noise floor for distance accumulation
                 # This filters out GPS jitter while capturing real movement
-                if gps_accuracy is not None and gps_accuracy > 0:
+                has_valid_accuracy = gps_accuracy is not None and gps_accuracy > 0
+                if has_valid_accuracy:
                     # Subtract GPS noise floor to get true movement
                     true_movement = max(0.0, dist_increment - gps_accuracy)
                     self.distance += true_movement
                 else:
-                    # If no accuracy info or accuracy=0, assume 2.5m minimum floor
-                    # (GPS providers may report 0 if unknown, use conservative default)
-                    accuracy_floor = 2.5 if gps_accuracy == 0 else 0.0
+                    # If accuracy is missing or <=0, assume 2.5m minimum floor
+                    # (providers return 0/None when uncertainty is unknown)
+                    accuracy_floor = 2.5
                     true_movement = max(0.0, dist_increment - accuracy_floor)
                     self.distance += true_movement
 
                 # Stationary detection (still used for other purposes like recalibration)
-                # Handle accuracy=0 as unknown accuracy (use conservative 5.0m floor)
-                if gps_accuracy is not None and gps_accuracy > 0:
+                # Treat missing/<=0 accuracy as unknown (use conservative 5.0m floor)
+                if has_valid_accuracy:
                     movement_threshold = max(5.0, gps_accuracy * 1.5)
                 else:
                     movement_threshold = 5.0  # Default if accuracy unknown or zero
@@ -472,12 +473,16 @@ class ExtendedKalmanFilter(SensorFusionBase):
             # Sanity check: velocity should never exceed 60 m/s (~216 km/h)
             # This catches numerical divergence before it becomes critical
             MAX_VELOCITY = 60.0  # m/s (driving sanity limit)
-            if self.velocity > MAX_VELOCITY:
-                self.velocity = MAX_VELOCITY
-                # Scale velocity components proportionally
-                if self.velocity > 0:
-                    self.state[2] = (self.state[2] / math.sqrt(vx**2 + vy**2)) * MAX_VELOCITY
-                    self.state[3] = (self.state[3] / math.sqrt(vx**2 + vy**2)) * MAX_VELOCITY
+            vx_corr = self.state[2]
+            vy_corr = self.state[3]
+            corrected_speed = math.sqrt(vx_corr**2 + vy_corr**2)
+            if corrected_speed > MAX_VELOCITY:
+                scale = MAX_VELOCITY / corrected_speed
+                self.state[2] *= scale
+                self.state[3] *= scale
+                corrected_speed = MAX_VELOCITY
+
+            self.velocity = corrected_speed
 
             # Zero velocity if stationary
             if self.is_stationary:

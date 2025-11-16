@@ -90,20 +90,21 @@ class ComplementaryFilter(SensorFusionBase):
 
                     # Use GPS accuracy as noise floor for distance accumulation
                     # This filters out GPS jitter while capturing real movement
-                    if gps_accuracy is not None and gps_accuracy > 0:
+                    has_valid_accuracy = gps_accuracy is not None and gps_accuracy > 0
+                    if has_valid_accuracy:
                         # Subtract GPS noise floor to get true movement
                         true_movement = max(0.0, dist - gps_accuracy)
                         self.distance += true_movement
                     else:
-                        # If no accuracy info or accuracy=0, assume 2.5m minimum floor
-                        # (GPS providers may report 0 if unknown, use conservative default)
-                        accuracy_floor = 2.5 if gps_accuracy == 0 else 0.0
+                        # If accuracy is missing or <=0, assume 2.5m minimum floor
+                        # (providers return 0/None when uncertainty is unknown)
+                        accuracy_floor = 2.5
                         true_movement = max(0.0, dist - accuracy_floor)
                         self.distance += true_movement
 
                     # STATIONARY DETECTION - Filter GPS noise (still used for velocity zeroing)
-                    # Handle accuracy=0 as unknown accuracy (use conservative 5.0m floor)
-                    if gps_accuracy is not None and gps_accuracy > 0:
+                    # Treat missing/<=0 accuracy as unknown (use conservative 5.0m floor)
+                    if has_valid_accuracy:
                         movement_threshold = max(5.0, gps_accuracy * 1.5)
                     else:
                         movement_threshold = 5.0  # Default if accuracy unknown or zero
