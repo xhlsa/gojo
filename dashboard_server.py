@@ -1014,7 +1014,7 @@ def live_monitor():
         .map-container {
             flex: 1;
             position: relative;
-            z-index: 1;
+            z-index: 0;
         }
 
         #map {
@@ -1400,6 +1400,22 @@ def live_monitor():
         }
 
         // Initialize on page load
+        function handleViewportChange() {
+            if (!isMobile) return;
+            const currentHeight = getViewportHeight();
+            baselineMobileHeight = baselineMobileHeight === null
+                ? currentHeight
+                : Math.min(baselineMobileHeight, currentHeight);
+            applySheetHeightFromState();
+        }
+
+        window.addEventListener('resize', handleViewportChange);
+
+        if (window.visualViewport && !visualViewportHandlerAttached) {
+            window.visualViewport.addEventListener('resize', handleViewportChange);
+            visualViewportHandlerAttached = true;
+        }
+
         window.addEventListener('DOMContentLoaded', () => {
             initMap();
             pollLiveStatus();
@@ -1440,6 +1456,10 @@ def root():
             box-sizing: border-box;
         }
 
+        :root {
+            --sheet-height: 0px;
+        }
+
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
             background: var(--bg-primary);
@@ -1456,9 +1476,13 @@ def root():
             width: 350px;
             background: var(--bg-secondary);
             border-right: 1px solid var(--border-color);
-            overflow-y: auto;
+            overflow: hidden;
             box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            transition: transform 0.3s ease;
+            transition: width 0.3s ease, transform 0.3s ease;
+            position: relative;
+            flex: 0 0 350px;
+            display: flex;
+            flex-direction: column;
         }
 
         .sheet-handle {
@@ -1468,6 +1492,8 @@ def root():
             border-radius: 2px;
             width: 40px;
             margin: 8px auto 0;
+            cursor: grab;
+            touch-action: none;
         }
 
         .header {
@@ -1509,13 +1535,15 @@ def root():
         .search-bar {
             display: flex;
             gap: 8px;
+            flex-wrap: wrap;
             align-items: center;
             padding: 10px 20px;
             border-bottom: 1px solid var(--border-color);
         }
 
         .search-bar input {
-            flex: 1;
+            flex: 1 1 200px;
+            min-width: 0;
             padding: 8px 12px;
             min-height: 44px;
             border: 1px solid var(--border-color);
@@ -1543,6 +1571,10 @@ def root():
             transition: opacity 0.2s;
         }
 
+        .search-bar .filter-toggle {
+            flex: 0 0 auto;
+        }
+
         .filter-toggle:active {
             opacity: 0.8;
         }
@@ -1566,6 +1598,8 @@ def root():
 
         .drives-list {
             list-style: none;
+            flex: 1;
+            overflow-y: auto;
         }
 
         .drive-item {
@@ -1609,6 +1643,82 @@ def root():
             white-space: nowrap;
         }
 
+        body.compact-mode .drive-item {
+            padding: 10px 16px;
+        }
+
+        body.compact-mode .drive-date {
+            font-size: 13px;
+        }
+
+        body.compact-mode .drive-stats {
+            font-size: 11px;
+        }
+
+        body.compact-mode .stat-badge {
+            font-size: 10px;
+            padding: 1px 6px;
+        }
+
+        body.compact-mode .search-bar {
+            padding: 8px 15px;
+        }
+
+        body.compact-mode .filter-toggle {
+            min-height: 38px;
+            font-size: 11px;
+            padding: 6px 10px;
+        }
+
+        body.compact-mode .map-info,
+        body.compact-mode .track-legend {
+            font-size: 12px;
+        }
+
+        .drawer-toggle {
+            position: absolute;
+            top: 14px;
+            right: -16px;
+            width: 34px;
+            height: 34px;
+            border-radius: 17px;
+            border: 1px solid var(--border-color);
+            background: var(--bg-secondary);
+            color: var(--text-primary);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            box-shadow: 0 2px 6px rgba(0,0,0,0.15);
+            transition: transform 0.3s ease, background 0.2s;
+            z-index: 1001;
+            font-size: 16px;
+        }
+
+        .drawer-toggle:hover {
+            background: var(--bg-tertiary);
+        }
+
+        @media (min-width: 769px) {
+            body.drawer-collapsed .sidebar {
+                width: 24px;
+                flex: 0 0 24px;
+            }
+
+            body.drawer-collapsed .sheet-handle,
+            body.drawer-collapsed .header,
+            body.drawer-collapsed .search-bar,
+            body.drawer-collapsed .drives-list {
+                opacity: 0;
+                pointer-events: none;
+            }
+
+            body.drawer-collapsed .drawer-toggle {
+                transform: rotate(180deg);
+                right: -18px;
+            }
+        }
+
         .theme-toggle {
             position: absolute;
             top: 15px;
@@ -1631,7 +1741,7 @@ def root():
         .map-container {
             flex: 1;
             position: relative;
-            z-index: 1;
+            z-index: 0;
         }
 
         #map {
@@ -1650,6 +1760,45 @@ def root():
             box-shadow: 0 2px 8px rgba(0,0,0,0.15);
             font-size: 13px;
             max-width: 250px;
+            z-index: 1000;
+            transition: all 0.25s ease;
+        }
+
+        .map-info.collapsed {
+            padding: 10px 12px;
+            border-radius: 20px;
+            max-width: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .map-info.collapsed #driveInfoContent,
+        .map-info.collapsed #trackLegend {
+            display: none;
+        }
+
+        .legend-bubble-toggle {
+            border: none;
+            background: var(--accent-color);
+            color: white;
+            border-radius: 999px;
+            padding: 6px 10px;
+            cursor: pointer;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            font-weight: 600;
+        }
+
+        .legend-bubble-toggle:focus-visible {
+            outline: 2px solid var(--accent-color);
+            outline-offset: 2px;
+        }
+
+        .legend-bubble-toggle span {
+            font-size: 16px;
         }
 
         .track-legend {
@@ -1733,18 +1882,6 @@ def root():
                 box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
             }
 
-            .sidebar.sheet-expanded {
-                --sheet-height: 100vh;
-            }
-
-            .sidebar.sheet-half {
-                --sheet-height: 60vh;
-            }
-
-            .sidebar.sheet-collapsed {
-                --sheet-height: 25vh;
-            }
-
             .sheet-handle {
                 display: block;
                 cursor: grab;
@@ -1772,12 +1909,14 @@ def root():
             }
 
             .map-container {
-                flex: 1;
-                padding-bottom: 25vh;
+                flex: none;
+                position: relative;
+                z-index: 0;
+                height: calc(100vh - var(--sheet-height, 0px));
             }
 
             .map-info {
-                bottom: calc(25vh + 20px);
+                bottom: calc(var(--sheet-height, 0px) + 20px);
                 right: 10px;
                 max-width: 90%;
                 font-size: 12px;
@@ -1793,6 +1932,16 @@ def root():
 
             .theme-toggle:hover {
                 background: rgba(0, 0, 0, 0.6);
+            }
+
+            .drawer-toggle {
+                width: 42px;
+                height: 42px;
+                border-radius: 21px;
+                right: 16px;
+                bottom: 16px;
+                top: auto;
+                transform: none !important;
             }
         }
 
@@ -1817,7 +1966,8 @@ def root():
 <body>
     <div class="container">
         <div class="sidebar sheet-half" id="bottomSheet">
-            <div class="sheet-handle" id="sheetHandle"></div>
+            <div class="sheet-handle" id="sheetHandle" role="button" tabindex="0" aria-label="Adjust drive list panel"></div>
+            <button class="drawer-toggle" id="drawerToggle" aria-pressed="false" aria-label="Collapse drive list" title="Collapse drive list">‹</button>
             <div class="header">
                 <button class="theme-toggle" onclick="toggleTheme()" title="Toggle dark mode" aria-label="Toggle dark mode" aria-pressed="false">🌙</button>
                 <h1>Motion Tracker</h1>
@@ -1827,6 +1977,7 @@ def root():
             <div class="search-bar">
                 <input type="text" id="searchInput" placeholder="Search drives...">
                 <button id="gpsFilterBtn" class="filter-toggle" title="Show/hide runs without GPS data" aria-pressed="true">Show GPS only</button>
+                <button id="compactModeBtn" class="filter-toggle" title="Toggle compact drive list view" aria-pressed="false">Compact view</button>
             </div>
             <ul class="drives-list" id="drivesList">
                 <div class="loading">Loading drives...</div>
@@ -1834,7 +1985,11 @@ def root():
         </div>
         <div class="map-container">
             <div id="map"></div>
-            <div class="map-info" id="mapInfo" style="display:none;">
+            <div class="map-info collapsed" id="mapInfo" style="display:none;">
+                <button id="legendToggleBtn" class="legend-bubble-toggle" aria-expanded="false" aria-controls="trackLegend">
+                    <span aria-hidden="true">☰</span>
+                    <span id="legendBubbleStatus">Stats</span>
+                </button>
                 <div id="driveInfoContent"></div>
                 <div id="trackLegend" class="track-legend"></div>
             </div>
@@ -1854,18 +2009,70 @@ def root():
             'ES-EKF': '#a855f7'
         };
         const TRACK_PRIORITY = ['ES-EKF', 'EKF', 'GPS', 'Complementary'];
+        const SHEET_HEIGHT_RATIOS = {
+            collapsed: 0.15,
+            half: 0.55,
+            expanded: 0.88,
+        };
+        const COLLAPSED_EXTRA_MULTIPLIER = 0.9;
+        const COLLAPSED_EXTRA_MAX_RATIO = 0.25;  // Boost up to 25% of viewport
+        const COLLAPSED_ABSOLUTE_MAX_RATIO = 0.55;  // Never cover more than 55% while "collapsed"
         let drives = [];
         let displayedDrives = [];
         const DRIVES_PER_PAGE = 15;
         let currentPage = 0;
         let isLoadingMore = false;
         let showNonGpsRuns = false;  // Filter state: false = show GPS only (default)
+        let isCompactMode = false;
+        let isDrawerCollapsed = false;
+        let isLegendCollapsed = true;
+        let baselineMobileHeight = null;
+        let visualViewportHandlerAttached = false;
+
+        const mobileMediaQuery = window.matchMedia('(max-width: 768px)');
+        let isMobile = mobileMediaQuery.matches;
 
         // Bottom sheet management
-        let sheetState = 'half';  // collapsed, half, or expanded (default: half for 50/50 split)
-        let sheetStartY = 0;
-        let sheetStartHeight = 100;
-        const isMobile = window.matchMedia('(max-width: 768px)').matches;
+        let sheetState = isMobile ? 'half' : 'expanded';  // default to half only on mobile
+        let sheetDragInitialized = false;
+
+        function setSheetHeightPixels(pixels) {
+            const sheet = document.getElementById('bottomSheet');
+            const root = document.documentElement;
+            if (!sheet || !root) return;
+            const clamped = Math.max(0, Math.min(pixels, window.innerHeight));
+            sheet.style.setProperty('--sheet-height', `${clamped}px`);
+            root.style.setProperty('--sheet-height', `${clamped}px`);
+        }
+
+        function getViewportHeight() {
+            return window.visualViewport ? window.visualViewport.height : window.innerHeight;
+        }
+
+        function applySheetHeightFromState() {
+            if (!isMobile) {
+                const sheet = document.getElementById('bottomSheet');
+                sheet?.style.removeProperty('--sheet-height');
+                document.documentElement.style.setProperty('--sheet-height', '0px');
+                return;
+            }
+            const viewportHeight = getViewportHeight();
+            const ratio = SHEET_HEIGHT_RATIOS[sheetState] || SHEET_HEIGHT_RATIOS.half;
+            let targetHeight = viewportHeight * ratio;
+            if (sheetState === 'collapsed') {
+                const baseline = baselineMobileHeight ?? viewportHeight;
+                const extraPixels = Math.max(0, viewportHeight - baseline);
+                const chromePixels = Math.max(0, window.innerHeight - viewportHeight);
+                if (extraPixels > 0) {
+                    const maxExtra = viewportHeight * COLLAPSED_EXTRA_MAX_RATIO;
+                    const boost = Math.min((extraPixels + chromePixels) * COLLAPSED_EXTRA_MULTIPLIER, maxExtra);
+                    targetHeight += boost;
+                }
+                const maxCollapsed = viewportHeight * COLLAPSED_ABSOLUTE_MAX_RATIO;
+                targetHeight = Math.min(targetHeight, maxCollapsed);
+            }
+            setSheetHeightPixels(targetHeight);
+        }
 
         function setSheetState(state) {
             const sheet = document.getElementById('bottomSheet');
@@ -1873,6 +2080,8 @@ def root():
             sheet.classList.remove('sheet-collapsed', 'sheet-half', 'sheet-expanded');
             sheet.classList.add(`sheet-${state}`);
             sheetState = state;
+            applySheetHeightFromState();
+            updateDrawerToggleButton();
         }
 
         function toggleSheetState() {
@@ -1885,43 +2094,89 @@ def root():
             }
         }
 
+        mobileMediaQuery.addEventListener('change', (event) => {
+            isMobile = event.matches;
+            const sheet = document.getElementById('bottomSheet');
+            if (!sheet) return;
+            if (isMobile && isDrawerCollapsed) {
+                isDrawerCollapsed = false;
+                document.body.classList.remove('drawer-collapsed');
+                updateDrawerToggleButton();
+            } else if (!isMobile) {
+                updateDrawerToggleButton();
+            }
+            if (!isMobile) {
+                document.documentElement.style.setProperty('--sheet-height', '0px');
+                baselineMobileHeight = null;
+            } else {
+                baselineMobileHeight = window.innerHeight;
+                setSheetState(sheetState === 'collapsed' ? 'collapsed' : 'half');
+            }
+            applySheetHeightFromState();
+        });
+
         // Bottom sheet drag handling
         function initSheetDrag() {
-            if (!isMobile) return;
             const handle = document.getElementById('sheetHandle');
             const sheet = document.getElementById('bottomSheet');
-            if (!handle || !sheet) return;
+            if (!handle || !sheet || sheetDragInitialized) return;
+            sheetDragInitialized = true;
 
             let isDragging = false;
             let startY = 0;
             let startHeight = 0;
+            let pointerMoved = false;
+            let activePointerId = null;
 
-            handle.addEventListener('touchstart', (e) => {
+            const clampHeight = (height) => {
+                const maxHeight = window.innerHeight * SHEET_HEIGHT_RATIOS.expanded;
+                const minHeightPx = window.innerHeight * SHEET_HEIGHT_RATIOS.collapsed;
+                return Math.min(Math.max(height, minHeightPx), maxHeight);
+            };
+
+            const beginDrag = (clientY) => {
+                if (!isMobile) return false;
                 isDragging = true;
-                startY = e.touches[0].clientY;
+                pointerMoved = false;
+                startY = clientY;
                 startHeight = sheet.offsetHeight;
                 handle.style.cursor = 'grabbing';
-            });
+                return true;
+            };
 
-            document.addEventListener('touchmove', (e) => {
-                if (!isDragging) return;
-                const currentY = e.touches[0].clientY;
-                const diff = startY - currentY;
-                const newHeight = startHeight + diff;
-                const maxHeight = window.innerHeight;
-                const minHeightPx = window.innerHeight * 0.25;  // 25vh minimum
-
-                if (newHeight >= minHeightPx && newHeight <= maxHeight) {
-                    sheet.style.setProperty('--sheet-height', newHeight + 'px');
+            const updateDrag = (clientY) => {
+                if (!isDragging || !isMobile) return;
+                const diff = startY - clientY;
+                if (Math.abs(diff) > 3) {
+                    pointerMoved = true;
                 }
-            });
+                const newHeight = clampHeight(startHeight + diff);
+                setSheetHeightPixels(newHeight);
+            };
 
-            document.addEventListener('touchend', () => {
+            const commitDrag = () => {
                 if (!isDragging) return;
+                handle.style.cursor = 'grab';
+                const moved = pointerMoved;
                 isDragging = false;
+                pointerMoved = false;
+                activePointerId = null;
+
+                if (!isMobile) {
+                    return;
+                }
+
+                if (!moved) {
+                    toggleSheetState();
+                    return;
+                }
+
                 const currentHeight = sheet.offsetHeight;
-                const threshold1 = window.innerHeight * 0.375;  // Midpoint between collapsed (25vh) and half (50vh)
-                const threshold2 = window.innerHeight * 0.75;   // Midpoint between half (50vh) and expanded (100vh)
+                const collapsedHeight = window.innerHeight * SHEET_HEIGHT_RATIOS.collapsed;
+                const halfHeight = window.innerHeight * SHEET_HEIGHT_RATIOS.half;
+                const expandedHeight = window.innerHeight * SHEET_HEIGHT_RATIOS.expanded;
+                const threshold1 = (collapsedHeight + halfHeight) / 2;
+                const threshold2 = (halfHeight + expandedHeight) / 2;
 
                 if (currentHeight < threshold1) {
                     setSheetState('collapsed');
@@ -1930,7 +2185,60 @@ def root():
                 } else {
                     setSheetState('expanded');
                 }
-                handle.style.cursor = 'grab';
+            };
+
+            if (window.PointerEvent) {
+                handle.addEventListener('pointerdown', (event) => {
+                    if (!beginDrag(event.clientY)) return;
+                    activePointerId = event.pointerId;
+                    handle.setPointerCapture(event.pointerId);
+                });
+
+                handle.addEventListener('pointermove', (event) => {
+                    if (!isDragging || event.pointerId !== activePointerId) return;
+                    updateDrag(event.clientY);
+                });
+
+                const finishPointer = (event) => {
+                    if (event.pointerId !== activePointerId) return;
+                    handle.releasePointerCapture?.(event.pointerId);
+                    commitDrag();
+                };
+
+                handle.addEventListener('pointerup', finishPointer);
+                handle.addEventListener('pointercancel', finishPointer);
+                handle.addEventListener('pointerleave', finishPointer);
+            } else {
+                handle.addEventListener('touchstart', (event) => {
+                    const touch = event.touches[0];
+                    if (!touch) return;
+                    if (beginDrag(touch.clientY)) {
+                        event.preventDefault();
+                    }
+                }, {passive: false});
+
+                window.addEventListener('touchmove', (event) => {
+                    if (!isDragging) return;
+                    const touch = event.touches[0];
+                    if (!touch) return;
+                    updateDrag(touch.clientY);
+                    event.preventDefault();
+                }, {passive: false});
+
+                const finishTouch = () => {
+                    if (!isDragging) return;
+                    commitDrag();
+                };
+
+                window.addEventListener('touchend', finishTouch);
+                window.addEventListener('touchcancel', finishTouch);
+            }
+
+            handle.addEventListener('keydown', (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    toggleSheetState();
+                }
             });
         }
 
@@ -1966,6 +2274,77 @@ def root():
             }
             // Re-render with current filter applied
             filterDrives(document.getElementById('searchInput').value);
+        }
+
+        function toggleCompactMode() {
+            isCompactMode = !isCompactMode;
+            const btn = document.getElementById('compactModeBtn');
+            document.body.classList.toggle('compact-mode', isCompactMode);
+            if (btn) {
+                btn.textContent = isCompactMode ? 'Standard view' : 'Compact view';
+                btn.setAttribute('aria-pressed', isCompactMode ? 'true' : 'false');
+            }
+        }
+
+        function updateLegendBubbleUI() {
+            const mapInfo = document.getElementById('mapInfo');
+            const toggleBtn = document.getElementById('legendToggleBtn');
+            const statusSpan = document.getElementById('legendBubbleStatus');
+            if (!mapInfo || !toggleBtn || !statusSpan) return;
+
+            if (isLegendCollapsed) {
+                mapInfo.classList.add('collapsed');
+                statusSpan.textContent = 'Stats';
+                toggleBtn.setAttribute('aria-expanded', 'false');
+                document.getElementById('driveInfoContent')?.setAttribute('aria-hidden', 'true');
+                document.getElementById('trackLegend')?.setAttribute('aria-hidden', 'true');
+            } else {
+                mapInfo.classList.remove('collapsed');
+                statusSpan.textContent = 'Stats';
+                toggleBtn.setAttribute('aria-expanded', 'true');
+                document.getElementById('driveInfoContent')?.setAttribute('aria-hidden', 'false');
+                document.getElementById('trackLegend')?.setAttribute('aria-hidden', 'false');
+            }
+        }
+
+        function toggleLegendBubble() {
+            isLegendCollapsed = !isLegendCollapsed;
+            updateLegendBubbleUI();
+        }
+
+        function updateDrawerToggleButton() {
+            const btn = document.getElementById('drawerToggle');
+            if (!btn) return;
+
+            if (isMobile) {
+                const collapsed = sheetState === 'collapsed';
+                btn.textContent = collapsed ? '^' : 'v';
+                btn.setAttribute('aria-pressed', collapsed ? 'false' : 'true');
+                const label = collapsed ? 'Expand drive list' : 'Collapse drive list';
+                btn.setAttribute('aria-label', label);
+                btn.title = label;
+                return;
+            }
+
+            btn.textContent = isDrawerCollapsed ? '>' : '<';
+            btn.setAttribute('aria-pressed', isDrawerCollapsed ? 'true' : 'false');
+            const label = isDrawerCollapsed ? 'Expand drive list' : 'Collapse drive list';
+            btn.setAttribute('aria-label', label);
+            btn.title = label;
+        }
+
+        function toggleDrawer() {
+            if (isMobile) {
+                if (sheetState === 'collapsed') {
+                    setSheetState('half');
+                } else {
+                    setSheetState('collapsed');
+                }
+                return;
+            }
+            isDrawerCollapsed = !isDrawerCollapsed;
+            document.body.classList.toggle('drawer-collapsed', isDrawerCollapsed);
+            updateDrawerToggleButton();
         }
 
         // Filter drives by GPS data and search term
@@ -2168,11 +2547,11 @@ def root():
                 const drive = await response.json();
 
                 // Update map info
-                const mapInfo = document.getElementById('mapInfo');
-                const infoContent = document.getElementById('driveInfoContent');
-                infoContent.innerHTML = `
-                    <strong>${drive.datetime}</strong><br>
-                    Distance: ${drive.stats.distance_km} km<br>
+            const mapInfo = document.getElementById('mapInfo');
+            const infoContent = document.getElementById('driveInfoContent');
+            infoContent.innerHTML = `
+                <strong>${drive.datetime}</strong><br>
+                Distance: ${drive.stats.distance_km} km<br>
                     GPS Points: ${drive.stats.gps_samples}<br>
                     Accel Samples: ${drive.stats.accel_samples}<br>
                     Peak Memory: ${drive.stats.peak_memory_mb} MB<br><br>
@@ -2180,8 +2559,10 @@ def root():
                         <button onclick="exportDrive('${driveId}', 'gpx')" style="flex:1; padding:6px; border:1px solid #667eea; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:12px;">📍 GPX</button>
                         <button onclick="exportDrive('${driveId}', 'json')" style="flex:1; padding:6px; border:1px solid #667eea; background:#667eea; color:white; border-radius:4px; cursor:pointer; font-size:12px;">📋 JSON</button>
                     </div>
-                `;
-                mapInfo.style.display = 'block';
+            `;
+            mapInfo.style.display = 'block';
+            isLegendCollapsed = true;
+            updateLegendBubbleUI();
 
                 // Load GPX if available
                 if (drive.has_gpx) {
@@ -2508,6 +2889,10 @@ def root():
             initMap();
             loadDrives();
             initSheetDrag();  // Initialize bottom sheet for mobile
+            applySheetHeightFromState();
+            if (isMobile) {
+                baselineMobileHeight = getViewportHeight();
+            }
 
             // Add search input listener with debouncing
             const searchInput = document.getElementById('searchInput');
@@ -2517,13 +2902,26 @@ def root():
 
             // Add GPS filter button listener
             const gpsFilterBtn = document.getElementById('gpsFilterBtn');
-            gpsFilterBtn.addEventListener('click', toggleGpsFilter);
-
-            // Add sheet handle click to toggle on mobile
-            const sheetHandle = document.getElementById('sheetHandle');
-            if (sheetHandle && isMobile) {
-                sheetHandle.addEventListener('click', toggleSheetState);
+            if (gpsFilterBtn) {
+                gpsFilterBtn.addEventListener('click', toggleGpsFilter);
             }
+
+            const compactModeBtn = document.getElementById('compactModeBtn');
+            if (compactModeBtn) {
+                compactModeBtn.addEventListener('click', toggleCompactMode);
+            }
+
+            const drawerToggle = document.getElementById('drawerToggle');
+            if (drawerToggle) {
+                drawerToggle.addEventListener('click', toggleDrawer);
+            }
+
+            const legendToggleBtn = document.getElementById('legendToggleBtn');
+            if (legendToggleBtn) {
+                legendToggleBtn.addEventListener('click', toggleLegendBubble);
+            }
+
+            updateDrawerToggleButton();
         });
     </script>
 </body>
