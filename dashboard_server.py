@@ -625,6 +625,28 @@ def get_live_data(session_id: str):
         if "gps_samples" in data and isinstance(data["gps_samples"], list):
             gps_samples = data["gps_samples"][-100:]  # Last 100 GPS points
 
+        tracks_payload = {}
+        trajectories = data.get("trajectories")
+        if isinstance(trajectories, dict):
+            for key, points in trajectories.items():
+                if not isinstance(points, list) or not points:
+                    continue
+                trimmed = points[-400:]
+                formatted = []
+                for pt in trimmed:
+                    lat = pt.get("lat") or pt.get("latitude")
+                    lon = pt.get("lon") or pt.get("longitude")
+                    if lat is None or lon is None:
+                        continue
+                    formatted.append({
+                        "lat": lat,
+                        "lon": lon,
+                        "velocity": pt.get("velocity"),
+                        "uncertainty": pt.get("uncertainty_m") or pt.get("uncertainty")
+                    })
+                if formatted:
+                    tracks_payload[key] = formatted
+
         return {
             "gps_samples": gps_samples,
             "total_gps": len(data.get("gps_samples", [])),
@@ -632,7 +654,8 @@ def get_live_data(session_id: str):
             "total_gyro": len(data.get("gyro_samples", [])),
             "auto_save": data.get("auto_save", False),
             "autosave_number": data.get("autosave_number", 0),
-            "peak_memory_mb": data.get("peak_memory_mb", 0)
+            "peak_memory_mb": data.get("peak_memory_mb", 0),
+            "tracks": tracks_payload
         }
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to load session data: {str(e)}")
@@ -1050,6 +1073,46 @@ def live_monitor():
             color: var(--text-primary);
         }
 
+        .track-legend {
+            margin-top: 15px;
+            border-top: 1px solid var(--border-color);
+            padding-top: 12px;
+        }
+
+        .track-legend h4 {
+            font-size: 12px;
+            margin-bottom: 8px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .track-toggles {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .track-toggle {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-primary);
+        }
+
+        .track-toggle input {
+            accent-color: var(--accent-color);
+        }
+
+        .track-color {
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            display: inline-block;
+            border: 1px solid rgba(0,0,0,0.2);
+        }
+
         .loading {
             text-align: center;
             padding: 40px 20px;
@@ -1199,34 +1262,54 @@ def live_monitor():
         <div class="map-container">
             <a href="/" class="nav-button">← Back to Drives</a>
             <div id="map"></div>
-            <div class="map-overlay">
-                <h3>Live Position</h3>
-                <div id="mapMetrics">
-                    <div class="metric">
-                        <span>Speed:</span>
-                        <span id="mapSpeed">0 km/h</span>
-                    </div>
-                    <div class="metric">
-                        <span>GPS Accuracy:</span>
-                        <span id="mapAccuracy">-</span>
-                    </div>
-                    <div class="metric">
-                        <span>Last Update:</span>
-                        <span id="mapLastUpdate">-</span>
-                    </div>
+        <div class="map-overlay">
+            <h3>Live Position</h3>
+            <div id="mapMetrics">
+                <div class="metric">
+                    <span>Speed:</span>
+                    <span id="mapSpeed">0 km/h</span>
+                </div>
+                <div class="metric">
+                    <span>GPS Accuracy:</span>
+                    <span id="mapAccuracy">-</span>
+                </div>
+                <div class="metric">
+                    <span>Last Update:</span>
+                    <span id="mapLastUpdate">-</span>
                 </div>
             </div>
+            <div class="track-legend">
+                <h4>Tracks</h4>
+                <div class="track-toggles" id="trackLegend"></div>
+            </div>
+        </div>
         </div>
     </div>
 
     <script>
+        const PRIMARY_TRACK_KEY = 'es_ekf_dead_reckoning';
+        const TRACK_CONFIG = {
+            'ekf': { label: 'EKF (GPS)', color: '#22c55e', weight: 3 },
+            'es_ekf': { label: 'ES-EKF (GPS)', color: '#a855f7', weight: 3, dashArray: '6 4' },
+            'es_ekf_dead_reckoning': { label: 'ES-EKF Dead Reckoning', color: '#ff9800', weight: 4 },
+            'complementary': { label: 'Complementary', color: '#f97316', weight: 3, dashArray: '2 6' },
+        };
+        const DEFAULT_TRACK_VISIBILITY = {
+            'es_ekf_dead_reckoning': true,
+            'ekf': false,
+            'es_ekf': false,
+            'complementary': false,
+        };
+
         let map = null;
         let currentMarker = null;
-        let routePolyline = null;
+        let trackLayers = {};
+        let trackVisibility = { ...DEFAULT_TRACK_VISIBILITY };
         let allRoutePoints = [];
         let currentSessionId = null;
         let pollInterval = null;
         let lastUpdateTime = 0;
+        let mapFitToTrack = false;
 
         // Initialize map
         function initMap() {
@@ -1234,13 +1317,6 @@ def live_monitor():
             L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
                 attribution: '© OpenStreetMap contributors',
                 maxZoom: 19,
-            }).addTo(map);
-
-            // Create route polyline (empty initially)
-            routePolyline = L.polyline([], {
-                color: '#667eea',
-                weight: 3,
-                opacity: 0.8,
             }).addTo(map);
 
             // Create current position marker
@@ -1272,6 +1348,13 @@ def live_monitor():
                     if (currentSessionId !== status.session_id) {
                         currentSessionId = status.session_id;
                         allRoutePoints = [];
+                        mapFitToTrack = false;
+                        Object.values(trackLayers).forEach(layer => {
+                            if (map && layer && map.hasLayer(layer)) {
+                                map.removeLayer(layer);
+                            }
+                        });
+                        trackLayers = {};
                         console.log('New session started:', currentSessionId);
                     }
                     await fetchRouteData(status.session_id);
@@ -1344,14 +1427,89 @@ def live_monitor():
             lastUpdateTime = status.last_update;
         }
 
+        function ensureTrackLayer(trackKey) {
+            if (trackLayers[trackKey]) return trackLayers[trackKey];
+            const cfg = TRACK_CONFIG[trackKey] || {};
+            const layer = L.polyline([], {
+                color: cfg.color || '#667eea',
+                weight: cfg.weight || 3,
+                opacity: cfg.opacity || 0.9,
+                dashArray: cfg.dashArray || null,
+            });
+            trackLayers[trackKey] = layer;
+            if (trackVisibility[trackKey]) {
+                layer.addTo(map);
+            }
+            return layer;
+        }
+
+        function updateTrackVisibility(trackKey) {
+            const layer = trackLayers[trackKey];
+            if (!layer) return;
+            if (trackVisibility[trackKey]) {
+                layer.addTo(map);
+            } else if (map.hasLayer(layer)) {
+                map.removeLayer(layer);
+            }
+        }
+
+        function initTrackLegend() {
+            const legend = document.getElementById('trackLegend');
+            if (!legend) return;
+            legend.innerHTML = Object.entries(TRACK_CONFIG).map(([key, cfg]) => `
+                <label class="track-toggle">
+                    <input type="checkbox" data-track="${key}" ${trackVisibility[key] ? 'checked' : ''}>
+                    <span class="track-color" style="background:${cfg.color || '#667eea'}; ${cfg.dashArray ? 'border-style:dashed;' : ''}"></span>
+                    <span>${cfg.label}</span>
+                </label>
+            `).join('');
+            legend.querySelectorAll('input').forEach(input => {
+                input.addEventListener('change', (event) => {
+                    const track = event.target.dataset.track;
+                    trackVisibility[track] = event.target.checked;
+                    updateTrackVisibility(track);
+                });
+            });
+        }
+
         // Fetch route data from auto-save
         async function fetchRouteData(sessionId) {
             try {
                 const response = await fetch(`/api/live/data/${sessionId}`);
                 const data = await response.json();
 
-                if (data.gps_samples && data.gps_samples.length > 0) {
-                    // Build route from GPS samples
+                let tracksUpdated = false;
+                if (data.tracks && Object.keys(data.tracks).length > 0) {
+                    tracksUpdated = true;
+                    Object.entries(data.tracks).forEach(([trackKey, points]) => {
+                        if (!TRACK_CONFIG[trackKey]) return;
+                        const latlngs = points.map(pt => {
+                            if (typeof pt.lat === 'number' && typeof pt.lon === 'number') {
+                                return [pt.lat, pt.lon];
+                            }
+                            return null;
+                        }).filter(Boolean);
+
+                        const layer = ensureTrackLayer(trackKey);
+                        layer.setLatLngs(latlngs);
+                        if (trackVisibility[trackKey]) {
+                            layer.addTo(map);
+                        } else if (map.hasLayer(layer)) {
+                            map.removeLayer(layer);
+                        }
+
+                        if (trackKey === PRIMARY_TRACK_KEY && latlngs.length > 1) {
+                            allRoutePoints = latlngs;
+                            if (!mapFitToTrack) {
+                                map.fitBounds(layer.getBounds(), { padding: [50, 50] });
+                                mapFitToTrack = true;
+                            }
+                        }
+                    });
+                }
+
+                // Fallback to legacy GPS samples if no track data yet
+                if (!tracksUpdated && data.gps_samples && data.gps_samples.length > 0) {
                     const newPoints = data.gps_samples.map(sample => {
                         if (sample.gps && sample.gps.latitude && sample.gps.longitude) {
                             return [sample.gps.latitude, sample.gps.longitude];
@@ -1362,14 +1520,15 @@ def live_monitor():
                     }).filter(p => p !== null);
 
                     if (newPoints.length > 0) {
-                        // Update polyline with new route
-                        routePolyline.setLatLngs(newPoints);
-
-                        // Zoom to show entire route on first update
-                        if (allRoutePoints.length === 0 && newPoints.length > 1) {
-                            map.fitBounds(routePolyline.getBounds(), {padding: [50, 50]});
+                        const fallbackLayer = ensureTrackLayer('ekf');
+                        fallbackLayer.setLatLngs(newPoints);
+                        if (trackVisibility['ekf']) {
+                            fallbackLayer.addTo(map);
                         }
-
+                        if (!mapFitToTrack && newPoints.length > 1) {
+                            map.fitBounds(fallbackLayer.getBounds(), { padding: [50, 50] });
+                            mapFitToTrack = true;
+                        }
                         allRoutePoints = newPoints;
                     }
                 }
@@ -1418,6 +1577,7 @@ def live_monitor():
 
         window.addEventListener('DOMContentLoaded', () => {
             initMap();
+            initTrackLegend();
             pollLiveStatus();
 
             // Poll every 1 second for updates
