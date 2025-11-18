@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::process::Command;
 use tokio::sync::mpsc::Sender;
 use tokio::time::{interval, Duration};
@@ -158,9 +159,33 @@ fn read_gyroscope() -> Option<GyroData> {
 }
 
 fn read_gps() -> Option<GpsData> {
-    // Try to read from termux-location
-    // This would need proper JSON parsing from Termux:API
-    None
+    let output = Command::new("termux-location")
+        .arg("-p")
+        .arg("gps")
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let data: Value = serde_json::from_slice(&output.stdout).ok()?;
+    let latitude = data.get("latitude")?.as_f64()?;
+    let longitude = data.get("longitude")?.as_f64()?;
+    let accuracy = data.get("accuracy").and_then(|v| v.as_f64()).unwrap_or(5.0);
+    let speed = data.get("speed").and_then(|v| v.as_f64()).unwrap_or(0.0);
+    let timestamp = data
+        .get("time")
+        .and_then(|v| v.as_f64())
+        .unwrap_or_else(current_timestamp);
+
+    Some(GpsData {
+        timestamp,
+        latitude,
+        longitude,
+        accuracy,
+        speed,
+    })
 }
 
 fn parse_accel_output(output: &str) -> Option<AccelData> {

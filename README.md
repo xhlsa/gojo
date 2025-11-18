@@ -110,9 +110,9 @@ gojo/
 
 We're beginning to peel performance-critical math out of Python into Rust for determinism and future native apps. Early steps are intentionally small and parity-tested so the live filter stays stable:
 
-- **`motion_tracker_rs/` crate** – Houses Rust versions of `predict_position` and `propagate_covariance` (mirrors ES‑EKF math). Built with `maturin` as a Python extension so we can swap modules incrementally.
+- **`motion_tracker_rs/` crate** – Houses Rust versions of `predict_position`, `propagate_covariance`, `kalman_update`, and the new `es_ekf_predict` helper plus the full `PyEsEkf` filter (`ErrorStateEKF` now delegates entirely to this class whenever the wheel is installed). Built with `maturin` so we can keep swapping modules incrementally.
 - **Parity harness** – `python3 tools/compare_filter_math.py` runs randomized trials to verify the Rust math matches NumPy exactly. Run this whenever the crate changes.
-- **ES-EKF integration** – `motion_tracker_v2/filters/es_ekf.py` automatically uses the Rust helpers when the wheel is installed (`HAS_RUST_FILTER` flag). On any import/runtime error it falls back to pure Python.
+- **ES-EKF integration** – `motion_tracker_v2/filters/es_ekf.py` automatically instantiates the Rust `PyEsEkf` class when the wheel is present (`ErrorStateEKF(..., force_python=False)` is the default). Set `force_python=True` when running parity tests or debugging the legacy path; otherwise Python just delegates each method call to the Rust implementation. Pure Python fallbacks remain in place for environments without the wheel.
 - **Live swap** – The Python ES‑EKF now calls Rust for predict, covariance, and GPS updates. Python is left to orchestrate threads/IO while the math runs in Rust under parity tests.
 - **Test harness** – `./test_ekf.sh <minutes>` is the on-device validation loop; we run a short 10-minute session after each major Rust change to ensure sensor daemons and GPX export stay stable.
 

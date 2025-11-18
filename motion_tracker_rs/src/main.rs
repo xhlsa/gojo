@@ -7,13 +7,13 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 mod filters;
-mod sensors;
 mod incident;
 mod live_status;
+mod sensors;
 
-use filters::es_ekf::EsEkf;
 use filters::complementary::ComplementaryFilter;
-use sensors::{AccelData, GyroData, GpsData};
+use filters::es_ekf::EsEkf;
+use sensors::{AccelData, GpsData, GyroData};
 
 #[derive(Parser, Debug)]
 #[command(name = "motion_tracker")]
@@ -74,18 +74,21 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&args.output_dir)?;
 
     // Gravity calibration: collect 20 stationary samples at startup
-    println!("[{}] Calibrating gravity (collecting 20 samples)...", ts_now());
+    println!(
+        "[{}] Calibrating gravity (collecting 20 samples)...",
+        ts_now()
+    );
     let mut gravity_samples = Vec::new();
     let mut calibration_complete = false;
     let mut gravity_magnitude = 9.81;
 
     // Initialize filters and incident detection
     let mut ekf = EsEkf::new(
-        0.05,      // dt = 50ms
-        8.0,       // gps_noise_std
-        0.5,       // accel_noise_std
+        0.05, // dt = 50ms
+        8.0,  // gps_noise_std
+        0.5,  // accel_noise_std
         args.enable_gyro,
-        0.0005,    // gyro_noise_std (from CLAUDE.md)
+        0.0005, // gyro_noise_std (from CLAUDE.md)
     );
 
     let mut comp_filter = ComplementaryFilter::new();
@@ -163,10 +166,15 @@ async fn main() -> Result<()> {
 
                 if gravity_samples.len() >= 10 {
                     // Calculate average gravity magnitude (should be ~9.81 m/s²)
-                    gravity_magnitude = gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
+                    gravity_magnitude =
+                        gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
                     calibration_complete = true;
-                    println!("[{}] Gravity calibration complete: {:.3} m/s² ({} samples)",
-                        ts_now(), gravity_magnitude, gravity_samples.len());
+                    println!(
+                        "[{}] Gravity calibration complete: {:.3} m/s² ({} samples)",
+                        ts_now(),
+                        gravity_magnitude,
+                        gravity_samples.len()
+                    );
                     gravity_samples.clear();
                 } else {
                     // Still calibrating, skip filter updates
@@ -186,12 +194,22 @@ async fn main() -> Result<()> {
                 None
             };
             let (lat, lon) = if let Some(last) = readings_clone.lock().unwrap().last() {
-                last.gps.as_ref().map(|g| (g.latitude, g.longitude)).unwrap_or((0.0, 0.0))
+                last.gps
+                    .as_ref()
+                    .map(|g| (g.latitude, g.longitude))
+                    .unwrap_or((0.0, 0.0))
             } else {
                 (0.0, 0.0)
             };
 
-            if let Some(incident) = incident_detector.detect(true_accel_mag, 0.0, gps_speed, accel.timestamp, Some(lat), Some(lon)) {
+            if let Some(incident) = incident_detector.detect(
+                true_accel_mag,
+                0.0,
+                gps_speed,
+                accel.timestamp,
+                Some(lat),
+                Some(lon),
+            ) {
                 incidents.push(incident);
             }
 
@@ -211,13 +229,26 @@ async fn main() -> Result<()> {
             }
 
             // Detect swerving incidents with gyro
-            let gps_speed = readings.lock().unwrap().last()
+            let gps_speed = readings
+                .lock()
+                .unwrap()
+                .last()
                 .and_then(|r| r.gps.as_ref().map(|g| g.speed));
-            let (lat, lon) = readings.lock().unwrap().last()
+            let (lat, lon) = readings
+                .lock()
+                .unwrap()
+                .last()
                 .and_then(|r| r.gps.as_ref().map(|g| (g.latitude, g.longitude)))
                 .unwrap_or((0.0, 0.0));
 
-            if let Some(incident) = incident_detector.detect(0.0, gyro.z, gps_speed, gyro.timestamp, Some(lat), Some(lon)) {
+            if let Some(incident) = incident_detector.detect(
+                0.0,
+                gyro.z,
+                gps_speed,
+                gyro.timestamp,
+                Some(lat),
+                Some(lon),
+            ) {
                 incidents.push(incident);
             }
 
@@ -234,7 +265,12 @@ async fn main() -> Result<()> {
             }
 
             if args.filter == "ekf" || args.filter == "both" {
-                let _ = ekf.update_gps(gps.latitude, gps.longitude, Some(gps.speed), Some(gps.accuracy));
+                let _ = ekf.update_gps(
+                    gps.latitude,
+                    gps.longitude,
+                    Some(gps.speed),
+                    Some(gps.accuracy),
+                );
             }
             if args.filter == "complementary" || args.filter == "both" {
                 let _ = comp_filter.update_gps(gps.latitude, gps.longitude);
@@ -297,7 +333,13 @@ async fn main() -> Result<()> {
             let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
             let json = serde_json::to_string_pretty(&output)?;
             std::fs::write(&filename, json)?;
-            println!("[{}] Auto-saved {} samples, {} incidents to {}", ts_now(), readings_lock.len(), incidents.len(), filename);
+            println!(
+                "[{}] Auto-saved {} samples, {} incidents to {}",
+                ts_now(),
+                readings_lock.len(),
+                incidents.len(),
+                filename
+            );
             drop(readings_lock);
             last_save = now;
         }
@@ -322,10 +364,20 @@ async fn main() -> Result<()> {
             gps_fixes: ekf_state.as_ref().map(|s| s.gps_updates).unwrap_or(0),
         },
     };
-    let filename = format!("{}/comparison_{}_final.json", args.output_dir, ts_now_clean());
+    let filename = format!(
+        "{}/comparison_{}_final.json",
+        args.output_dir,
+        ts_now_clean()
+    );
     let json = serde_json::to_string_pretty(&output)?;
     std::fs::write(&filename, json)?;
-    println!("[{}] Final save: {} samples, {} incidents to {}", ts_now(), readings_lock.len(), incidents.len(), filename);
+    println!(
+        "[{}] Final save: {} samples, {} incidents to {}",
+        ts_now(),
+        readings_lock.len(),
+        incidents.len(),
+        filename
+    );
 
     // Final live status update
     let mut final_status = live_status::LiveStatus::new();

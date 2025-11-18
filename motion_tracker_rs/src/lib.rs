@@ -1,13 +1,11 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_local_definitions)]
 
-use ndarray::{arr1, Array1, Array2};
 use nalgebra::{DMatrix, DVector};
-use numpy::{
-    PyArray1, PyArray2, ToPyArray,
-};
-use pyo3::{exceptions::PyValueError, prelude::*};
+use ndarray::{arr1, Array1, Array2};
+use numpy::{PyArray1, PyArray2, ToPyArray};
 use pyo3::types::PyDict;
+use pyo3::{exceptions::PyValueError, prelude::*};
 
 /// Simple state update representing `x_new = x + v * dt`.
 ///
@@ -115,9 +113,8 @@ fn kalman_update_arrays(
     }
 
     let cov_vec: Vec<f64> = new_p.iter().copied().collect();
-    *covariance = Array2::from_shape_vec((state_len, state_len), cov_vec).map_err(|e| {
-        PyValueError::new_err(format!("Failed to build covariance array: {e}"))
-    })?;
+    *covariance = Array2::from_shape_vec((state_len, state_len), cov_vec)
+        .map_err(|e| PyValueError::new_err(format!("Failed to build covariance array: {e}")))?;
     Ok(())
 }
 
@@ -235,9 +232,7 @@ fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let d_lat = (lat2 - lat1).to_radians();
     let d_lon = (lon2 - lon1).to_radians();
     let a = (d_lat / 2.0).sin().powi(2)
-        + lat1.to_radians().cos()
-            * lat2.to_radians().cos()
-            * (d_lon / 2.0).sin().powi(2);
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
     let c = 2.0 * a.sqrt().atan2((1.0 - a).max(0.0).sqrt());
     R * c
 }
@@ -393,10 +388,7 @@ impl PyEsEkf {
         if self.last_position.is_some() {
             let vel_mag = self.velocity_magnitude();
             let now = current_timestamp(py)?;
-            if self
-                .last_gps_timestamp
-                .map_or(true, |ts| now - ts > 1.0)
-            {
+            if self.last_gps_timestamp.map_or(true, |ts| now - ts > 1.0) {
                 self.accumulated_distance += (vel_mag * self.dt).max(0.0);
             }
         }
@@ -575,10 +567,7 @@ impl PyEsEkf {
         Ok(dict)
     }
 
-    fn export_state<'py>(
-        &self,
-        py: Python<'py>,
-    ) -> (&'py PyArray1<f64>, &'py PyArray2<f64>) {
+    fn export_state<'py>(&self, py: Python<'py>) -> (&'py PyArray1<f64>, &'py PyArray2<f64>) {
         (
             self.state.to_owned().to_pyarray(py),
             self.covariance.to_owned().to_pyarray(py),
@@ -613,17 +602,13 @@ fn es_ekf_predict<'py>(
     let cov_ro = covariance.readonly();
     let cov_shape = cov_ro.shape();
     if cov_shape != [8, 8] {
-        return Err(PyValueError::new_err(
-            "Covariance must be an 8x8 matrix",
-        ));
+        return Err(PyValueError::new_err("Covariance must be an 8x8 matrix"));
     }
 
     let q_ro = process_noise.readonly();
     let q_shape = q_ro.shape();
     if q_shape != [8, 8] {
-        return Err(PyValueError::new_err(
-            "Process noise must be an 8x8 matrix",
-        ));
+        return Err(PyValueError::new_err("Process noise must be an 8x8 matrix"));
     }
 
     let mut cov_arr = cov_ro.as_array().to_owned();

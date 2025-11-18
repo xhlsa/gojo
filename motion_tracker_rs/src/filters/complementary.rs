@@ -21,13 +21,15 @@ pub struct ComplementaryFilter {
     last_gps_lat: Option<f64>,
     last_gps_lon: Option<f64>,
     last_gps_time: Option<f64>,
+    origin_lat: Option<f64>,
+    origin_lon: Option<f64>,
 
     accumulated_distance: f64,
     gps_updates: u64,
 
     // Filter gains
-    gps_weight: f64,        // 0.7 = 70% trust GPS
-    accel_weight: f64,      // 0.3 = 30% trust accel
+    gps_weight: f64,   // 0.7 = 70% trust GPS
+    accel_weight: f64, // 0.3 = 30% trust accel
 }
 
 impl ComplementaryFilter {
@@ -41,6 +43,8 @@ impl ComplementaryFilter {
             last_gps_lat: None,
             last_gps_lon: None,
             last_gps_time: None,
+            origin_lat: None,
+            origin_lon: None,
             accumulated_distance: 0.0,
             gps_updates: 0,
             gps_weight: 0.7,
@@ -69,8 +73,10 @@ impl ComplementaryFilter {
     pub fn update_gps(&mut self, lat: f64, lon: f64) {
         let now = current_timestamp();
 
-        if self.last_gps_lat.is_none() {
+        if self.origin_lat.is_none() {
             // First GPS fix
+            self.origin_lat = Some(lat);
+            self.origin_lon = Some(lon);
             self.last_gps_lat = Some(lat);
             self.last_gps_lon = Some(lon);
             self.last_gps_time = Some(now);
@@ -83,38 +89,38 @@ impl ComplementaryFilter {
         let prev_lat = self.last_gps_lat.unwrap();
         let prev_lon = self.last_gps_lon.unwrap();
         let prev_time = self.last_gps_time.unwrap();
+        let origin_lat = self.origin_lat.unwrap();
+        let origin_lon = self.origin_lon.unwrap();
 
-        // Convert to local coordinates
-        let (gps_x, gps_y) = latlon_to_meters(lat, lon, prev_lat, prev_lon);
+        // Convert current GPS to local coordinates relative to origin
+        let (gps_x, gps_y) = latlon_to_meters(lat, lon, origin_lat, origin_lon);
+        // Previous GPS position in same frame for velocity estimates
+        let (prev_x, prev_y) = latlon_to_meters(prev_lat, prev_lon, origin_lat, origin_lon);
 
         // GPS provides position estimate
         let dt = (now - prev_time).max(0.01);
 
-        // Complementary filter: blend accel-integrated position with GPS
-        // 70% GPS (authoritative for position), 30% accel (high-freq detail)
+        // Complementary filter: blend accel trajectory with GPS position in same frame
         self.x = self.gps_weight * gps_x + self.accel_weight * self.x;
         self.y = self.gps_weight * gps_y + self.accel_weight * self.y;
 
         // GPS velocity (from position difference)
         if dt > 0.01 {
-            let gps_vx = gps_x / dt;
-            let gps_vy = gps_y / dt;
+            let gps_vx = (gps_x - prev_x) / dt;
+            let gps_vy = (gps_y - prev_y) / dt;
 
             // Blend with accel-integrated velocity
             self.vx = self.gps_weight * gps_vx + self.accel_weight * self.vx;
             self.vy = self.gps_weight * gps_vy + self.accel_weight * self.vy;
         }
 
-        // Update heading from GPS bearing
-        let d_lon = (lon - prev_lon).to_radians();
-        let lat_rad = lat.to_radians();
-        let prev_lat_rad = prev_lat.to_radians();
-        let numerator = d_lon.sin() * lat_rad.cos();
-        let denominator = prev_lat_rad.cos() * lat_rad.sin()
-            - prev_lat_rad.sin() * lat_rad.cos() * d_lon.cos();
-        let gps_bearing = numerator.atan2(denominator);
-
-        self.heading = self.gps_weight * gps_bearing + self.accel_weight * self.heading;
+        // Update heading from direction of motion
+        let delta_x = gps_x - prev_x;
+        let delta_y = gps_y - prev_y;
+        if delta_x.hypot(delta_y) > 0.5 {
+            let gps_bearing = delta_y.atan2(delta_x);
+            self.heading = self.gps_weight * gps_bearing + self.accel_weight * self.heading;
+        }
 
         // Accumulate distance
         let delta_dist = haversine_distance(prev_lat, prev_lon, lat, lon);
@@ -160,9 +166,7 @@ fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     let d_lat = (lat2 - lat1).to_radians();
     let d_lon = (lon2 - lon1).to_radians();
     let a = (d_lat / 2.0).sin().powi(2)
-        + lat1.to_radians().cos()
-            * lat2.to_radians().cos()
-            * (d_lon / 2.0).sin().powi(2);
+        + lat1.to_radians().cos() * lat2.to_radians().cos() * (d_lon / 2.0).sin().powi(2);
     let c = 2.0 * a.sqrt().atan2((1.0 - a).max(0.0).sqrt());
     R * c
 }

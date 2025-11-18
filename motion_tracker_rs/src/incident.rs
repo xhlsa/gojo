@@ -4,15 +4,15 @@ use serde::{Deserialize, Serialize};
 pub struct Incident {
     pub timestamp: f64,
     pub incident_type: String,  // "braking", "impact", "swerving"
-    pub magnitude: f64,          // g-force or deg/sec
-    pub gps_speed: Option<f64>,  // m/s
+    pub magnitude: f64,         // g-force or deg/sec
+    pub gps_speed: Option<f64>, // m/s
     pub latitude: Option<f64>,
     pub longitude: Option<f64>,
 }
 
 pub struct IncidentDetector {
     last_swerve_time: f64,
-    swerve_cooldown: f64,  // 5 seconds
+    swerve_cooldown: f64, // 5 seconds
 }
 
 impl IncidentDetector {
@@ -23,12 +23,20 @@ impl IncidentDetector {
         }
     }
 
-    pub fn detect(&mut self, accel_mag: f64, gyro_z: f64, gps_speed: Option<f64>, timestamp: f64, lat: Option<f64>, lon: Option<f64>) -> Option<Incident> {
-        // Hard braking: accel > 0.8g
-        if accel_mag > 0.8 {
+    pub fn detect(
+        &mut self,
+        accel_mag: f64,
+        gyro_z: f64,
+        gps_speed: Option<f64>,
+        timestamp: f64,
+        lat: Option<f64>,
+        lon: Option<f64>,
+    ) -> Option<Incident> {
+        // Impact: accel > 1.5g (highest severity, check first)
+        if accel_mag > 1.5 {
             return Some(Incident {
                 timestamp,
-                incident_type: "hard_braking".to_string(),
+                incident_type: "impact".to_string(),
                 magnitude: accel_mag,
                 gps_speed,
                 latitude: lat,
@@ -36,11 +44,11 @@ impl IncidentDetector {
             });
         }
 
-        // Impact: accel > 1.5g
-        if accel_mag > 1.5 {
+        // Hard braking: accel > 0.8g
+        if accel_mag > 0.8 {
             return Some(Incident {
                 timestamp,
-                incident_type: "impact".to_string(),
+                incident_type: "hard_braking".to_string(),
                 magnitude: accel_mag,
                 gps_speed,
                 latitude: lat,
