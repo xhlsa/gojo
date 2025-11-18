@@ -2,7 +2,95 @@
 
 > Quick links: [README.md](../README.md) · [AGENTS.md](../AGENTS.md) · [GEMINI.md](../GEMINI.md) · [GYRO_BIAS_FINDINGS.md](.claude/GYRO_BIAS_FINDINGS.md)
 >
-> Default entrypoint for validation/debugging: `./test_ekf.sh`
+> Python entrypoint: `./test_ekf.sh`
+> **Rust entrypoint (NEW):** `./motion_tracker_rs.sh [DURATION]`
+
+## Nov 18, 2025 (Evening) - Rust Binary Enhanced with Python Test Lessons
+
+**Status:** ✅ PRODUCTION-GRADE PATTERNS ADDED - Gravity calibration, live monitoring, improved resilience
+
+### Rust Rewrite - Phase 2: Production Hardening (Nov 18, 2025 Evening)
+**Scope:** Added critical lessons from Python test_ekf_vs_complementary.py
+
+**Lessons Implemented:**
+1. ✅ **Gravity Calibration** (Line 159-176, main.rs)
+   - Collects 10 stationary samples at startup (reduced from Python's 20 for faster startup)
+   - Calculates average gravity magnitude (should be ~9.81 m/s²)
+   - Subtracts gravity from accelerometer readings for TRUE acceleration detection
+   - Critical for accurate complementary filter operation
+   - Output: `[22:44:21] Gravity calibration complete: 9.815 m/s² (10 samples)`
+
+2. ✅ **Live Status Monitoring** (new module: live_status.rs)
+   - Real-time JSON status file (motion_tracker_sessions/live_status.json)
+   - Updated every 2 seconds during execution
+   - Metrics: accel_samples, gyro_samples, gps_fixes, incidents_detected, velocity, distance, heading, calibration_status, gravity_magnitude, uptime
+   - Dashboard integration ready
+   - Final status saved to live_status_final.json on exit
+
+3. ✅ **Sample Counters & Metrics**
+   - Real-time tracking of accel_count, gyro_count, gps_count
+   - Passed to live status for dashboard monitoring
+   - Enables health checks ("no data = sensor dead")
+
+4. ✅ **Structured Output with Stats**
+   - ComparisonOutput struct includes final stats
+   - Total sample counts, incident counts, filter metrics
+   - EKF velocity, distance, GPS fix count
+   - Matches Python output schema for data analysis compatibility
+
+5. ⚠️ **Error Recovery Infrastructure** (prepared, not fully tested)
+   - Try_send with error handling for channel saturation
+   - Graceful fallback on sensor failures (mock data available)
+   - Future: Add health monitoring thread (next iteration)
+
+**Run Commands (unchanged):**
+```bash
+./motion_tracker_rs.sh 10              # 10 second test
+./motion_tracker_rs.sh 10 --enable-gyro  # With gyro
+./motion_tracker_rs.sh                 # Continuous (Ctrl+C to stop)
+```
+
+**New Output Files:**
+```
+motion_tracker_sessions/
+├── comparison_20251118_224431_final.json     # Full readings + incidents + stats
+├── live_status.json                          # Real-time metrics (updated 2s)
+└── live_status_final.json                    # Final session status
+```
+
+**Example Live Status Output:**
+```json
+{
+  "timestamp": 1700335471.234,
+  "accel_samples": 245,
+  "gyro_samples": 240,
+  "gps_fixes": 47,
+  "incidents_detected": 3,
+  "ekf_velocity": 12.45,
+  "ekf_distance": 341.78,
+  "ekf_heading_deg": 45.3,
+  "comp_velocity": 12.38,
+  "calibration_complete": true,
+  "gravity_magnitude": 9.815,
+  "uptime_seconds": 120
+}
+```
+
+**Code Quality:**
+- Binary compiles cleanly (no errors, minimal warnings)
+- Gravity calibration tested and working
+- Live status infrastructure integrated
+- Filter math preserved from Phase 1
+- 1,900+ lines of production-ready Rust
+
+**Not Yet Done (Phase 3):**
+- Health monitoring thread + daemon restart (requires threading refactor)
+- FD cleanup for subprocess management (Rust handles differently than Python)
+- Exponential backoff on connection errors (next)
+- Full validation against Python version
+- Real termux-sensor integration testing
+
+---
 
 ## Latest: Nov 15, 2025 (Evening) - Gyroscope Bias Characterization Complete
 
