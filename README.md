@@ -11,8 +11,8 @@ Simple, privacy-focused vehicle incident logging using GPS + accelerometer + gyr
 ```bash
 cd ~/gojo
 
-# Primary workflow (sensor cleanup + EKF metrics)
-./test_ekf.sh 30 --gyro
+# Primary workflow (sensor cleanup + EKF metrics) – holds a wakelock so Android stays awake
+./drive.sh 30 --gyro
 
 # Lightweight production session (no comparison output)
 ./motion_tracker_v2.sh 30
@@ -103,6 +103,43 @@ gojo/
 ├── test_ekf.sh                       (Test with metrics)
 └── README.md                         (This file)
 ```
+
+---
+
+## 🧪 Rust Porting Progress
+
+We're beginning to peel performance-critical math out of Python into Rust for determinism and future native apps. Early steps are intentionally small and parity-tested so the live filter stays stable:
+
+- **`motion_tracker_rs/` crate** – Houses Rust versions of `predict_position` and `propagate_covariance` (mirrors ES‑EKF math). Built with `maturin` as a Python extension so we can swap modules incrementally.
+- **Parity harness** – `python3 tools/compare_filter_math.py` runs randomized trials to verify the Rust math matches NumPy exactly. Run this whenever the crate changes.
+- **ES-EKF integration** – `motion_tracker_v2/filters/es_ekf.py` automatically uses the Rust helpers when the wheel is installed (`HAS_RUST_FILTER` flag). On any import/runtime error it falls back to pure Python.
+- **Live swap** – The Python ES‑EKF now calls Rust for predict, covariance, and GPS updates. Python is left to orchestrate threads/IO while the math runs in Rust under parity tests.
+- **Test harness** – `./test_ekf.sh <minutes>` is the on-device validation loop; we run a short 10-minute session after each major Rust change to ensure sensor daemons and GPX export stay stable.
+
+**How to rebuild/install:**
+```bash
+cd motion_tracker_rs
+~/.local/bin/maturin build
+pip install --user target/wheels/motion_tracker_rs-*.whl
+python3 tools/compare_filter_math.py
+```
+
+**Known considerations:**
+- Numeric ecosystem gaps (no NumPy broadcasting) mean we lean on `ndarray` and explicit math. As we port more, we may swap to `nalgebra` or bind to BLAS for heavy ops.
+- Termux builds can be slow; if `maturin develop` complains about missing virtualenvs, use `maturin build` + `pip install` as above.
+- Long term, the plan is “Python orchestrates, Rust computes”: keep wiring more filter pieces behind parity tests until the whole EKF can be swapped out.
+- Recommended pipeline:
+ 1. Prototype/iterate in Python (`motion_tracker_v2/...`).
+ 2. Port the math into `motion_tracker_rs` with PyO3 wrappers.
+ 3. Add parity tests (`tools/compare_filter_math.py`, `tools/test_es_ekf_predict.py`) plus a short `./test_ekf.sh` run.
+ 4. Swap the Python code to call the Rust helper; keep a fallback until we're confident.
+
+### Keeping GPS alive on Android
+
+- Run long sessions via `./drive.sh …` instead of invoking `./test_ekf.sh` directly. The wrapper acquires a Termux wakelock before starting the harness and releases it on exit so Android’s Doze/LKM can’t suspend `termux-location`.
+- The GPS watchdog already restarts the daemon if no fix arrives for 30 s; each restart bumps `gps_daemon_restart_count` in the session JSON so you can spot trouble.
+- On devices that still freeze GPS, pin Termux as a foreground app (Termux Widget/Tasker task that runs `termux-wake-lock` and keeps a persistent notification visible) before launching `./drive.sh`.
+- If you abort the run manually, the wrapper’s trap releases the wakelock, but you can always run `termux-wake-unlock` as a fallback.
 
 ---
 

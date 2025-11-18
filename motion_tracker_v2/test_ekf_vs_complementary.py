@@ -442,7 +442,8 @@ class FilterComparison:
         self.trajectory_buffers = {
             'ekf': np.zeros(self.max_trajectory_points, dtype=TRAJECTORY_DTYPE),
             'es_ekf': np.zeros(self.max_trajectory_points, dtype=TRAJECTORY_DTYPE),
-            'complementary': np.zeros(self.max_trajectory_points, dtype=TRAJECTORY_DTYPE)
+            'complementary': np.zeros(self.max_trajectory_points, dtype=TRAJECTORY_DTYPE),
+            'es_ekf_dead_reckoning': np.zeros(self.max_trajectory_points, dtype=TRAJECTORY_DTYPE)
         }
         self.trajectory_indices = {key: 0 for key in self.trajectory_buffers}
         self.trajectory_total_counts = {key: 0 for key in self.trajectory_buffers}
@@ -463,6 +464,9 @@ class FilterComparison:
 
         # FIX 2: Thread lock for accumulated_data and buffer operations
         self._save_lock = threading.RLock()
+        self._last_traj_emit = {key: 0.0 for key in self.trajectory_buffers}
+        self.dead_reckoning_emit_interval = 1.0  # seconds between synthetic ES-EKF samples
+        self._last_es_ekf_gps_ts = None
 
         # Thread lock for GPS counter (thread-safe increment)
         self._gps_counter_lock = threading.Lock()
@@ -498,7 +502,7 @@ class FilterComparison:
         # Memory monitoring
         self.process = psutil.Process()
         self.peak_memory = 0
-        self.es_ekf_paused = False  # Track if ES-EKF temporarily paused due to memory pressure
+        self.es_ekf_paused = False  # (legacy switch) no longer pauses ES-EKF
 
         # Auto-save configuration
         # MEMORY OPTIMIZATION: Reduced 15s → 5s to clear accumulated_data more frequently
@@ -1274,6 +1278,8 @@ class FilterComparison:
                 while now - last_predict >= predict_interval:
                     self.es_ekf.predict()
                     last_predict += predict_interval
+                synthetic_ts = (time.time() - self.start_time) if self.start_time else time.time()
+                self._maybe_emit_es_dead_reckoning(synthetic_ts)
 
                 # MEMORY GUARD: Skip processing if paused due to memory pressure
                 if self.es_ekf_paused:
@@ -1340,6 +1346,7 @@ class FilterComparison:
                                 v,
                                 unc
                             )
+                        self._last_es_ekf_gps_ts = gps_packet['timestamp']
                     except:
                         pass
 
@@ -1671,14 +1678,7 @@ class FilterComparison:
 
                 # MEMORY GUARD: Prevent Android LMK from killing process at ~100 MB
                 # Pause ES-EKF (most memory-intensive filter) if memory > 95 MB
-                if mem_mb > 95 and not self.es_ekf_paused:
-                    self.es_ekf_paused = True
-                    print(f"\n⚠️  MEMORY PRESSURE ({mem_mb:.1f} MB) - Temporarily pausing ES-EKF filter", file=sys.stderr)
-                    print(f"   EKF + Complementary will continue (core tracking maintained)", file=sys.stderr)
-                    print(f"   ES-EKF will resume when memory drops below 90 MB\n", file=sys.stderr)
-                elif mem_mb < 90 and self.es_ekf_paused:
-                    self.es_ekf_paused = False
-                    print(f"\n✓ Memory recovered ({mem_mb:.1f} MB) - Resuming ES-EKF filter\n", file=sys.stderr)
+                # Removed auto-pause: ES-EKF now remains active even under memory pressure.
 
             except Exception as e:
                 mem_mb = self.peak_memory  # Use last known peak if current fails
@@ -2250,6 +2250,23 @@ class FilterComparison:
         )
         self.trajectory_indices[filter_name] = idx + 1
         self.trajectory_total_counts[filter_name] += 1
+        self._last_traj_emit[filter_name] = timestamp
+
+    def _maybe_emit_es_dead_reckoning(self, timestamp):
+        if self._last_es_ekf_gps_ts is None:
+            return
+        last_emit = self._last_traj_emit.get('es_ekf', 0.0)
+        if timestamp - last_emit < self.dead_reckoning_emit_interval:
+            return
+        try:
+            lat, lon, unc = self.es_ekf.get_position()
+            state = self.es_ekf.get_state()
+            velocity = state.get('velocity', 0.0)
+            with self._save_lock:
+                self._record_trajectory_point('es_ekf', timestamp, lat, lon, velocity, unc)
+                self._record_trajectory_point('es_ekf_dead_reckoning', timestamp, lat, lon, velocity, unc)
+        except Exception:
+            pass
 
     def _record_covariance_snapshot(self, timestamp):
         if not hasattr(self.ekf, 'P'):

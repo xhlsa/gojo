@@ -15,11 +15,18 @@ Key feature: Heading state enables curved trajectory prediction during GPS loss
 vs naive constant-velocity which goes straight.
 """
 
-import numpy as np
+import math
 import threading
 import time
-import math
 from collections import deque
+
+import numpy as np
+
+from motion_tracker_rs import (
+    predict_position as rs_predict_position,
+    propagate_covariance as rs_propagate_covariance,
+    kalman_update as rs_kalman_update,
+)
 
 # Try to use scipy for matrix operations, fallback to numpy
 try:
@@ -246,6 +253,7 @@ class ErrorStateEKF:
 
         This enables curved trajectory prediction during GPS gaps.
         """
+        global HAS_RUST_FILTER
         with self.lock:
             # Get state
             x, y, vx, vy, ax, ay, heading, heading_rate = self.state
@@ -256,17 +264,25 @@ class ErrorStateEKF:
             vy_pred = vel_mag * np.sin(heading)
 
             # Standard motion model
-            self.state[0] += vx_pred * self.dt + 0.5 * ax * self.dt**2
-            self.state[1] += vy_pred * self.dt + 0.5 * ay * self.dt**2
-            self.state[2] += ax * self.dt
-            self.state[3] += ay * self.dt
+            pos_vec = np.array([self.state[0], self.state[1]], dtype=np.float64)
+            vel_vec = np.array([vx_pred, vy_pred], dtype=np.float64)
+            updated_pos = rs_predict_position(pos_vec, vel_vec, self.dt)
+            self.state[0] = float(updated_pos[0] + 0.5 * ax * self.dt**2)
+            self.state[1] = float(updated_pos[1] + 0.5 * ay * self.dt**2)
+            vel_state = rs_predict_position(
+                np.array(self.state[2:4], dtype=np.float64),
+                np.array([ax, ay], dtype=np.float64),
+                self.dt,
+            )
+            self.state[2] = float(vel_state[0])
+            self.state[3] = float(vel_state[1])
             # Accel states unchanged (constant acceleration assumption)
             self.state[6] += heading_rate * self.dt
             # Heading rate unchanged
 
             # Covariance update: P = F*P*F^T + Q
             F = self.state_transition_jacobian()
-            self.P = F @ self.P @ F.T + self.Q
+            self.P = rs_propagate_covariance(F, self.P, self.Q)
 
             self.predict_count += 1
 
@@ -284,6 +300,7 @@ class ErrorStateEKF:
         Returns: (velocity_magnitude, accumulated_distance)
         """
         with self.lock:
+            global HAS_RUST_FILTER
             # Set origin on first GPS fix
             if not self.origin_set:
                 self.origin_lat = latitude
@@ -325,28 +342,23 @@ class ErrorStateEKF:
             H = self.gps_measurement_jacobian()
 
             # Measurement residual
-            x_pred = self.state[[0, 1]].reshape(2, 1)
-            y = z - H @ self.state.reshape(8, 1)
+            residual = z - H @ self.state.reshape(8, 1)
 
             # Innovation covariance
-            # Adapt R based on GPS accuracy if provided
             R = self.R_gps.copy()
             if gps_accuracy:
                 R = np.eye(2) * (gps_accuracy**2)
 
-            S = H @ self.P @ H.T + R
+            state_updated, cov_updated = rs_kalman_update(
+                np.asarray(self.state, dtype=np.float64),
+                np.asarray(self.P, dtype=np.float64),
+                np.asarray(H, dtype=np.float64),
+                np.asarray(residual, dtype=np.float64).flatten(),
+                np.asarray(R, dtype=np.float64),
+            )
 
-            # Kalman gain
-            K = self.P @ H.T @ inv(S)
-
-            # State update
-            dx = K @ y
-            self.state = self.state.reshape(8, 1) + dx
-            self.state = self.state.flatten()
-
-            # Covariance update (Joseph form for stability)
-            I_KH = np.eye(8) - K @ H
-            self.P = I_KH @ self.P @ I_KH.T + K @ R @ K.T
+            self.state = np.asarray(state_updated, dtype=np.float64).flatten()
+            self.P = np.asarray(cov_updated, dtype=np.float64)
 
             # Distance accumulation
             if self.last_position:
