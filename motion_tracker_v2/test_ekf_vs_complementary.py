@@ -406,7 +406,8 @@ class FilterComparison:
         # Filters
         self.ekf = get_filter('ekf', enable_gyro=enable_gyro)
         self.complementary = get_filter('complementary')
-        self.es_ekf = get_filter('es_ekf', enable_gyro=enable_gyro)  # NEW: ES-EKF for trajectory mapping
+        # Force Python backend so GPS velocity smoothing stays available even when Rust extension is installed
+        self.es_ekf = get_filter('es_ekf', enable_gyro=enable_gyro, force_python=True)  # NEW: ES-EKF for trajectory mapping
 
         # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
         # LSM6DSO hardware tested: 647 Hz @ 1ms (60% eff), 164 Hz @ 5ms (80% eff), 44 Hz @ 20ms (80% eff)
@@ -465,7 +466,8 @@ class FilterComparison:
         # FIX 2: Thread lock for accumulated_data and buffer operations
         self._save_lock = threading.RLock()
         self._last_traj_emit = {key: 0.0 for key in self.trajectory_buffers}
-        self.dead_reckoning_emit_interval = 1.0  # seconds between synthetic ES-EKF samples
+        # Emit synthetic ES-EKF points at ~2.5 Hz so turns look smoother between GPS fixes
+        self.dead_reckoning_emit_interval = 0.4
         self._last_es_ekf_gps_ts = None
 
         # Thread lock for GPS counter (thread-safe increment)

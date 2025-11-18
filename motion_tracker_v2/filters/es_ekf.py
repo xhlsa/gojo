@@ -15,6 +15,7 @@ Key feature: Heading state enables curved trajectory prediction during GPS loss
 vs naive constant-velocity which goes straight.
 """
 
+import logging
 import math
 import threading
 import time
@@ -22,11 +23,20 @@ from collections import deque
 
 import numpy as np
 
-from motion_tracker_rs import (
-    predict_position as rs_predict_position,
-    propagate_covariance as rs_propagate_covariance,
-    kalman_update as rs_kalman_update,
-)
+logger = logging.getLogger(__name__)
+
+HAS_RUST_FILTER = False
+try:
+    from motion_tracker_rs import (
+        PyEsEkf,
+        es_ekf_predict as rs_es_ekf_predict,
+        kalman_update as rs_kalman_update,
+    )
+    HAS_RUST_FILTER = True
+except ImportError:
+    PyEsEkf = None
+    rs_es_ekf_predict = None
+    rs_kalman_update = None
 
 # Try to use scipy for matrix operations, fallback to numpy
 try:
@@ -34,6 +44,33 @@ try:
 except ImportError:
     inv = np.linalg.inv
     from numpy import block_diag
+
+
+def _numpy_kalman_update(state_vec, covariance, measurement_matrix,
+                         residual, measurement_noise):
+    """
+    Fallback Kalman update implemented purely in numpy for environments
+    where the Rust helpers are unavailable.
+    """
+    H = measurement_matrix
+    R = measurement_noise
+    z = residual.reshape(-1, 1)
+    x = state_vec.reshape(-1, 1)
+
+    S = H @ covariance @ H.T + R
+    try:
+        S_inv = inv(S)
+    except np.linalg.LinAlgError:
+        S = S + 1e-9 * np.eye(S.shape[0])
+        S_inv = inv(S)
+    K = covariance @ H.T @ S_inv
+    dx = K @ z
+    x = x + dx
+
+    I_KH = np.eye(covariance.shape[0]) - K @ H
+    P = I_KH @ covariance @ I_KH.T + K @ R @ K.T
+
+    return x.flatten(), P
 
 
 class ErrorStateEKF:
@@ -50,7 +87,8 @@ class ErrorStateEKF:
     """
 
     def __init__(self, dt=0.02, gps_noise_std=8.0, accel_noise_std=0.5,
-                 enable_gyro=False, gyro_noise_std=0.1):
+                 enable_gyro=False, gyro_noise_std=0.1, gps_velocity_noise_std=1.5,
+                 force_python=False):
         """
         Initialize ES-EKF filter.
 
@@ -64,6 +102,26 @@ class ErrorStateEKF:
         self.dt = dt
         # CRITICAL: Use RLock (re-entrant) not Lock - get_state() calls get_position() which both need locks
         self.lock = threading.RLock()
+        self.force_python = force_python
+        self.rs_filter = None
+        self.use_rust = False
+        self.enable_gyro = enable_gyro
+
+        if HAS_RUST_FILTER and PyEsEkf is not None and not force_python:
+            try:
+                self.rs_filter = PyEsEkf(
+                    dt=dt,
+                    gps_noise_std=gps_noise_std,
+                    accel_noise_std=accel_noise_std,
+                    enable_gyro=enable_gyro,
+                    gyro_noise_std=gyro_noise_std,
+                )
+                self.use_rust = True
+                logger.debug("Initialized Rust ES-EKF backend")
+            except Exception as exc:  # pragma: no cover - diagnostics
+                logger.warning("Failed to initialize Rust ES-EKF: %s", exc, exc_info=True)
+                self.rs_filter = None
+                self.use_rust = False
 
         # State vector: [x, y, vx, vy, ax, ay, heading, heading_rate]
         self.state = np.zeros(8)
@@ -74,8 +132,8 @@ class ErrorStateEKF:
         # Noise parameters
         self.gps_noise_std = gps_noise_std
         self.accel_noise_std = accel_noise_std
-        self.enable_gyro = enable_gyro
         self.gyro_noise_std = gyro_noise_std
+        self.gps_velocity_noise_std = gps_velocity_noise_std
 
         # Process noise covariance (8x8 diagonal)
         # Higher during GPS gaps to reflect model uncertainty
@@ -91,6 +149,7 @@ class ErrorStateEKF:
         # Measurement noise covariances
         self.R_gps = np.eye(2) * (gps_noise_std**2)
         self.R_accel = np.array([[accel_noise_std**2]])
+        self.R_gps_velocity = np.eye(2) * (gps_velocity_noise_std**2)
         self.R_gyro = np.array([[gyro_noise_std**2]])
 
         # Origin for local coordinates (set on first GPS fix)
@@ -216,6 +275,15 @@ class ErrorStateEKF:
 
         return H
 
+    def velocity_measurement_jacobian(self):
+        """
+        Measurement matrix that maps state to [vx, vy].
+        """
+        H = np.zeros((2, 8))
+        H[0, 2] = 1.0
+        H[1, 3] = 1.0
+        return H
+
     def accel_measurement_jacobian(self):
         """
         Returns H_accel matrix (1x8) for accelerometer magnitude measurement.
@@ -253,36 +321,40 @@ class ErrorStateEKF:
 
         This enables curved trajectory prediction during GPS gaps.
         """
-        global HAS_RUST_FILTER
         with self.lock:
-            # Get state
-            x, y, vx, vy, ax, ay, heading, heading_rate = self.state
+            if self.use_rust and self.rs_filter is not None:
+                self.rs_filter.predict()
+                self.predict_count += 1
+                return
 
-            # Velocity decomposition by heading (dead reckoning)
-            vel_mag = np.sqrt(vx**2 + vy**2)
-            vx_pred = vel_mag * np.cos(heading)
-            vy_pred = vel_mag * np.sin(heading)
+            state_array = np.asarray(self.state, dtype=np.float64)
+            covariance = np.asarray(self.P, dtype=np.float64)
+            process_noise = np.asarray(self.Q, dtype=np.float64)
 
-            # Standard motion model
-            pos_vec = np.array([self.state[0], self.state[1]], dtype=np.float64)
-            vel_vec = np.array([vx_pred, vy_pred], dtype=np.float64)
-            updated_pos = rs_predict_position(pos_vec, vel_vec, self.dt)
-            self.state[0] = float(updated_pos[0] + 0.5 * ax * self.dt**2)
-            self.state[1] = float(updated_pos[1] + 0.5 * ay * self.dt**2)
-            vel_state = rs_predict_position(
-                np.array(self.state[2:4], dtype=np.float64),
-                np.array([ax, ay], dtype=np.float64),
-                self.dt,
-            )
-            self.state[2] = float(vel_state[0])
-            self.state[3] = float(vel_state[1])
-            # Accel states unchanged (constant acceleration assumption)
-            self.state[6] += heading_rate * self.dt
-            # Heading rate unchanged
+            if HAS_RUST_FILTER and rs_es_ekf_predict is not None:
+                state_out, cov_out = rs_es_ekf_predict(
+                    state_array,
+                    covariance,
+                    process_noise,
+                    self.dt,
+                )
+                self.state = np.asarray(state_out, dtype=np.float64).flatten()
+                self.P = np.asarray(cov_out, dtype=np.float64)
+            else:
+                # Python fallback replicating the same math as the Rust helper.
+                x, y, vx, vy, ax, ay, heading, heading_rate = self.state
+                vel_mag = np.sqrt(vx**2 + vy**2)
+                vx_pred = vel_mag * np.cos(heading)
+                vy_pred = vel_mag * np.sin(heading)
 
-            # Covariance update: P = F*P*F^T + Q
-            F = self.state_transition_jacobian()
-            self.P = rs_propagate_covariance(F, self.P, self.Q)
+                self.state[0] = x + vx_pred * self.dt + 0.5 * ax * self.dt**2
+                self.state[1] = y + vy_pred * self.dt + 0.5 * ay * self.dt**2
+                self.state[2] = vx + ax * self.dt
+                self.state[3] = vy + ay * self.dt
+                self.state[6] = heading + heading_rate * self.dt
+
+                F = self.state_transition_jacobian()
+                self.P = F @ self.P @ F.T + self.Q
 
             self.predict_count += 1
 
@@ -300,7 +372,9 @@ class ErrorStateEKF:
         Returns: (velocity_magnitude, accumulated_distance)
         """
         with self.lock:
-            global HAS_RUST_FILTER
+            if self.use_rust and self.rs_filter is not None:
+                return self.rs_filter.update_gps(latitude, longitude, gps_speed, gps_accuracy)
+
             # Set origin on first GPS fix
             if not self.origin_set:
                 self.origin_lat = latitude
@@ -317,6 +391,8 @@ class ErrorStateEKF:
             x_meas, y_meas = self.latlon_to_meters(latitude, longitude,
                                                     self.origin_lat,
                                                     self.origin_lon)
+
+            gps_velocity_vector = None
 
             # GPS bearing for heading initialization (if speed > 0.5 m/s)
             if gps_speed and gps_speed > 0.5:
@@ -337,6 +413,10 @@ class ErrorStateEKF:
                     self.state[6] = bearing
                     self.heading_initialized = True
 
+                vx_meas = gps_speed * math.cos(bearing)
+                vy_meas = gps_speed * math.sin(bearing)
+                gps_velocity_vector = (vx_meas, vy_meas)
+
             # Kalman update
             z = np.array([[x_meas], [y_meas]])
             H = self.gps_measurement_jacobian()
@@ -349,16 +429,26 @@ class ErrorStateEKF:
             if gps_accuracy:
                 R = np.eye(2) * (gps_accuracy**2)
 
-            state_updated, cov_updated = rs_kalman_update(
-                np.asarray(self.state, dtype=np.float64),
-                np.asarray(self.P, dtype=np.float64),
-                np.asarray(H, dtype=np.float64),
-                np.asarray(residual, dtype=np.float64).flatten(),
-                np.asarray(R, dtype=np.float64),
-            )
-
-            self.state = np.asarray(state_updated, dtype=np.float64).flatten()
-            self.P = np.asarray(cov_updated, dtype=np.float64)
+            if HAS_RUST_FILTER and rs_kalman_update is not None:
+                state_updated, cov_updated = rs_kalman_update(
+                    np.asarray(self.state, dtype=np.float64),
+                    np.asarray(self.P, dtype=np.float64),
+                    np.asarray(H, dtype=np.float64),
+                    np.asarray(residual, dtype=np.float64).flatten(),
+                    np.asarray(R, dtype=np.float64),
+                )
+                self.state = np.asarray(state_updated, dtype=np.float64).flatten()
+                self.P = np.asarray(cov_updated, dtype=np.float64)
+            else:
+                updated_state, updated_cov = _numpy_kalman_update(
+                    np.asarray(self.state, dtype=np.float64),
+                    np.asarray(self.P, dtype=np.float64),
+                    np.asarray(H, dtype=np.float64),
+                    np.asarray(residual, dtype=np.float64).flatten(),
+                    np.asarray(R, dtype=np.float64),
+                )
+                self.state = updated_state
+                self.P = updated_cov
 
             # Distance accumulation
             if self.last_position:
@@ -371,6 +461,32 @@ class ErrorStateEKF:
             self.last_position = (latitude, longitude)
             self.last_gps_timestamp = time.time()
             self.gps_update_count += 1
+
+            if gps_velocity_vector is not None:
+                H_vel = self.velocity_measurement_jacobian()
+                z_vel = np.array([[gps_velocity_vector[0]], [gps_velocity_vector[1]]])
+                residual_vel = z_vel - H_vel @ self.state.reshape(8, 1)
+                R_vel = self.R_gps_velocity.copy()
+                if gps_accuracy:
+                    # Map position accuracy (meters) to rough velocity sigma (m/s)
+                    speed_sigma = max(0.2, min(5.0, gps_accuracy * 0.15))
+                    R_vel = np.eye(2) * (speed_sigma**2)
+
+                updated_state, updated_cov = _numpy_kalman_update(
+                    np.asarray(self.state, dtype=np.float64),
+                    np.asarray(self.P, dtype=np.float64),
+                    np.asarray(H_vel, dtype=np.float64),
+                    np.asarray(residual_vel, dtype=np.float64).flatten(),
+                    np.asarray(R_vel, dtype=np.float64),
+                )
+                self.state = updated_state
+                self.P = updated_cov
+
+                # Keep heading consistent with fused velocity so predictions stay smooth
+                vel_mag = np.sqrt(self.state[2]**2 + self.state[3]**2)
+                if vel_mag > 0.1:
+                    self.state[6] = math.atan2(self.state[3], self.state[2])
+                    self.heading_initialized = True
 
             # Return velocity magnitude and distance
             vel_mag = np.sqrt(self.state[2]**2 + self.state[3]**2)
@@ -389,6 +505,9 @@ class ErrorStateEKF:
         Returns: (velocity_magnitude, accumulated_distance)
         """
         with self.lock:
+            if self.use_rust and self.rs_filter is not None:
+                return self.rs_filter.update_accelerometer(accel_magnitude)
+
             # Kalman update for accel magnitude
             z = np.array([[accel_magnitude]])
             H = self.accel_measurement_jacobian()
@@ -445,10 +564,13 @@ class ErrorStateEKF:
 
         Returns: (velocity_magnitude, accumulated_distance)
         """
-        if not self.enable_gyro:
-            return np.sqrt(self.state[2]**2 + self.state[3]**2), self.accumulated_distance
-
         with self.lock:
+            if self.use_rust and self.rs_filter is not None:
+                return self.rs_filter.update_gyroscope(gyro_x, gyro_y, gyro_z)
+
+            if not self.enable_gyro:
+                return np.sqrt(self.state[2]**2 + self.state[3]**2), self.accumulated_distance
+
             # Kalman update for yaw rate (gyro Z-axis only)
             z = np.array([[gyro_z]])
             H = self.gyro_measurement_jacobian()
@@ -488,6 +610,9 @@ class ErrorStateEKF:
         Returns: (lat, lon, uncertainty_m)
         """
         with self.lock:
+            if self.use_rust and self.rs_filter is not None:
+                return self.rs_filter.get_position()
+
             if not self.origin_set:
                 return (0.0, 0.0, 999.9)
 
@@ -509,6 +634,9 @@ class ErrorStateEKF:
         Returns dict with position, velocity, distance, heading, uncertainty, etc.
         """
         with self.lock:
+            if self.use_rust and self.rs_filter is not None:
+                return self.rs_filter.get_state()
+
             lat, lon, uncertainty = self.get_position()
 
             vel_mag = np.sqrt(self.state[2]**2 + self.state[3]**2)
@@ -543,6 +671,10 @@ class ErrorStateEKF:
         maintaining position state for next segment.
         """
         with self.lock:
+            if self.use_rust and self.rs_filter is not None:
+                self.rs_filter.reset()
+                return
+
             # Keep position and heading, reset others
             # self.state[0:2] unchanged (position)
             self.state[2:4] = 0.0  # Reset velocity

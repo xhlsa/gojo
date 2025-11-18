@@ -51,11 +51,56 @@ CRASH_LOGGER_FILE="crash_logs/active_session.log"
 mkdir -p crash_logs
 LOG_FILE="crash_logs/test_ekf_$(date +%Y-%m-%d_%H-%M-%S).log"
 SCRIPT_ARGS="$@"
+# Foreground notification keeps Termux pinned so Android does not throttle sensors
+FOREGROUND_NOTIFICATION_ID="motion-tracker-session"
+NOTIFICATION_ACTIVE=0
 
 # Log function that writes to both stdout and crash log
 log_event() {
     local msg="$1"
     echo "$msg" | tee -a "$LOG_FILE" >&2
+}
+
+# Persistent notification helpers
+start_foreground_notification() {
+    if ! command -v termux-notification >/dev/null 2>&1; then
+        echo -e "${YELLOW}termux-notification not available; skipping foreground notification${NC}" | tee -a "$LOG_FILE"
+        return 1
+    fi
+
+    local content="EKF session running"
+    if [ -n "$SCRIPT_ARGS" ]; then
+        content="$content ($SCRIPT_ARGS)"
+    fi
+
+    if termux-notification --id "$FOREGROUND_NOTIFICATION_ID" \
+        --title "Motion Tracker" \
+        --content "$content" \
+        --ongoing \
+        --priority high \
+        --alert-once >/dev/null 2>&1; then
+        NOTIFICATION_ACTIVE=1
+        echo -e "${GREEN}✓ Foreground notification pinned${NC}" | tee -a "$LOG_FILE"
+        return 0
+    fi
+
+    echo -e "${YELLOW}⚠ Unable to create foreground notification${NC}" | tee -a "$LOG_FILE"
+    return 1
+}
+
+stop_foreground_notification() {
+    if [ "$NOTIFICATION_ACTIVE" -ne 1 ]; then
+        return 0
+    fi
+
+    if command -v termux-notification-remove >/dev/null 2>&1; then
+        termux-notification-remove "$FOREGROUND_NOTIFICATION_ID" >/dev/null 2>&1 || true
+    elif command -v termux-notification >/dev/null 2>&1; then
+        termux-notification --remove "$FOREGROUND_NOTIFICATION_ID" >/dev/null 2>&1 || true
+    fi
+
+    NOTIFICATION_ACTIVE=0
+    echo -e "${GREEN}✓ Foreground notification removed${NC}" | tee -a "$LOG_FILE"
 }
 
 # Colors for output
@@ -252,6 +297,8 @@ cleanup_on_exit() {
 
     echo -e "\n${YELLOW}Test finished, performing final cleanup...${NC}" | tee -a "$LOG_FILE"
 
+    stop_foreground_notification
+
     # Release wakelock
     echo -e "${YELLOW}Releasing wakelock...${NC}" | tee -a "$LOG_FILE"
     termux-wake-lock-release 2>/dev/null || true
@@ -316,6 +363,9 @@ trap cleanup_on_exit EXIT SIGINT SIGTERM
 echo -e "${YELLOW}Acquiring wakelock...${NC}" | tee -a "$LOG_FILE"
 termux-wake-lock
 echo -e "${GREEN}✓ Wakelock acquired${NC}" | tee -a "$LOG_FILE"
+
+# Pin persistent notification so Android keeps Termux alive when app is not visible
+start_foreground_notification
 
 # Step 1: Initialize sensor with retry
 if ! initialize_sensor_with_retry 2>&1 | tee -a "$LOG_FILE"; then
