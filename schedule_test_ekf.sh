@@ -43,7 +43,7 @@ fi
 : > "$ARGS_FILE"
 for arg in "$@"; do
     printf '%s\n' "$arg" >> "$ARGS_FILE"
-fi
+done
 
 termux-job-scheduler --cancel $JOB_ID >/dev/null 2>&1 || true
 
@@ -52,9 +52,8 @@ termux-job-scheduler \
   --script "$JOB_SCRIPT" \
   --persisted true \
   --network any \
-  --requires-charging false \
-  --requires-battery-not-low false \
-  --deadline-ms 1000 >/dev/null
+  --charging false \
+  --battery-not-low false >/dev/null
 
 echo "Scheduled EKF job ($JOB_ID) with arguments: $*"
 echo "Job will run test_ekf.sh in foreground service via Termux scheduler"
