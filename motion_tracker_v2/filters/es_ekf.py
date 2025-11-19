@@ -142,6 +142,10 @@ class ErrorStateEKF:
         self.R_accel = np.array([[accel_noise_std**2]])
         self.R_gps_velocity = np.eye(2) * (gps_velocity_noise_std**2)
         self.R_gyro = np.array([[gyro_noise_std**2]])
+        self.min_gps_noise = 1.5
+        self.max_gps_noise = 25.0
+        self.gps_gap_reset_threshold = 10.0
+        self.stationary_snap_accuracy = 6.0
 
         # Origin for local coordinates (set on first GPS fix)
         self.origin_lat = None
@@ -372,6 +376,12 @@ class ErrorStateEKF:
         Returns: (velocity_magnitude, accumulated_distance)
         """
         with self.lock:
+            now = time.time()
+            gap_seconds = None
+            if self.last_gps_timestamp is not None:
+                gap_seconds = max(0.0, now - self.last_gps_timestamp)
+                if gap_seconds > self.gps_gap_reset_threshold:
+                    self._inflate_covariance_for_gap(gap_seconds)
             if self.use_rust and self.rs_filter is not None:
                 return self.rs_filter.update_gps(latitude, longitude, gps_speed, gps_accuracy)
 
@@ -381,7 +391,7 @@ class ErrorStateEKF:
                 self.origin_lon = longitude
                 self.origin_set = True
                 self.last_position = (latitude, longitude)
-                self.last_gps_timestamp = time.time()
+                self.last_gps_timestamp = now
                 self.state[0] = 0.0  # x = 0 at origin
                 self.state[1] = 0.0  # y = 0 at origin
                 self.gps_update_count += 1
@@ -420,14 +430,13 @@ class ErrorStateEKF:
             # Kalman update
             z = np.array([[x_meas], [y_meas]])
             H = self.gps_measurement_jacobian()
+            gps_noise = self._gps_noise_from_accuracy(gps_accuracy)
 
             # Measurement residual
             residual = z - H @ self.state.reshape(8, 1)
 
             # Innovation covariance
-            R = self.R_gps.copy()
-            if gps_accuracy:
-                R = np.eye(2) * (gps_accuracy**2)
+            R = np.eye(2) * (gps_noise**2)
 
             if HAS_RUST_FILTER and rs_kalman_update is not None:
                 state_updated, cov_updated = rs_kalman_update(
@@ -451,15 +460,23 @@ class ErrorStateEKF:
                 self.P = updated_cov
 
             # Distance accumulation
+            stationary = False
             if self.last_position:
                 lat_prev, lon_prev = self.last_position
                 delta_dist = self.haversine_distance(
                     lat_prev, lon_prev, latitude, longitude
                 )
                 self.accumulated_distance += delta_dist
+                movement_threshold = 5.0
+                if gps_accuracy and gps_accuracy > 0:
+                    movement_threshold = max(3.0, gps_accuracy * 1.5)
+                speed_ok = (gps_speed is not None and gps_speed < 0.3)
+                stationary = speed_ok and (delta_dist < movement_threshold)
+            elif gps_speed is not None and gps_speed < 0.3:
+                stationary = True
 
             self.last_position = (latitude, longitude)
-            self.last_gps_timestamp = time.time()
+            self.last_gps_timestamp = now
             self.gps_update_count += 1
 
             if gps_velocity_vector is not None:
@@ -467,10 +484,8 @@ class ErrorStateEKF:
                 z_vel = np.array([[gps_velocity_vector[0]], [gps_velocity_vector[1]]])
                 residual_vel = z_vel - H_vel @ self.state.reshape(8, 1)
                 R_vel = self.R_gps_velocity.copy()
-                if gps_accuracy:
-                    # Map position accuracy (meters) to rough velocity sigma (m/s)
-                    speed_sigma = max(0.2, min(5.0, gps_accuracy * 0.15))
-                    R_vel = np.eye(2) * (speed_sigma**2)
+                speed_sigma = max(0.2, min(5.0, gps_noise * 0.2))
+                R_vel = np.eye(2) * (speed_sigma**2)
 
                 updated_state, updated_cov = _numpy_kalman_update(
                     np.asarray(self.state, dtype=np.float64),
@@ -490,7 +505,31 @@ class ErrorStateEKF:
 
             # Return velocity magnitude and distance
             vel_mag = np.sqrt(self.state[2]**2 + self.state[3]**2)
+            if stationary and gps_accuracy and gps_accuracy <= self.stationary_snap_accuracy:
+                self._snap_stationary_position(x_meas, y_meas, gps_noise)
+                vel_mag = 0.0
             return vel_mag, self.accumulated_distance
+
+    def _gps_noise_from_accuracy(self, gps_accuracy):
+        if gps_accuracy is None or gps_accuracy <= 0:
+            return self.gps_noise_std
+        return min(self.max_gps_noise, max(self.min_gps_noise, float(gps_accuracy)))
+
+    def _inflate_covariance_for_gap(self, gap_seconds):
+        excess = gap_seconds - self.gps_gap_reset_threshold
+        if excess <= 0:
+            return
+        inflation = min(5000.0, excess * 50.0)
+        for idx in range(4):
+            self.P[idx, idx] += inflation
+
+    def _snap_stationary_position(self, x_meas, y_meas, gps_noise):
+        self.state[0] = float(x_meas)
+        self.state[1] = float(y_meas)
+        self.state[2:4] = 0.0
+        tight_var = max(0.5, (gps_noise * 0.5)**2)
+        self.P[0, 0] = self.P[1, 1] = tight_var
+        self.P[2, 2] = self.P[3, 3] = max(0.1, tight_var * 0.1)
 
     def update_accelerometer(self, accel_magnitude):
         """

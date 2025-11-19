@@ -132,6 +132,10 @@ class ExtendedKalmanFilter(SensorFusionBase):
             [0, gyro_noise_std**2, 0],
             [0, 0, gyro_noise_std**2]
         ])
+        self.min_gps_noise = 1.5
+        self.max_gps_noise = 25.0
+        self.gps_gap_reset_threshold = 10.0
+        self.stationary_snap_accuracy = 6.0
 
         # GPS state tracking
         self.origin_lat_lon = None
@@ -346,6 +350,11 @@ class ExtendedKalmanFilter(SensorFusionBase):
         """Update EKF with GPS measurement."""
         with self.lock:
             current_time = time.time()
+            gap_seconds = None
+            if self.last_gps_time is not None:
+                gap_seconds = max(0.0, current_time - self.last_gps_time)
+                if gap_seconds > self.gps_gap_reset_threshold:
+                    self._inflate_covariance_for_gap(gap_seconds)
 
             # Set origin on first GPS fix
             if self.origin_lat_lon is None:
@@ -406,13 +415,15 @@ class ExtendedKalmanFilter(SensorFusionBase):
 
             # Measurement Jacobian (GPS pre-linearized to local meters)
             H = self.gps_measurement_jacobian()
+            gps_noise = self._gps_noise_from_accuracy(gps_accuracy)
+            R_gps = self._build_measurement_covariance(gps_noise)
 
             # Innovation (measurement residual)
             z_pred = H @ self.state.reshape(-1, 1)
             y = z - z_pred
 
             # Innovation covariance
-            S = H @ self.P @ H.T + self.R_gps
+            S = H @ self.P @ H.T + R_gps
 
             # Kalman gain with fallback for singular matrix
             try:
@@ -441,13 +452,16 @@ class ExtendedKalmanFilter(SensorFusionBase):
             # P = (I - KH)P(I - KH)' + KRK'
             # This preserves symmetry better than standard form
             I_KH = np.eye(self.n_state) - K @ H
-            self.P = I_KH @ self.P @ I_KH.T + K @ self.R_gps @ K.T
+            self.P = I_KH @ self.P @ I_KH.T + K @ R_gps @ K.T
             # Enforce symmetry to prevent numerical drift
             self._enforce_covariance_symmetry()
 
             # Extract velocity (magnitude of velocity vector)
             vx, vy = self.state[2], self.state[3]
             self.velocity = math.sqrt(vx**2 + vy**2)
+
+            if self._should_snap_stationary(gps_speed, gps_accuracy):
+                self._snap_stationary_state(np.array([x, y]), gps_noise)
 
             # CRITICAL FIX: Velocity bounds and GPS drift correction
             # GPS velocity is ground truth - use it to correct Kalman state drift
@@ -494,6 +508,43 @@ class ExtendedKalmanFilter(SensorFusionBase):
             self.last_gps_time = current_time
 
             return self.velocity, self.distance
+
+    def _gps_noise_from_accuracy(self, gps_accuracy):
+        if gps_accuracy is None or gps_accuracy <= 0:
+            return self.gps_noise_std
+        return min(self.max_gps_noise, max(self.min_gps_noise, float(gps_accuracy)))
+
+    def _build_measurement_covariance(self, noise_std):
+        return np.array([
+            [noise_std**2, 0.0],
+            [0.0, noise_std**2]
+        ])
+
+    def _inflate_covariance_for_gap(self, gap_seconds):
+        excess = gap_seconds - self.gps_gap_reset_threshold
+        if excess <= 0:
+            return
+        inflation = min(5000.0, excess * 50.0)
+        for idx in range(4):
+            self.P[idx, idx] += inflation
+
+    def _should_snap_stationary(self, gps_speed, gps_accuracy):
+        if not self.is_stationary:
+            return False
+        if gps_speed is not None and gps_speed > 0.4:
+            return False
+        if gps_accuracy is None or gps_accuracy <= 0:
+            return False
+        return gps_accuracy <= self.stationary_snap_accuracy
+
+    def _snap_stationary_state(self, measurement_xy, gps_noise_std):
+        self.state[0] = float(measurement_xy[0])
+        self.state[1] = float(measurement_xy[1])
+        self.state[2:4] = 0.0
+        self.velocity = 0.0
+        tight_var = max(0.5, (gps_noise_std * 0.5)**2)
+        self.P[0, 0] = self.P[1, 1] = tight_var
+        self.P[2, 2] = self.P[3, 3] = max(0.1, tight_var * 0.1)
 
     def update_accelerometer(self, accel_magnitude):
         """Update EKF with accelerometer measurement.
