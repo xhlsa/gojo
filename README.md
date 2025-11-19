@@ -115,6 +115,7 @@ We're beginning to peel performance-critical math out of Python into Rust for de
 - **ES-EKF integration** – `motion_tracker_v2/filters/es_ekf.py` automatically instantiates the Rust `PyEsEkf` class when the wheel is present (`ErrorStateEKF(..., force_python=False)` is the default). Set `force_python=True` when running parity tests or debugging the legacy path; otherwise Python just delegates each method call to the Rust implementation. Pure Python fallbacks remain in place for environments without the wheel.
 - **Live swap** – The Python ES‑EKF now calls Rust for predict, covariance, and GPS updates. Python is left to orchestrate threads/IO while the math runs in Rust under parity tests.
 - **Test harness** – `./test_ekf.sh <minutes>` is the on-device validation loop; we run a short 10-minute session after each major Rust change to ensure sensor daemons and GPX export stay stable.
+- **Foreground scheduling** – `./schedule_test_ekf.sh <minutes>` registers `test_ekf.sh` as a Termux job-scheduler foreground task (requires Termux:API). Android treats that job like a sticky service, so the tracker survives when Termux is backgrounded or the screen is off. Use `./schedule_test_ekf.sh --cancel` to stop the queued foreground job.
 
 **How to rebuild/install:**
 ```bash
@@ -136,7 +137,7 @@ python3 tools/compare_filter_math.py
 
 ### Keeping GPS alive on Android
 
-- Run long sessions via `./drive.sh …` instead of invoking `./test_ekf.sh` directly. The wrapper acquires a Termux wakelock before starting the harness and releases it on exit so Android’s Doze/LKM can’t suspend `termux-location`.
+- Run long sessions via `./drive.sh …` instead of invoking `./test_ekf.sh` directly. The wrapper acquires a Termux wakelock before starting the harness and releases it on exit so Android’s Doze/LKM can’t suspend `termux-location`. If Android still forces Termux into the background, pin the harness with `./schedule_test_ekf.sh <minutes>` so JobScheduler restarts it as a foreground service.
 - The GPS watchdog already restarts the daemon if no fix arrives for 30 s; each restart bumps `gps_daemon_restart_count` in the session JSON so you can spot trouble.
 - On devices that still freeze GPS, pin Termux as a foreground app (Termux Widget/Tasker task that runs `termux-wake-lock` and keeps a persistent notification visible) before launching `./drive.sh`.
 - If you abort the run manually, the wrapper’s trap releases the wakelock, but you can always run `termux-wake-unlock` as a fallback.
