@@ -32,10 +32,11 @@ import androidx.core.app.ServiceCompat
  */
 class MotionTrackerService : Service() {
     private val tag = "MotionTracker.Service"
-    private lateinit var sensorManager: SensorManager
+    private lateinit var sensorManager: android.hardware.SensorManager
     private lateinit var locationManager: LocationManager
     private var wakeLock: PowerManager.WakeLock? = null
     private var isRecording = false
+    private var sensorCollector: SensorCollector? = null
 
     companion object {
         private const val NOTIFICATION_ID = 1
@@ -47,7 +48,7 @@ class MotionTrackerService : Service() {
         Log.i(tag, "Service created")
 
         try {
-            sensorManager = getSystemService(SENSOR_SERVICE) as SensorManager
+            sensorManager = getSystemService(android.content.Context.SENSOR_SERVICE) as android.hardware.SensorManager
             locationManager = getSystemService(LOCATION_SERVICE) as LocationManager
 
             // Acquire WakeLock (prevent device sleep)
@@ -88,8 +89,15 @@ class MotionTrackerService : Service() {
             JniBinding.startSession()
             isRecording = true
 
-            // Start sensor collection threads
-            startSensorCollection()
+            // Start sensor collection
+            try {
+                sensorCollector = SensorCollector(sensorManager)
+                sensorCollector?.start()
+                Log.d(tag, "Sensor collection started")
+            } catch (e: Exception) {
+                Log.e(tag, "Warning: Sensor collection failed (will continue without sensors)", e)
+                // Don't stop service, allow inertial-only fallback
+            }
 
             Log.i(tag, "✓ Service running (WakeLock acquired, sensors active)")
 
@@ -106,6 +114,10 @@ class MotionTrackerService : Service() {
         Log.i(tag, "Service destroyed")
 
         try {
+            // Stop sensor collection
+            sensorCollector?.stop()
+            sensorCollector = null
+
             // Stop recording
             if (isRecording) {
                 JniBinding.stopSession()
@@ -178,14 +190,6 @@ class MotionTrackerService : Service() {
             .build()
     }
 
-    /**
-     * Start sensor collection threads
-     * (Placeholder for Phase 3 - sensor integration)
-     */
-    private fun startSensorCollection() {
-        Log.d(tag, "Sensor collection started (Phase 3 implementation)")
-        // Phase 3: Integrate with SensorManager for real accel/gyro/GPS data
-    }
 
     /**
      * Update notification with current status
