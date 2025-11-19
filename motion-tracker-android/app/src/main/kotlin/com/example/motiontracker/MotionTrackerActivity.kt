@@ -1,11 +1,15 @@
 package com.example.motiontracker
 
+import android.Manifest
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Bundle
 import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 
 /**
@@ -27,6 +31,10 @@ class MotionTrackerActivity : AppCompatActivity() {
     private lateinit var pauseButton: Button
     private lateinit var resumeButton: Button
 
+    companion object {
+        private const val PERMISSION_REQUEST_CODE = 100
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
@@ -36,8 +44,14 @@ class MotionTrackerActivity : AppCompatActivity() {
         try {
             initializeViews()
             setupButtonListeners()
-            startService()
-            updateStatus()
+
+            // Request location permissions (Android 6+)
+            if (!hasLocationPermissions()) {
+                requestLocationPermissions()
+            } else {
+                startService()
+                updateStatus()
+            }
         } catch (e: Exception) {
             Log.e(tag, "Failed to initialize activity", e)
             statusText.text = "Error: ${e.message}"
@@ -153,6 +167,66 @@ class MotionTrackerActivity : AppCompatActivity() {
         } catch (e: Exception) {
             statusText.text = "Error: ${e.message}"
             Log.e(tag, "Failed to update status", e)
+        }
+    }
+
+    /**
+     * Check if location permissions are granted
+     */
+    private fun hasLocationPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    /**
+     * Request location permissions from user (Android 6+)
+     */
+    private fun requestLocationPermissions() {
+        Log.i(tag, "Requesting location permissions...")
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            ActivityCompat.requestPermissions(
+                this,
+                arrayOf(
+                    Manifest.permission.ACCESS_FINE_LOCATION,
+                    Manifest.permission.ACCESS_COARSE_LOCATION
+                ),
+                PERMISSION_REQUEST_CODE
+            )
+        }
+    }
+
+    /**
+     * Handle permission request result
+     */
+    override fun onRequestPermissionsResult(
+        requestCode: Int,
+        permissions: Array<String>,
+        grantResults: IntArray
+    ) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+
+        if (requestCode == PERMISSION_REQUEST_CODE) {
+            val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
+
+            if (allGranted) {
+                Log.i(tag, "✓ Location permissions granted")
+                statusText.text = "Permissions granted, starting service..."
+                startService()
+                updateStatus()
+            } else {
+                Log.w(tag, "⚠ Location permissions denied")
+                statusText.text = "Location permissions required for GPS tracking"
+                // Service will still start but GPS will fail gracefully
+                startService()
+                updateStatus()
+            }
         }
     }
 }

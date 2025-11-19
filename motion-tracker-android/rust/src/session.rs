@@ -38,6 +38,11 @@ pub struct Session {
 }
 
 impl Session {
+    // Queue capacity constants (limits memory growth)
+    const ACCEL_QUEUE_MAX: usize = 500;  // ~10 seconds at 50 Hz
+    const GYRO_QUEUE_MAX: usize = 500;   // ~10 seconds at 50 Hz
+    const GPS_QUEUE_MAX: usize = 100;    // ~500 seconds at 0.2 Hz
+
     /// Create new session in Idle state
     pub fn new() -> Self {
         let session_id = format!("session_{}", Utc::now().timestamp_millis());
@@ -56,17 +61,51 @@ impl Session {
 
         Session {
             metadata: Arc::new(Mutex::new(metadata)),
-            accel_queue: Arc::new(Mutex::new(VecDeque::with_capacity(500))),
-            gyro_queue: Arc::new(Mutex::new(VecDeque::with_capacity(500))),
-            gps_queue: Arc::new(Mutex::new(VecDeque::with_capacity(100))),
+            accel_queue: Arc::new(Mutex::new(VecDeque::with_capacity(Self::ACCEL_QUEUE_MAX))),
+            gyro_queue: Arc::new(Mutex::new(VecDeque::with_capacity(Self::GYRO_QUEUE_MAX))),
+            gps_queue: Arc::new(Mutex::new(VecDeque::with_capacity(Self::GPS_QUEUE_MAX))),
+        }
+    }
+
+    /// Push sample to bounded queue, dropping oldest if at capacity
+    /// Returns true if sample was kept, false if dropped (queue full)
+    /// (Replaced by push_to_bounded_queue_with_logging in actual usage)
+    #[allow(dead_code)]
+    fn push_to_bounded_queue<T>(queue: &mut VecDeque<T>, sample: T, max_size: usize) -> bool {
+        if queue.len() >= max_size {
+            queue.pop_front();  // Drop oldest sample to maintain bounded size
+            queue.push_back(sample);
+            false  // Indicate sample was queued but at capacity
+        } else {
+            queue.push_back(sample);
+            true   // Sample queued normally
+        }
+    }
+
+    /// Push sample to bounded queue with capacity logging
+    /// Logs when queue reaches capacity (for diagnostics)
+    fn push_to_bounded_queue_with_logging<T>(
+        queue: &mut VecDeque<T>,
+        sample: T,
+        max_size: usize,
+        queue_name: &str,
+    ) -> bool {
+        if queue.len() >= max_size {
+            queue.pop_front();
+            queue.push_back(sample);
+            eprintln!("MotionTracker: {} queue at capacity ({}/{})", queue_name, max_size, max_size);
+            false
+        } else {
+            queue.push_back(sample);
+            true
         }
     }
 
     /// Transition to Recording state (Idle → Recording)
     pub fn start_recording(&self) -> JResult<()> {
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         match meta.state {
             SessionState::Idle => {
@@ -83,9 +122,9 @@ impl Session {
 
     /// Transition to Paused state (Recording → Paused)
     pub fn pause_recording(&self) -> JResult<()> {
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         match meta.state {
             SessionState::Recording => {
@@ -103,9 +142,9 @@ impl Session {
 
     /// Transition to Idle state (Paused → Idle, ends session)
     pub fn stop_recording(&self) -> JResult<()> {
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
         match meta.state {
             SessionState::Recording | SessionState::Paused => {
@@ -118,63 +157,64 @@ impl Session {
 
     /// Get current state
     pub fn get_state(&self) -> JResult<SessionState> {
-        let meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
         Ok(meta.state)
     }
 
     /// Check if currently recording
     pub fn is_recording(&self) -> JResult<bool> {
-        let meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
         Ok(meta.state == SessionState::Recording)
     }
 
-    /// Add accelerometer sample
+    /// Add accelerometer sample (with bounded queue to prevent OOM)
     pub fn push_accel_sample(&self, sample: AccelSample) -> JResult<()> {
         // Only accept samples while recording
         if !self.is_recording()? {
             return Ok(());
         }
 
-        let mut queue = self.accel_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire accel queue lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut queue = self.accel_queue.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
-        queue.push_back(sample);
+        // Push with bounded capacity - drops oldest if queue full (with logging)
+        let _was_kept = Self::push_to_bounded_queue_with_logging(&mut queue, sample, Self::ACCEL_QUEUE_MAX, "accel");
 
-        // Update metadata
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Update metadata (recover from poison)
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
         meta.accel_sample_count += 1;
 
         Ok(())
     }
 
-    /// Add gyroscope sample
+    /// Add gyroscope sample (with bounded queue to prevent OOM)
     pub fn push_gyro_sample(&self, sample: GyroSample) -> JResult<()> {
         if !self.is_recording()? {
             return Ok(());
         }
 
-        let mut queue = self.gyro_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire gyro queue lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut queue = self.gyro_queue.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
-        queue.push_back(sample);
+        // Push with bounded capacity - drops oldest if queue full (with logging)
+        let _was_kept = Self::push_to_bounded_queue_with_logging(&mut queue, sample, Self::GYRO_QUEUE_MAX, "gyro");
 
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
         meta.gyro_sample_count += 1;
 
         Ok(())
     }
 
-    /// Add GPS sample
+    /// Add GPS sample (with bounded queue to prevent OOM)
     pub fn push_gps_sample(&self, sample: GpsSample) -> JResult<()> {
         if !self.is_recording()? {
             return Ok(());
@@ -183,15 +223,16 @@ impl Session {
         // Store peak speed before moving sample to queue
         let peak_speed = sample.speed;
 
-        let mut queue = self.gps_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire gps queue lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut queue = self.gps_queue.lock()
+            .unwrap_or_else(|e| e.into_inner());
 
-        queue.push_back(sample);
+        // Push with bounded capacity - drops oldest if queue full (with logging)
+        let _was_kept = Self::push_to_bounded_queue_with_logging(&mut queue, sample, Self::GPS_QUEUE_MAX, "GPS");
 
-        let mut meta = self.metadata.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire metadata lock".to_string())
-        })?;
+        // Recover from lock poisoning if needed
+        let mut meta = self.metadata.lock()
+            .unwrap_or_else(|e| e.into_inner());
         meta.gps_sample_count += 1;
 
         // Update peak speed
@@ -248,17 +289,18 @@ impl Session {
     pub fn export(&self) -> JResult<crate::storage::SessionExport> {
         let meta = self.get_metadata()?;
 
-        let accel_samples = self.accel_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire accel queue lock".to_string())
-        })?.iter().cloned().collect();
+        // Recover from lock poisoning if needed
+        let accel_samples = self.accel_queue.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter().cloned().collect();
 
-        let gyro_samples = self.gyro_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire gyro queue lock".to_string())
-        })?.iter().cloned().collect();
+        let gyro_samples = self.gyro_queue.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter().cloned().collect();
 
-        let gps_samples = self.gps_queue.lock().map_err(|_| {
-            MotionTrackerError::Internal("Failed to acquire gps queue lock".to_string())
-        })?.iter().cloned().collect();
+        let gps_samples = self.gps_queue.lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter().cloned().collect();
 
         Ok(crate::storage::SessionExport {
             metadata: meta,

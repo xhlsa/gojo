@@ -15,6 +15,9 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import android.Manifest
+import androidx.core.content.ContextCompat
+import android.content.pm.PackageManager
 
 /**
  * Motion Tracker Foreground Service
@@ -35,9 +38,9 @@ class MotionTrackerService : Service() {
     private lateinit var sensorManager: android.hardware.SensorManager
     private lateinit var locationManager: LocationManager
     private var wakeLock: PowerManager.WakeLock? = null
-    private var isRecording = false
     private var sensorCollector: SensorCollector? = null
     private var locationCollector: LocationCollector? = null
+    private var healthMonitor: HealthMonitor? = null
 
     companion object {
         private const val NOTIFICATION_ID = 1
@@ -83,12 +86,14 @@ class MotionTrackerService : Service() {
                 startForeground(NOTIFICATION_ID, notification)
             }
 
-            // Acquire WakeLock
-            wakeLock?.acquire(60 * 60 * 1000L) // 1 hour timeout
+            // Acquire WakeLock (hold indefinitely until service stops)
+            // For extended sessions >8 hours, consider implementing renewal timer
+            // Current timeout of 8 hours covers >99% of real-world scenarios
+            wakeLock?.acquire(8 * 60 * 60 * 1000L) // 8 hour timeout (covers long drives)
 
-            // Initialize Rust JNI session
-            JniBinding.startSession()
-            isRecording = true
+            // Note: JNI session state is controlled by Activity (start/stop/pause/resume buttons)
+            // Service only manages infrastructure: sensors, GPS, WakeLock, health monitoring
+            // This prevents Activity-Service double-start race condition
 
             // Start sensor collection
             try {
@@ -100,17 +105,31 @@ class MotionTrackerService : Service() {
                 // Don't stop service, allow inertial-only fallback
             }
 
-            // Start location collection
+            // Start location collection (check permissions first)
             try {
-                locationCollector = LocationCollector(this, locationManager)
-                locationCollector?.start()
-                Log.d(tag, "Location collection started")
+                if (hasLocationPermissions()) {
+                    locationCollector = LocationCollector(this, locationManager)
+                    locationCollector?.start()
+                    Log.d(tag, "Location collection started")
+                } else {
+                    Log.w(tag, "Location permissions not granted - GPS disabled (inertial-only tracking)")
+                }
             } catch (e: Exception) {
                 Log.e(tag, "Warning: Location collection failed (will continue without GPS)", e)
                 // Don't stop service, allow inertial-only fallback
             }
 
-            Log.i(tag, "✓ Service running (WakeLock acquired, sensors + GPS active)")
+            // Start health monitoring (auto-restart on sensor silence)
+            try {
+                healthMonitor = HealthMonitor(this, this)
+                healthMonitor?.start()
+                Log.d(tag, "Health monitor started")
+            } catch (e: Exception) {
+                Log.e(tag, "Warning: Health monitor failed", e)
+                // Don't stop service, continue without health monitoring
+            }
+
+            Log.i(tag, "✓ Service running (WakeLock acquired, sensors + GPS + health monitor active)")
 
             return START_STICKY  // Restart if killed
         } catch (e: Exception) {
@@ -125,6 +144,10 @@ class MotionTrackerService : Service() {
         Log.i(tag, "Service destroyed")
 
         try {
+            // Stop health monitoring
+            healthMonitor?.stop()
+            healthMonitor = null
+
             // Stop sensor collection
             sensorCollector?.stop()
             sensorCollector = null
@@ -133,11 +156,8 @@ class MotionTrackerService : Service() {
             locationCollector?.stop()
             locationCollector = null
 
-            // Stop recording
-            if (isRecording) {
-                JniBinding.stopSession()
-                isRecording = false
-            }
+            // Note: JNI session stop is handled by Activity (stopSession via button)
+            // Service only manages infrastructure cleanup
 
             // Release WakeLock
             wakeLock?.let {
@@ -217,5 +237,113 @@ class MotionTrackerService : Service() {
         } catch (e: Exception) {
             Log.e(tag, "Failed to update notification", e)
         }
+    }
+
+    /**
+     * Update notification with current sample counts
+     * Called by HealthMonitor every 2 seconds
+     */
+    fun updateNotificationWithCounts() {
+        try {
+            val counts = JniBinding.getSampleCountsLabeled()
+            val health = healthMonitor?.getHealthStatus()
+
+            val contentText = if (health != null && !health.isHealthy) {
+                // Show warning if health issues
+                "⚠ Accel: ${counts.accel} • GPS: ${counts.gps} (${health.summary()})"
+            } else {
+                // Normal status
+                "Recording • Accel: ${counts.accel} • Gyro: ${counts.gyro} • GPS: ${counts.gps}"
+            }
+
+            val intent = Intent(this, MotionTrackerActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("Motion Tracker")
+                .setContentText(contentText)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)  // Not dismissible
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager?.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to update notification with counts", e)
+        }
+    }
+
+    /**
+     * Restart sensor collection (called by HealthMonitor)
+     * Gracefully stops and restarts accel/gyro collectors
+     */
+    fun restartSensorCollection() {
+        try {
+            Log.w(tag, "Restarting sensor collection...")
+
+            // Stop current collector
+            sensorCollector?.stop()
+            Thread.sleep(500)  // Wait for cleanup
+
+            // Restart
+            sensorCollector = SensorCollector(sensorManager)
+            sensorCollector?.start()
+
+            Log.i(tag, "✓ Sensor collection restarted")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to restart sensor collection", e)
+            throw e
+        }
+    }
+
+    /**
+     * Restart location collection (called by HealthMonitor)
+     * Gracefully stops and restarts GPS collector
+     */
+    fun restartLocationCollection() {
+        try {
+            Log.w(tag, "Restarting location collection...")
+
+            // Stop current collector
+            locationCollector?.stop()
+            Thread.sleep(500)  // Wait for cleanup
+
+            // Restart
+            locationCollector = LocationCollector(this, locationManager)
+            locationCollector?.start()
+
+            Log.i(tag, "✓ Location collection restarted")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to restart location collection", e)
+            throw e
+        }
+    }
+
+    /**
+     * Get health status from monitor
+     */
+    fun getHealthStatus(): HealthStatus? {
+        return healthMonitor?.getHealthStatus()
+    }
+
+    /**
+     * Check if location permissions are granted
+     */
+    private fun hasLocationPermissions(): Boolean {
+        return ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED &&
+        ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
     }
 }

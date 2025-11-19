@@ -108,7 +108,24 @@ class LocationCollector(
      */
     override fun onLocationChanged(location: Location) {
         try {
-            pushLocation(location)
+            // Filter by accuracy bounds (MIN_ACCURACY = 5m)
+            if (location.accuracy < MIN_ACCURACY) {
+                // Excellent accuracy - accept
+                pushLocation(location)
+            } else if (location.accuracy <= MAX_ACCURACY) {
+                // Fair accuracy (5-100m) - accept with warning if poor
+                if (location.accuracy > 50.0) {
+                    Log.d(tag, "Moderate accuracy: ${String.format("%.1f", location.accuracy)}m")
+                }
+                pushLocation(location)
+            } else {
+                // Poor accuracy (>100m) - reject and log warning
+                Log.w(
+                    tag,
+                    "Low accuracy (rejected): ${String.format("%.1f", location.accuracy)}m (lat=${location.latitude}, lon=${location.longitude})"
+                )
+                return  // Skip pushing this sample
+            }
 
             when (location.provider) {
                 LocationManager.GPS_PROVIDER -> gpsCount++
@@ -125,14 +142,6 @@ class LocationCollector(
                 Log.d(
                     tag,
                     "Fix #${gpsCount + networkCount}: ${location.provider} @ $accuracy m, ${speed} km/h"
-                )
-            }
-
-            // Accuracy anomalies
-            if (location.accuracy > MAX_ACCURACY) {
-                Log.w(
-                    tag,
-                    "Low accuracy: ${String.format("%.1f", location.accuracy)}m (lat=${location.latitude}, lon=${location.longitude})"
                 )
             }
 
@@ -183,7 +192,9 @@ class LocationCollector(
      */
     private fun pushLocation(location: Location) {
         try {
-            val timestamp = System.currentTimeMillis() / 1000.0
+            // Use location's timestamp (milliseconds since epoch), not wall time
+            // This ensures GPS timestamps align with sensor event timestamps
+            val timestamp = location.time / 1000.0
             JniBinding.pushGpsSample(
                 latitude = location.latitude,
                 longitude = location.longitude,

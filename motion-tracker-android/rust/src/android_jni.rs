@@ -5,6 +5,7 @@ use jni::objects::JClass;
 use jni::sys::{jdouble, jint, jstring, jintArray};
 use jni::JNIEnv;
 use std::sync::{Arc, Mutex};
+use crate::log_info;
 
 // Global session state - stored as static to persist across JNI calls
 lazy_static::lazy_static! {
@@ -332,7 +333,8 @@ fn get_session_json_impl() -> JResult<String> {
 
 /// Helper: Log to Android Logcat
 #[allow(dead_code)]
-fn android_log(_env: &mut JNIEnv, _tag: &str, _msg: &str) {
-    // This is a simplified log - in production would use android-log crate
-    // For now, just silent fail (logging not critical for Phase 1)
+fn android_log(_env: &mut JNIEnv, tag: &str, msg: &str) {
+    // Log to Android system log via stderr (captured by logcat)
+    // Format: [TAG] message for proper Android log filtering
+    log_info!("[{}] {}", tag, msg);
 }

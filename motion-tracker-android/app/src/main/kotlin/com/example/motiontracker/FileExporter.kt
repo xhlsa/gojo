@@ -1,6 +1,7 @@
 package com.example.motiontracker
 
 import android.content.Context
+import android.os.StatFs
 import android.util.Log
 import java.io.File
 import java.text.SimpleDateFormat
@@ -22,7 +23,29 @@ class FileExporter(private val context: Context) {
 
     companion object {
         private const val SESSION_DIR = "sessions"
+        private const val MIN_DISK_SPACE_MB = 10L  // Minimum 10 MB free space required
         private val dateFormat = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US)
+    }
+
+    /**
+     * Check if sufficient disk space is available
+     *
+     * @return True if available space > MIN_DISK_SPACE_MB
+     */
+    private fun hasEnoughDiskSpace(): Boolean {
+        return try {
+            val stat = StatFs(context.filesDir.absolutePath)
+            val availableBytes = stat.availableBlocksLong * stat.blockSizeLong
+            val availableMb = availableBytes / (1024 * 1024)
+            val hasSpace = availableMb > MIN_DISK_SPACE_MB
+            if (!hasSpace) {
+                Log.w(tag, "⚠ Low disk space: ${availableMb} MB available (need >$MIN_DISK_SPACE_MB MB)")
+            }
+            hasSpace
+        } catch (e: Exception) {
+            Log.w(tag, "Error checking disk space: ${e.message}")
+            true  // Assume OK if we can't check
+        }
     }
 
     /**
@@ -32,6 +55,12 @@ class FileExporter(private val context: Context) {
      */
     fun exportSessionJson(sessionJson: String): String? {
         return try {
+            // Check disk space before writing
+            if (!hasEnoughDiskSpace()) {
+                Log.e(tag, "Insufficient disk space for export")
+                return null
+            }
+
             // Create sessions directory if needed
             val sessionsDir = File(context.filesDir, SESSION_DIR)
             if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
@@ -65,6 +94,12 @@ class FileExporter(private val context: Context) {
      */
     fun exportSessionGpx(sessionId: String, gpsData: String): String? {
         return try {
+            // Check disk space before writing
+            if (!hasEnoughDiskSpace()) {
+                Log.e(tag, "Insufficient disk space for GPX export")
+                return null
+            }
+
             val sessionsDir = File(context.filesDir, SESSION_DIR)
             if (!sessionsDir.exists() && !sessionsDir.mkdirs()) {
                 Log.e(tag, "Failed to create sessions directory")
