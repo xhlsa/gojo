@@ -137,7 +137,7 @@ python3 tools/compare_filter_math.py
 
 ### Keeping GPS alive on Android
 
-- Run long sessions via `./drive.sh …` instead of invoking `./test_ekf.sh` directly. The wrapper acquires a Termux wakelock before starting the harness and releases it on exit so Android’s Doze/LKM can’t suspend `termux-location`. If Android still forces Termux into the background, pin the harness with `./schedule_test_ekf.sh <minutes>` so JobScheduler restarts it as a foreground service.
+- Run long sessions via `./drive.sh …` instead of invoking `./test_ekf.sh` directly. When Termux:API is installed, the wrapper automatically registers `test_ekf.sh` as a JobScheduler foreground job (see `jobs/ekf_job.log`); otherwise it falls back to the plain wakelock wrapper so Android’s Doze/LKM can’t suspend `termux-location`. You can still call `./schedule_test_ekf.sh <minutes>` explicitly (or `./schedule_test_ekf.sh --cancel`) if you want to manage the foreground job yourself.
 - The GPS watchdog already restarts the daemon if no fix arrives for 30 s; each restart bumps `gps_daemon_restart_count` in the session JSON so you can spot trouble.
 - On devices that still freeze GPS, pin Termux as a foreground app (Termux Widget/Tasker task that runs `termux-wake-lock` and keeps a persistent notification visible) before launching `./drive.sh`.
 - If you abort the run manually, the wrapper’s trap releases the wakelock, but you can always run `termux-wake-unlock` as a fallback.
