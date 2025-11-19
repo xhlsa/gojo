@@ -1,8 +1,19 @@
 #!/data/data/com.termux/files/usr/bin/bash
 set -euo pipefail
 
+FIRST_RUN_LOGGED=false
+
+log() {
+    local msg="$1"
+    if [ "${FIRST_RUN_LOGGED}" = false ]; then
+        printf '====\n' >> "$LOG_FILE"
+        FIRST_RUN_LOGGED=true
+    fi
+    printf '[%s] %s\n' "$(date -u)" "$msg" >> "$LOG_FILE"
+}
+
 die() {
-    echo "[ekf_job] $1" >&2
+    log "ERROR: $1"
     exit 1
 }
 
@@ -11,7 +22,7 @@ REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 ARGS_FILE="$SCRIPT_DIR/ekf_job_args.txt"
 LOG_FILE="$SCRIPT_DIR/ekf_job.log"
 
-echo "[$(date -u)] Job started" >> "$LOG_FILE"
+log "Job started (cwd=$REPO_DIR, args file=$ARGS_FILE)"
 
 if [ ! -x "$REPO_DIR/test_ekf.sh" ]; then
     die "test_ekf.sh not executable"
@@ -24,4 +35,10 @@ else
 fi
 
 cd "$REPO_DIR"
-exec ./test_ekf.sh "${JOB_ARGS[@]}"
+log "Launching test_ekf.sh ${JOB_ARGS[*]} via $PREFIX/bin/bash"
+if "$PREFIX/bin/bash" "$REPO_DIR/test_ekf.sh" "${JOB_ARGS[@]}" >> "$LOG_FILE" 2>&1; then
+    log "test_ekf.sh completed successfully"
+else
+    status=$?
+    die "test_ekf.sh exited with code $status"
+fi

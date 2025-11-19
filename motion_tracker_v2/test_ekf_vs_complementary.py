@@ -35,8 +35,10 @@ import gzip
 import sqlite3
 import psutil
 import numpy as np
+import statistics
 from queue import Queue, Empty, Full
 from datetime import datetime
+from collections import deque
 
 # Try orjson for speed
 try:
@@ -115,6 +117,9 @@ class PersistentGPSDaemon:
         self.reader_thread = None
         self.stop_event = threading.Event()
         self.gps_process = None
+        self.last_fix_time = time.time()
+        self._watchdog_thread = None
+        self._watchdog_warning_logged = False
 
     def start(self):
         """Start GPS daemon that continuously polls termux-location"""
@@ -146,7 +151,9 @@ import time
 
 next_poll_time = time.time()
 last_success_time = time.time()
-max_starvation = 300.0  # Exit after 5 minutes with no data (increased from 30s)
+warn_interval = 30.0
+max_starvation = 120.0
+warned = False
 max_runtime = 2700    # 45 minutes max
 request_count = 0
 success_count = 0
@@ -204,10 +211,18 @@ while time.time() - next_poll_time < max_runtime:
         next_poll_time = current_time + 5.0
 
     # Check for starvation
-    if current_time - last_success_time > max_starvation:
-        sys.stderr.write(f"[GPS] ⚠️  STARVATION: No data for {max_starvation}s (requests={request_count}, successes={success_count}), exiting\\n")
+    starved_for = current_time - last_success_time
+    if starved_for > max_starvation:
+        sys.stderr.write(f"[GPS] ⚠️  STARVATION: No GPS data for {int(starved_for)}s (requests={request_count}, successes={success_count})\\n")
         sys.stderr.flush()
-        sys.exit(1)
+        last_success_time = current_time
+        warned = True
+    elif starved_for > warn_interval and not warned:
+        sys.stderr.write(f"[GPS] Warning: No GPS fix for {int(starved_for)}s\\n")
+        sys.stderr.flush()
+        warned = True
+    elif starved_for <= warn_interval:
+        warned = False
 
     time.sleep(0.1)
 '''
@@ -227,6 +242,10 @@ while time.time() - next_poll_time < max_runtime:
 
             reader = threading.Thread(target=self._read_loop, daemon=True)
             reader.start()
+
+            if self._watchdog_thread is None or not self._watchdog_thread.is_alive():
+                self._watchdog_thread = threading.Thread(target=self._watchdog_loop, daemon=True)
+                self._watchdog_thread.start()
             return True
         except Exception as e:
             print(f"Failed to start GPS daemon: {e}", file=sys.stderr)
@@ -286,6 +305,8 @@ while time.time() - next_poll_time < max_runtime:
                         self.data_queue.put_nowait(gps_data)
                         fix_count += 1
                         queue_size = self.data_queue.qsize()
+                        self.last_fix_time = time.time()
+                        self._watchdog_warning_logged = False
                         print(f"[GPS _read_loop] Fix #{fix_count} queued (lat={gps_data['latitude']:.4f}, queue_size={queue_size}, queue_id={id(self.data_queue)})", file=sys.stderr)
                         sys.stderr.flush()
                     except Exception as e:
@@ -309,6 +330,15 @@ while time.time() - next_poll_time < max_runtime:
 
         print(f"[GPS _read_loop] Thread exiting (fixes_queued={fix_count})", file=sys.stderr)
         sys.stderr.flush()
+
+    def _watchdog_loop(self):
+        """Warn when GPS fixes stall (likely due to Termux backgrounding)."""
+        while not self.stop_event.is_set():
+            elapsed = time.time() - self.last_fix_time
+            if elapsed > 30 and not self._watchdog_warning_logged:
+                print(f"[GPSDaemon] Warning: No GPS fix for {int(elapsed)} seconds. Keep Termux foreground or rerun drive.sh to refresh the job.", file=sys.stderr)
+                self._watchdog_warning_logged = True
+            time.sleep(5)
 
     def get_data(self, timeout=0.1):
         """Non-blocking read from GPS queue"""
@@ -408,6 +438,24 @@ class FilterComparison:
         self.complementary = get_filter('complementary')
         # Force Python backend so GPS velocity smoothing stays available even when Rust extension is installed
         self.es_ekf = get_filter('es_ekf', enable_gyro=enable_gyro, force_python=True)  # NEW: ES-EKF for trajectory mapping
+        self.motion_profiles = {
+            'vehicle': {
+                'gps_noise': 8.0,
+                'accel_noise': 0.5,
+                'gps_velocity_noise': 1.5,
+                'emit_interval': 1.0,
+            },
+            'pedestrian': {
+                'gps_noise': 2.0,
+                'accel_noise': 0.1,
+                'gps_velocity_noise': 0.4,
+                'emit_interval': 0.3,
+            },
+        }
+        self.motion_profile = 'vehicle'
+        self.pedestrian_speed_threshold = 2.0
+        self._profile_speed_samples = deque(maxlen=30)
+        self._apply_motion_profile(self.motion_profile)
 
         # Sensors (accelerometer and gyroscope are paired from same IMU hardware)
         # LSM6DSO hardware tested: 647 Hz @ 1ms (60% eff), 164 Hz @ 5ms (80% eff), 44 Hz @ 20ms (80% eff)
@@ -466,9 +514,12 @@ class FilterComparison:
         # FIX 2: Thread lock for accumulated_data and buffer operations
         self._save_lock = threading.RLock()
         self._last_traj_emit = {key: 0.0 for key in self.trajectory_buffers}
-        # Emit synthetic ES-EKF points at ~2.5 Hz so turns look smoother between GPS fixes
-        self.dead_reckoning_emit_interval = 0.4
+        # Emit synthetic ES-EKF points at profile-defined cadence
+        self.dead_reckoning_emit_interval = self.motion_profiles[self.motion_profile]['emit_interval']
         self._last_es_ekf_gps_ts = None
+        self._last_gps_fix_count = 0
+        self._last_gps_fix_time = time.time()
+        self._gps_cadence_warning_logged = False
 
         # Thread lock for GPS counter (thread-safe increment)
         self._gps_counter_lock = threading.Lock()
@@ -1334,6 +1385,7 @@ class FilterComparison:
                         gps_packet['latitude'], gps_packet['longitude'],
                         gps_packet['speed'], gps_packet['accuracy']
                     )
+                    self._update_motion_profile(gps_packet.get('speed'))
                     samples_processed['gps'] += 1
 
                     # Store trajectory
@@ -1893,6 +1945,16 @@ class FilterComparison:
         try:
             # Get latest state
             ekf_state = self.ekf.get_state()
+            now_ts = time.time()
+            if ekf_state:
+                gps_updates = ekf_state.get('gps_updates', 0)
+                if gps_updates > self._last_gps_fix_count:
+                    self._last_gps_fix_count = gps_updates
+                    self._last_gps_fix_time = now_ts
+                    self._gps_cadence_warning_logged = False
+                elif (now_ts - self._last_gps_fix_time) > 30 and not self._gps_cadence_warning_logged:
+                    print("[GPS] Warning: No GPS fixes for 30+ seconds. Bringing Termux to the foreground may be required.", file=sys.stderr)
+                    self._gps_cadence_warning_logged = True
 
             # Get latest GPS if available
             latest_gps = None
@@ -1929,7 +1991,7 @@ class FilterComparison:
                 'session_id': session_id,
                 'status': 'ACTIVE',
                 'elapsed_seconds': int(time.time() - self.start_time),
-                'last_update': time.time(),
+                'last_update': now_ts,
                 'gps_fixes': self.total_gps_fixes,
                 'accel_samples': len(self.accel_samples),
                 'gyro_samples': len(self.gyro_samples) if self.enable_gyro else 0,
@@ -2264,11 +2326,36 @@ class FilterComparison:
             lat, lon, unc = self.es_ekf.get_position()
             state = self.es_ekf.get_state()
             velocity = state.get('velocity', 0.0)
+            if velocity < 0.5:
+                return
             with self._save_lock:
                 self._record_trajectory_point('es_ekf', timestamp, lat, lon, velocity, unc)
                 self._record_trajectory_point('es_ekf_dead_reckoning', timestamp, lat, lon, velocity, unc)
         except Exception:
             pass
+
+    def _apply_motion_profile(self, profile):
+        cfg = self.motion_profiles[profile]
+        self.motion_profile = profile
+        self.dead_reckoning_emit_interval = cfg['emit_interval']
+        if hasattr(self, 'es_ekf') and hasattr(self.es_ekf, 'set_noise_profile'):
+            self.es_ekf.set_noise_profile(
+                gps_noise_std=cfg['gps_noise'],
+                accel_noise_std=cfg['accel_noise'],
+                gps_velocity_noise_std=cfg['gps_velocity_noise'],
+            )
+        print(f"[MotionProfile] Switched to {profile} mode (emit_interval={self.dead_reckoning_emit_interval}s)", file=sys.stderr)
+
+    def _update_motion_profile(self, gps_speed):
+        if gps_speed is None:
+            return
+        self._profile_speed_samples.append(gps_speed)
+        if len(self._profile_speed_samples) < 5:
+            return
+        median_speed = statistics.median(self._profile_speed_samples)
+        desired = 'pedestrian' if median_speed < self.pedestrian_speed_threshold else 'vehicle'
+        if desired != self.motion_profile:
+            self._apply_motion_profile(desired)
 
     def _record_covariance_snapshot(self, timestamp):
         if not hasattr(self.ekf, 'P'):

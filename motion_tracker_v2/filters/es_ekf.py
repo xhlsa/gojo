@@ -663,6 +663,20 @@ class ErrorStateEKF:
                 'gyro_updates': self.gyro_update_count
             }
 
+    def set_noise_profile(self, gps_noise_std=None, accel_noise_std=None, gps_velocity_noise_std=None):
+        """Dynamically adjust measurement/process noise parameters."""
+        with self.lock:
+            if gps_noise_std is not None:
+                self.gps_noise_std = gps_noise_std
+                self.R_gps = np.eye(2) * (gps_noise_std ** 2)
+            if gps_velocity_noise_std is not None:
+                self.gps_velocity_noise_std = gps_velocity_noise_std
+                self.R_gps_velocity = np.eye(2) * (gps_velocity_noise_std ** 2)
+            if accel_noise_std is not None:
+                self.accel_noise_std = accel_noise_std
+                self.R_accel = np.array([[accel_noise_std ** 2]])
+                self.Q = self.build_process_noise(self.dt, accel_noise_std)
+
     def reset(self):
         """
         Reset velocities and distance after auto-save (keep position).
