@@ -135,16 +135,7 @@ class ErrorStateEKF:
         self.gyro_noise_std = gyro_noise_std
         self.gps_velocity_noise_std = gps_velocity_noise_std
 
-        # Process noise covariance (8x8 diagonal)
-        # Higher during GPS gaps to reflect model uncertainty
-        q_pos = 0.25 * dt**4 * accel_noise_std**2
-        q_vel = dt**2 * accel_noise_std**2
-        q_accel = 0.5  # m/s² process noise
-        q_heading = 0.01  # rad² heading drift
-        q_heading_rate = 0.005  # rad/s² heading rate drift
-
-        self.Q = np.diag([q_pos, q_pos, q_vel, q_vel, q_accel, q_accel,
-                          q_heading, q_heading_rate])
+        self.Q = self.build_process_noise(dt, accel_noise_std)
 
         # Measurement noise covariances
         self.R_gps = np.eye(2) * (gps_noise_std**2)
@@ -178,6 +169,15 @@ class ErrorStateEKF:
         self.accel_update_count = 0
         self.gyro_update_count = 0
         self.predict_count = 0
+
+    def build_process_noise(self, dt, accel_noise_std):
+        accel_var = accel_noise_std * accel_noise_std
+        q_pos = 0.25 * dt**4 * accel_var
+        q_vel = dt**2 * accel_var
+        q_accel = 0.5
+        q_heading = 0.01
+        q_heading_rate = 0.005
+        return np.diag([q_pos, q_pos, q_vel, q_vel, q_accel, q_accel, q_heading, q_heading_rate])
 
     def latlon_to_meters(self, lat, lon, origin_lat, origin_lon):
         """
