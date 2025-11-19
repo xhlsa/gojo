@@ -37,6 +37,7 @@ class MotionTrackerService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     private var isRecording = false
     private var sensorCollector: SensorCollector? = null
+    private var locationCollector: LocationCollector? = null
 
     companion object {
         private const val NOTIFICATION_ID = 1
@@ -99,7 +100,17 @@ class MotionTrackerService : Service() {
                 // Don't stop service, allow inertial-only fallback
             }
 
-            Log.i(tag, "✓ Service running (WakeLock acquired, sensors active)")
+            // Start location collection
+            try {
+                locationCollector = LocationCollector(this, locationManager)
+                locationCollector?.start()
+                Log.d(tag, "Location collection started")
+            } catch (e: Exception) {
+                Log.e(tag, "Warning: Location collection failed (will continue without GPS)", e)
+                // Don't stop service, allow inertial-only fallback
+            }
+
+            Log.i(tag, "✓ Service running (WakeLock acquired, sensors + GPS active)")
 
             return START_STICKY  // Restart if killed
         } catch (e: Exception) {
@@ -117,6 +128,10 @@ class MotionTrackerService : Service() {
             // Stop sensor collection
             sensorCollector?.stop()
             sensorCollector = null
+
+            // Stop location collection
+            locationCollector?.stop()
+            locationCollector = null
 
             // Stop recording
             if (isRecording) {

@@ -125,7 +125,7 @@ class MotionTrackerActivity : AppCompatActivity() {
             val counts = JniBinding.getSampleCountsLabeled()
 
             statusText.text = "State: ${state.name}"
-            samplesText.text = "Samples: $counts"
+            samplesText.text = "Accel: ${counts.accel} | Gyro: ${counts.gyro} | GPS: ${counts.gps}"
 
             // Enable/disable buttons based on state
             when (state) {
