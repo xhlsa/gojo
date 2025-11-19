@@ -36,6 +36,7 @@ import sqlite3
 import psutil
 import numpy as np
 import statistics
+import shutil
 from queue import Queue, Empty, Full
 from datetime import datetime
 from collections import deque
@@ -609,6 +610,7 @@ class FilterComparison:
 
         # Live status file for dashboard monitoring (file-based IPC)
         self.status_file = os.path.join(SESSIONS_DIR, 'live_status.json')
+        self._first_fix_notified = False
         self.last_status_update = time.time()
 
     def _calibrate_gravity(self):
@@ -740,6 +742,7 @@ class FilterComparison:
                                 gps_data.get('provider', 'gps')[:8]  # Truncate to 8 chars for U8 dtype
                             )
                             self.gps_index += 1
+                        self._notify_first_fix(gps_data)
                         print(f"  ✓ First GPS fix processed and added to test data")
                     except Exception as e:
                         print(f"  ⚠ ERROR processing first GPS fix: {e}", file=sys.stderr)
@@ -2330,9 +2333,29 @@ class FilterComparison:
                 return
             with self._save_lock:
                 self._record_trajectory_point('es_ekf', timestamp, lat, lon, velocity, unc)
-                self._record_trajectory_point('es_ekf_dead_reckoning', timestamp, lat, lon, velocity, unc)
+            self._record_trajectory_point('es_ekf_dead_reckoning', timestamp, lat, lon, velocity, unc)
         except Exception:
             pass
+
+    def _notify_first_fix(self, gps_data):
+        if self._first_fix_notified:
+            return
+        self._first_fix_notified = True
+        message = f"GPS locked at {gps_data['latitude']:.4f},{gps_data['longitude']:.4f}"
+        print(f"[GPS] {message}")
+        toast_cmd = shutil.which('termux-toast')
+        if toast_cmd:
+            try:
+                subprocess.Popen([toast_cmd, message])
+            except Exception:
+                pass
+        else:
+            notif_cmd = shutil.which('termux-notification')
+            if notif_cmd:
+                try:
+                    subprocess.Popen([notif_cmd, '--id', 'gps-lock', '--title', 'Motion Tracker', '--content', message, '--priority', 'high', '--alert-once'])
+                except Exception:
+                    pass
 
     def _apply_motion_profile(self, profile):
         cfg = self.motion_profiles[profile]
