@@ -198,6 +198,21 @@ object JniBinding {
         )
     }
 
+    // ========== Session Export ==========
+
+    /**
+     * Export session as JSON string
+     * Contains all accumulated samples and metadata
+     *
+     * @return JSON string with session data
+     * @throws MotionTrackerException on error
+     */
+    @Throws(MotionTrackerException::class)
+    fun getSessionJson(): String {
+        return nativeGetSessionJson()
+            ?: throw MotionTrackerException("Failed to export session JSON")
+    }
+
     // ========== Native JNI Functions ==========
 
     private external fun nativeStartSession(): Int
@@ -219,6 +234,7 @@ object JniBinding {
 
     private external fun nativeGetSessionState(): String?
     private external fun nativeGetSampleCounts(): IntArray?
+    private external fun nativeGetSessionJson(): String?
 }
 
 /**

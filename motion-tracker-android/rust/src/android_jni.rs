@@ -299,6 +299,37 @@ fn get_sample_counts_impl() -> JResult<[i32; 3]> {
     ])
 }
 
+/// JNI: Export session as JSON string
+/// Returns: JSON string or null on error (throws Java exception)
+#[no_mangle]
+pub extern "C" fn Java_com_example_motiontracker_JniBinding_getSessionJson(
+    mut env: JNIEnv,
+    _class: JClass,
+) -> jstring {
+    match get_session_json_impl() {
+        Ok(json_str) => match env.new_string(&json_str) {
+            Ok(jstr) => jstr.into_raw(),
+            Err(_) => {
+                let _ = throw_java_exception(&mut env, &MotionTrackerError::JniError(
+                    "Failed to create Java string".to_string(),
+                ));
+                std::ptr::null_mut()
+            }
+        },
+        Err(e) => {
+            let _ = throw_java_exception(&mut env, &e);
+            std::ptr::null_mut()
+        }
+    }
+}
+
+fn get_session_json_impl() -> JResult<String> {
+    let session = get_session()?;
+    let export = session.export()?;
+    export.to_json()
+        .map_err(|_| MotionTrackerError::Internal("JSON serialization failed".to_string()))
+}
+
 /// Helper: Log to Android Logcat
 #[allow(dead_code)]
 fn android_log(_env: &mut JNIEnv, _tag: &str, _msg: &str) {

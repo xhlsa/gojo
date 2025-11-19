@@ -243,6 +243,30 @@ impl Session {
 
         Ok(())
     }
+
+    /// Export session data as JSON-serializable structure
+    pub fn export(&self) -> JResult<crate::storage::SessionExport> {
+        let meta = self.get_metadata()?;
+
+        let accel_samples = self.accel_queue.lock().map_err(|_| {
+            MotionTrackerError::Internal("Failed to acquire accel queue lock".to_string())
+        })?.iter().cloned().collect();
+
+        let gyro_samples = self.gyro_queue.lock().map_err(|_| {
+            MotionTrackerError::Internal("Failed to acquire gyro queue lock".to_string())
+        })?.iter().cloned().collect();
+
+        let gps_samples = self.gps_queue.lock().map_err(|_| {
+            MotionTrackerError::Internal("Failed to acquire gps queue lock".to_string())
+        })?.iter().cloned().collect();
+
+        Ok(crate::storage::SessionExport {
+            metadata: meta,
+            accel_samples,
+            gyro_samples,
+            gps_samples,
+        })
+    }
 }
 
 impl Default for Session {
