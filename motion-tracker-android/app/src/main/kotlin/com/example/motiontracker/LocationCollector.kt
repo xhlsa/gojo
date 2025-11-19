@@ -108,12 +108,12 @@ class LocationCollector(
      */
     override fun onLocationChanged(location: Location) {
         try {
-            // Filter by accuracy bounds (MIN_ACCURACY = 5m)
-            if (location.accuracy < MIN_ACCURACY) {
-                // Excellent accuracy - accept
+            // Filter by accuracy bounds (MIN_ACCURACY = 5m, MAX_ACCURACY = 100m)
+            if (location.accuracy <= MIN_ACCURACY) {
+                // Excellent accuracy (<=5m) - accept without comment
                 pushLocation(location)
             } else if (location.accuracy <= MAX_ACCURACY) {
-                // Fair accuracy (5-100m) - accept with warning if poor
+                // Fair accuracy (5-100m) - accept with warning if moderate
                 if (location.accuracy > 50.0) {
                     Log.d(tag, "Moderate accuracy: ${String.format("%.1f", location.accuracy)}m")
                 }

@@ -1,0 +1,5 @@
+Termux Keep-Alive Checklist:
+1. Run termux_keepalive.sh (wakelock + notification).
+2. Start drive via drive.sh (JobScheduler ensures GPS).
+3. Keep screen on until you see "GPS locked" toast, then you can background.
+4. If GPS warning prints, briefly reopen Termux.

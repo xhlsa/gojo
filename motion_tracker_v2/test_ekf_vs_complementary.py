@@ -464,6 +464,9 @@ class FilterComparison:
         self.accel_daemon = PersistentAccelDaemon(delay_ms=20)
         self.gps_daemon = PersistentGPSDaemon()  # Continuous GPS polling daemon
         self.gyro_daemon = None  # Will be initialized if enable_gyro=True
+        self.accel_window_size = 9
+        self._accel_window = deque(maxlen=self.accel_window_size)
+        self._hann_cache = {}
 
         # Data storage - NUMPY ARRAYS for 32x memory reduction
         # Pre-allocated structured arrays with index counters
@@ -961,10 +964,11 @@ class FilterComparison:
                     # This prevents infinite velocity accumulation during stationary periods
                     # Raw magnitude is always ~9.81 when device is level (gravity)
                     motion_magnitude = max(0, raw_magnitude - self.gravity)
+                    smoothed_magnitude = self._apply_accel_smoothing(motion_magnitude)
 
                     # Check for hard braking incident (deceleration > 0.8g)
                     # Convert to g-forces for incident detector
-                    accel_g = motion_magnitude / 9.81
+                    accel_g = smoothed_magnitude / 9.81
                     self.incident_detector.add_accelerometer_sample(accel_g)
                     self.incident_detector.check_hard_braking(accel_g)
 
@@ -975,7 +979,7 @@ class FilterComparison:
                     timestamp = time.time() - self.start_time
                     accel_packet = {
                         'timestamp': timestamp,
-                        'magnitude': motion_magnitude
+                        'magnitude': smoothed_magnitude
                     }
 
                     # PHASE 2: Distribute to ALL filter queues (non-blocking)
@@ -1003,7 +1007,7 @@ class FilterComparison:
                     # Create placeholder accel sample (will be updated by filter threads)
                     with self._save_lock:
                         if self.accel_index < self.max_accel_samples:
-                            self.accel_samples[self.accel_index] = (timestamp, motion_magnitude)
+                            self.accel_samples[self.accel_index] = (timestamp, smoothed_magnitude)
                             self.accel_index += 1
                         else:
                             print(f"⚠️ Accel buffer full ({self.max_accel_samples} samples), skipping", file=sys.stderr)
@@ -2369,6 +2373,30 @@ class FilterComparison:
             )
         print(f"[MotionProfile] Switched to {profile} mode (emit_interval={self.dead_reckoning_emit_interval}s)", file=sys.stderr)
 
+    def _compute_hann_weights(self, length):
+        if length <= 1:
+            return [1.0]
+        weights = [
+            0.5 - 0.5 * math.cos((2 * math.pi * i) / (length - 1))
+            for i in range(length)
+        ]
+        total = sum(weights) or 1.0
+        return [w / total for w in weights]
+
+    def _apply_accel_smoothing(self, magnitude):
+        self._accel_window.append(float(magnitude))
+        length = len(self._accel_window)
+        if length == 1:
+            return self._accel_window[-1]
+        weights = self._hann_cache.get(length)
+        if weights is None:
+            weights = self._compute_hann_weights(length)
+            self._hann_cache[length] = weights
+        smoothed = 0.0
+        for value, weight in zip(self._accel_window, weights):
+            smoothed += value * weight
+        return smoothed
+
     def _update_motion_profile(self, gps_speed):
         if gps_speed is None:
             return
@@ -2684,13 +2712,15 @@ class FilterComparison:
         """
         import math
 
-        if len(self.gps_samples) < 2:
+        sample_count = min(self.gps_index, len(self.gps_samples))
+        if sample_count < 2:
             return 0.0
 
         total_distance = 0.0
-        for i in range(1, len(self.gps_samples)):
-            prev_gps = self.gps_samples[i-1]
-            curr_gps = self.gps_samples[i]
+        usable_samples = self.gps_samples[:sample_count]
+        for i in range(1, sample_count):
+            prev_gps = usable_samples[i-1]
+            curr_gps = usable_samples[i]
 
             lat1 = prev_gps['latitude']
             lon1 = prev_gps['longitude']

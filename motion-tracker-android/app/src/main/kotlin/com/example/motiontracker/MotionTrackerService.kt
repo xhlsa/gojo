@@ -163,7 +163,12 @@ class MotionTrackerService : Service() {
             wakeLock?.let {
                 if (it.isHeld) {
                     it.release()
+                    Log.d(tag, "WakeLock released")
+                } else {
+                    Log.w(tag, "⚠ WakeLock was not held (may have failed to acquire at startup)")
                 }
+            } ?: run {
+                Log.w(tag, "⚠ WakeLock was null (never initialized)")
             }
 
             Log.i(tag, "✓ Service cleaned up")
@@ -282,9 +287,10 @@ class MotionTrackerService : Service() {
 
     /**
      * Restart sensor collection (called by HealthMonitor)
-     * Gracefully stops and restarts accel/gyro collectors
+     * Gracefully stops and restarts accel/gyro collectors with error recovery
      */
     fun restartSensorCollection() {
+        val oldCollector = sensorCollector
         try {
             Log.w(tag, "Restarting sensor collection...")
 
@@ -298,16 +304,18 @@ class MotionTrackerService : Service() {
 
             Log.i(tag, "✓ Sensor collection restarted")
         } catch (e: Exception) {
-            Log.e(tag, "Failed to restart sensor collection", e)
+            Log.e(tag, "Failed to restart sensor collection, rolling back to previous collector", e)
+            sensorCollector = oldCollector  // Restore previous collector if restart failed
             throw e
         }
     }
 
     /**
      * Restart location collection (called by HealthMonitor)
-     * Gracefully stops and restarts GPS collector
+     * Gracefully stops and restarts GPS collector with error recovery
      */
     fun restartLocationCollection() {
+        val oldCollector = locationCollector
         try {
             Log.w(tag, "Restarting location collection...")
 
@@ -321,7 +329,8 @@ class MotionTrackerService : Service() {
 
             Log.i(tag, "✓ Location collection restarted")
         } catch (e: Exception) {
-            Log.e(tag, "Failed to restart location collection", e)
+            Log.e(tag, "Failed to restart location collection, rolling back to previous collector", e)
+            locationCollector = oldCollector  // Restore previous collector if restart failed
             throw e
         }
     }
@@ -334,16 +343,29 @@ class MotionTrackerService : Service() {
     }
 
     /**
-     * Check if location permissions are granted
+     * Check if location permissions are granted (including background location for Android 10+)
      */
     private fun hasLocationPermissions(): Boolean {
-        return ContextCompat.checkSelfPermission(
+        val hasFineLocation = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasCoarseLocation = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+
+        // Android 10+ requires background location permission for foreground services
+        val hasBackgroundLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true  // Not required on pre-Android 10 devices
+        }
+
+        return hasFineLocation && hasCoarseLocation && hasBackgroundLocation
     }
 }

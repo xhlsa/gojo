@@ -76,7 +76,16 @@ class HealthMonitor(
 
         // Recreate executor if it was previously shut down
         if (restartExecutor.isShutdown) {
+            try {
+                // Ensure old executor is fully cleaned up before creating new one
+                if (!restartExecutor.awaitTermination(500, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+                    restartExecutor.shutdownNow()
+                }
+            } catch (e: Exception) {
+                Log.w(tag, "Error cleaning up old restart executor", e)
+            }
             restartExecutor = Executors.newFixedThreadPool(2)
+            Log.d(tag, "Created new restart executor")
         }
 
         lastAccelTime = System.currentTimeMillis()
