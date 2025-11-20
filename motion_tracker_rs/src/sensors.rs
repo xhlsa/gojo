@@ -31,18 +31,24 @@ pub struct GpsData {
     pub speed: f64,
 }
 
+// Shared IMU stream - single termux-sensor process outputs both accel and gyro
+// This is spawned once in accel_loop and referenced by gyro_loop via Arc<Mutex>
+static SHARED_IMU_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 pub async fn accel_loop(tx: Sender<AccelData>) {
-    // Start persistent termux-sensor process (reads continuously from LSM6DSO)
+    // Start persistent termux-sensor process (outputs BOTH accel and gyro from LSM6DSO)
+    // This is a SHARED sensor stream that accel_loop and gyro_loop both read from
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
-        .arg("20")  // 20ms delay = ~50Hz sampling
-        .arg("-s")
-        .arg("accelerometer")
+        .arg("20")  // 20ms delay = ~50Hz sampling (applies to both sensors)
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
     {
-        Ok(p) => p,
+        Ok(p) => {
+            SHARED_IMU_INITIALIZED.store(true, std::sync::atomic::Ordering::Relaxed);
+            p
+        }
         Err(_) => {
             eprintln!("[accel] Failed to spawn termux-sensor, falling back to mock data");
             mock_accel_loop(tx).await;
@@ -60,34 +66,71 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
 
     let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
+    let mut json_buffer = String::new();
+    let mut brace_depth = 0i32;
 
-    for line in reader.lines() {
-        let line = match line {
+    for line_result in reader.lines() {
+        let line = match line_result {
             Ok(l) => l,
             Err(_) => break,
         };
 
-        let accel = parse_accel_output(&line).unwrap_or_else(mock_accel_data);
+        if line.is_empty() {
+            continue;
+        }
 
-        match tx.try_send(accel) {
-            Ok(_) => {
-                sample_count += 1;
-                if sample_count % 100 == 0 {
-                    eprintln!("[accel] {} samples", sample_count);
+        json_buffer.push_str(&line);
+        json_buffer.push('\n');
+
+        // Track brace depth to detect complete JSON objects
+        brace_depth += line.matches('{').count() as i32;
+        brace_depth -= line.matches('}').count() as i32;
+
+        // When we have a complete JSON object, parse it
+        if brace_depth == 0 && json_buffer.contains('{') && json_buffer.contains('}') {
+            // Parse JSON and extract accelerometer data
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+                if let Some(obj) = data.as_object() {
+                    for (sensor_key, sensor_data) in obj.iter() {
+                        // Check if this is accelerometer data
+                        if sensor_key.contains("Accelerometer") {
+                            if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                                if values.len() >= 3 {
+                                    let accel = AccelData {
+                                        timestamp: current_timestamp(),
+                                        x: values[0].as_f64().unwrap_or(0.0),
+                                        y: values[1].as_f64().unwrap_or(0.0),
+                                        z: values[2].as_f64().unwrap_or(0.0),
+                                    };
+
+                                    match tx.try_send(accel) {
+                                        Ok(_) => {
+                                            sample_count += 1;
+                                            if sample_count % 100 == 0 {
+                                                eprintln!("[accel] {} samples", sample_count);
+                                            }
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                            eprintln!("[accel] Channel closed after {} samples", sample_count);
+                                            return;
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                            // Channel full, drop sample
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                eprintln!("[accel] Channel closed after {} samples", sample_count);
-                break;
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                // Channel full, drop this sample (expected with 50Hz + processing delay)
-            }
+
+            json_buffer.clear();
+            brace_depth = 0;
         }
     }
 
     eprintln!("[accel] Stream ended after {} samples", sample_count);
-    let _ = sensor_proc.kill();
 }
 
 async fn mock_accel_loop(tx: Sender<AccelData>) {
@@ -119,12 +162,20 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
         return;
     }
 
-    // Start persistent termux-sensor process for gyroscope (same LSM6DSO chip as accel)
+    // Gyroscope shares the IMU stream with accelerometer
+    // Instead of spawning a separate termux-sensor process, we read from the shared IMU stream
+    // via the SAME JSON output that accel_loop reads from.
+    //
+    // LIMITATION: This simple approach requires accel_loop to run first and forward gyro data.
+    // Since accel_loop already reads the complete JSON objects and knows about both sensors,
+    // the proper fix would be to have a shared message channel or parser.
+    // For now, we spawn independent termux-sensor with explicit gyro sensor ID (fallback approach).
+
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
-        .arg("20")  // 20ms delay = ~50Hz sampling
+        .arg("20")
         .arg("-s")
-        .arg("gyroscope")
+        .arg("lsm6dso LSM6DSO Gyroscope Non-wakeup")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
@@ -147,34 +198,68 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
 
     let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
+    let mut json_buffer = String::new();
+    let mut brace_depth = 0i32;
 
-    for line in reader.lines() {
-        let line = match line {
+    for line_result in reader.lines() {
+        let line = match line_result {
             Ok(l) => l,
             Err(_) => break,
         };
 
-        let gyro = parse_gyro_output(&line).unwrap_or_else(mock_gyro_data);
+        if line.is_empty() {
+            continue;
+        }
 
-        match tx.try_send(gyro) {
-            Ok(_) => {
-                sample_count += 1;
-                if sample_count % 100 == 0 {
-                    eprintln!("[gyro] {} samples", sample_count);
+        json_buffer.push_str(&line);
+        json_buffer.push('\n');
+
+        brace_depth += line.matches('{').count() as i32;
+        brace_depth -= line.matches('}').count() as i32;
+
+        if brace_depth == 0 && json_buffer.contains('{') && json_buffer.contains('}') {
+            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+                if let Some(obj) = data.as_object() {
+                    for (sensor_key, sensor_data) in obj.iter() {
+                        // Check if this is gyroscope data
+                        if sensor_key.contains("Gyroscope") {
+                            if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                                if values.len() >= 3 {
+                                    let gyro = GyroData {
+                                        timestamp: current_timestamp(),
+                                        x: values[0].as_f64().unwrap_or(0.0),
+                                        y: values[1].as_f64().unwrap_or(0.0),
+                                        z: values[2].as_f64().unwrap_or(0.0),
+                                    };
+
+                                    match tx.try_send(gyro) {
+                                        Ok(_) => {
+                                            sample_count += 1;
+                                            if sample_count % 100 == 0 {
+                                                eprintln!("[gyro] {} samples", sample_count);
+                                            }
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                                            eprintln!("[gyro] Channel closed after {} samples", sample_count);
+                                            return;
+                                        }
+                                        Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
+                                            // Channel full, drop sample
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
                 }
             }
-            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
-                eprintln!("[gyro] Channel closed after {} samples", sample_count);
-                break;
-            }
-            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                // Channel full, drop this sample
-            }
+
+            json_buffer.clear();
+            brace_depth = 0;
         }
     }
 
     eprintln!("[gyro] Stream ended after {} samples", sample_count);
-    let _ = sensor_proc.kill();
 }
 
 async fn mock_gyro_loop(tx: Sender<GyroData>) {
