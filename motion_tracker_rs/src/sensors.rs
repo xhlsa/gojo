@@ -189,9 +189,11 @@ fn read_gps() -> Option<GpsData> {
 }
 
 fn parse_accel_output(output: &str) -> Option<AccelData> {
-    let timestamp = current_timestamp();
+    if let Some((timestamp, x, y, z)) = parse_sensor_json(output, "x", "y", "z") {
+        return Some(AccelData { timestamp, x, y, z });
+    }
 
-    // Example: "Accelerometer event: x=0.5, y=0.3, z=9.8, accuracy=0, timestamp=1234567890"
+    let timestamp = current_timestamp();
     let mut x = 0.0;
     let mut y = 0.0;
     let mut z = 0.0;
@@ -210,6 +212,10 @@ fn parse_accel_output(output: &str) -> Option<AccelData> {
 }
 
 fn parse_gyro_output(output: &str) -> Option<GyroData> {
+    if let Some((timestamp, x, y, z)) = parse_sensor_json(output, "x", "y", "z") {
+        return Some(GyroData { timestamp, x, y, z });
+    }
+
     let timestamp = current_timestamp();
     let mut x = 0.0;
     let mut y = 0.0;
@@ -272,4 +278,25 @@ fn current_timestamp() -> f64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs_f64()
+}
+
+fn parse_sensor_json(output: &str, _x_key: &str, _y_key: &str, _z_key: &str) -> Option<(f64, f64, f64, f64)> {
+    // Termux-sensor format: {"lsm6dso LSM6DSO Accelerometer Non-wakeup": {"values": [x, y, z]}}
+    let value: Value = serde_json::from_str(output).ok()?;
+
+    // Get first sensor entry (there's usually only one)
+    let sensor_data = value.as_object()?.values().next()?;
+    let values = sensor_data.get("values")?.as_array()?;
+
+    // Parse [x, y, z] array
+    if values.len() != 3 {
+        return None;
+    }
+
+    let x = values[0].as_f64()?;
+    let y = values[1].as_f64()?;
+    let z = values[2].as_f64()?;
+    let timestamp = current_timestamp();
+
+    Some((timestamp, x, y, z))
 }

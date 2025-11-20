@@ -8,10 +8,52 @@
 
 set -e
 
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-cd "$REPO_ROOT/motion_tracker_rs"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+OUTPUT_DIR="$SCRIPT_DIR/motion_tracker_sessions"
+mkdir -p "$OUTPUT_DIR"
+
+# ============================================================================
+# SENSOR CLEANUP (from test_ekf.sh pattern)
+# ============================================================================
+cleanup_sensors() {
+    echo "[$(date '+%H:%M:%S')] Cleaning up stale sensor processes..." >&2
+    pkill -9 -f "termux-sensor.*ACCELEROMETER" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Accelerometer" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*GYROSCOPE" 2>/dev/null || true
+    pkill -9 -f "termux-sensor.*Gyroscope" 2>/dev/null || true
+    pkill -9 -f "termux-api Sensor" 2>/dev/null || true
+    pkill -9 -f "stdbuf.*termux-sensor" 2>/dev/null || true
+    pkill -9 -f "test_ekf_vs_complementary.py" 2>/dev/null || true
+    sleep 5  # Android needs time to release sensor HAL
+    echo "[$(date '+%H:%M:%S')] ✓ Sensor cleanup complete" >&2
+}
+
+cleanup_gps() {
+    echo "[$(date '+%H:%M:%S')] Cleaning up stale GPS processes..." >&2
+    pkill -9 -f "termux-location" 2>/dev/null || true
+    pkill -9 -f "termux-api Location" 2>/dev/null || true
+    sleep 5  # Android needs time to release GPS socket resources
+    echo "[$(date '+%H:%M:%S')] ✓ GPS cleanup complete" >&2
+}
+
+cleanup_on_exit() {
+    local exit_code=$?
+    echo "[$(date '+%H:%M:%S')] Performing final cleanup..." >&2
+    cleanup_sensors
+    cleanup_gps
+    exit $exit_code
+}
+
+trap cleanup_on_exit EXIT SIGINT SIGTERM
+
+# ============================================================================
+# PRE-RUN CLEANUP
+# ============================================================================
+cleanup_sensors
+cleanup_gps
 
 # Build if needed
+cd "$SCRIPT_DIR/motion_tracker_rs"
 if [ ! -f target/release/motion_tracker ]; then
     echo "[$(date '+%H:%M:%S')] Building Rust binary..."
     cargo build --release --bin motion_tracker 2>&1 | grep -E "(Compiling|Finished|error)" || true
@@ -31,5 +73,5 @@ fi
 
 converted_args+=("$@")
 
-# Run the binary
-./target/release/motion_tracker "${converted_args[@]}"
+# Run the binary with explicit output directory
+./target/release/motion_tracker --output-dir "$OUTPUT_DIR" "${converted_args[@]}"
