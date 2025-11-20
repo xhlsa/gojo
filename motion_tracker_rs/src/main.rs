@@ -112,10 +112,10 @@ async fn main() -> Result<()> {
     // Initialize restart manager
     let restart_manager = Arc::new(restart_manager::RestartManager::new());
 
-    // Spawn sensor collection tasks (hold handles to keep tasks alive)
-    let _accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
-    let _gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
-    let _gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
+    // Spawn sensor collection tasks (mutable handles for respawning support)
+    let mut accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
+    let mut gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
+    let mut gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
 
     // Spawn health monitoring task with restart signaling
     let health_monitor_clone = health_monitor.clone();
@@ -125,10 +125,8 @@ async fn main() -> Result<()> {
         restart_manager_clone,
     ));
 
-    // Drop original senders so tasks only hold references
-    drop(accel_tx);
-    drop(gyro_tx);
-    drop(gps_tx);
+    // Keep senders in scope for respawning (don't drop)
+    // Tasks hold clones, we keep originals for respawn
 
     // Sample counters
     let mut accel_count = 0u64;
@@ -401,6 +399,28 @@ async fn main() -> Result<()> {
 
             drop(readings_lock);
             last_save = now;
+        }
+
+        // Check for sensor restarts (respawn tasks if needed)
+        if restart_manager.accel_ready_restart() {
+            eprintln!("[RESTART] Respawning Accel task...");
+            accel_handle.abort();
+            accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
+            restart_manager.accel_restart_success();
+        }
+
+        if restart_manager.gyro_ready_restart() && args.enable_gyro {
+            eprintln!("[RESTART] Respawning Gyro task...");
+            gyro_handle.abort();
+            gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
+            restart_manager.gyro_restart_success();
+        }
+
+        if restart_manager.gps_ready_restart() {
+            eprintln!("[RESTART] Respawning GPS task...");
+            gps_handle.abort();
+            gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
+            restart_manager.gps_restart_success();
         }
 
         sleep(Duration::from_millis(1)).await;
