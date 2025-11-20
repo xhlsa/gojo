@@ -205,21 +205,32 @@ async fn main() -> Result<()> {
     calibration_complete = true;
     println!("[{}] Using default gravity: 9.81 m/s²", ts_now());
 
-    // Main processing loop
+    // Main processing loop with duration tracking via channel signal
     let start = Utc::now();
     let mut last_save = Utc::now();
     let mut last_status_update = Utc::now();
 
+    // Create channel for duration timeout signal (sent from separate task)
+    let (duration_tx, mut duration_rx) = mpsc::channel::<()>(1);
+    let _duration_handle = if args.duration > 0 {
+        let tx = duration_tx.clone();
+        let duration_secs = args.duration;
+        Some(tokio::spawn(async move {
+            sleep(Duration::from_secs(duration_secs)).await;
+            eprintln!("[TIMEOUT] Duration timer fired after {} seconds", duration_secs);
+            let _ = tx.send(()).await; // Signal timeout
+        }))
+    } else {
+        None
+    };
+
     println!("[{}] Starting data collection...", ts_now());
 
     loop {
-        // Check if duration exceeded
-        if args.duration > 0 {
-            let elapsed = Utc::now().signed_duration_since(start);
-            if elapsed.num_seconds() as u64 >= args.duration {
-                println!("[{}] Duration reached, stopping...", ts_now());
-                break;
-            }
+        // Non-blocking check for duration timeout
+        if duration_rx.try_recv().is_ok() {
+            println!("[{}] Duration reached, stopping...", ts_now());
+            break;
         }
 
         // Collect available sensor readings

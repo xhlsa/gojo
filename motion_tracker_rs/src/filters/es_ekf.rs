@@ -246,15 +246,9 @@ impl EsEkf {
 
         self.predict_count += 1;
 
-        if let Some(_) = self.last_position {
-            let vel_magnitude = self.velocity_magnitude();
-            if let Some(last_ts) = self.last_gps_timestamp {
-                let now = current_timestamp();
-                if (now - last_ts) > 1.0 {
-                    self.accumulated_distance += (vel_magnitude * dt).max(0.0);
-                }
-            }
-        }
+        // Distance accumulated in update_gps() using haversine measurement (not velocity integration)
+        // This avoids double-counting when GPS is available
+        // Future: Could use velocity integration during GPS gaps (> 5 seconds without fix)
     }
 
     pub fn update_gps(

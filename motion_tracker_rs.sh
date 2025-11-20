@@ -73,5 +73,5 @@ fi
 
 converted_args+=("$@")
 
-# Run the binary with explicit output directory
-./target/release/motion_tracker --output-dir "$OUTPUT_DIR" "${converted_args[@]}"
+# Run the binary with explicit output directory (positional args BEFORE flags in clap)
+./target/release/motion_tracker "${converted_args[@]}" --output-dir "$OUTPUT_DIR"
