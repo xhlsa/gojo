@@ -407,6 +407,22 @@ impl EsEkf {
             gyro_updates: self.gyro_update_count,
         })
     }
+
+    /// Extract covariance snapshot for analysis (trace + diagonal entries)
+    pub fn get_covariance_snapshot(&self) -> (f64, [f64; 8]) {
+        let trace: f64 = (0..8).map(|i| self.covariance[[i, i]]).sum();
+        let diag = [
+            self.covariance[[0, 0]],
+            self.covariance[[1, 1]],
+            self.covariance[[2, 2]],
+            self.covariance[[3, 3]],
+            self.covariance[[4, 4]],
+            self.covariance[[5, 5]],
+            self.covariance[[6, 6]],
+            self.covariance[[7, 7]],
+        ];
+        (trace, diag)
+    }
 }
 
 fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {

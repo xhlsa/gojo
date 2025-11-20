@@ -17,6 +17,22 @@ use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
 use sensors::{AccelData, GpsData, GyroData};
 
+/// Get current memory usage in MB from /proc/self/status
+fn get_memory_mb() -> f64 {
+    if let Ok(content) = std::fs::read_to_string("/proc/self/status") {
+        for line in content.lines() {
+            if line.starts_with("VmRSS:") {
+                if let Some(value) = line.split_whitespace().nth(1) {
+                    if let Ok(kb) = value.parse::<f64>() {
+                        return kb / 1024.0;
+                    }
+                }
+            }
+        }
+    }
+    0.0
+}
+
 #[derive(Parser, Debug)]
 #[command(name = "motion_tracker")]
 #[command(about = "Rust motion tracker - EKF vs Complementary filter comparison", long_about = None)]
@@ -56,6 +72,20 @@ struct TrajectoryPoint {
     comp_velocity: f64,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct CovarianceSnapshot {
+    timestamp: f64,
+    trace: f64,
+    p00: f64,
+    p11: f64,
+    p22: f64,
+    p33: f64,
+    p44: f64,
+    p55: f64,
+    p66: f64,
+    p77: f64,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ComparisonOutput {
     readings: Vec<SensorReading>,
@@ -81,6 +111,9 @@ struct Metrics {
     gyro_samples: u64,
     gps_samples: u64,
     gravity_magnitude: f64,
+    peak_memory_mb: f64,
+    current_memory_mb: f64,
+    covariance_snapshots: Vec<CovarianceSnapshot>,
 }
 
 #[tokio::main]
@@ -156,6 +189,13 @@ async fn main() -> Result<()> {
 
     // Trajectory tracking (for Python parity)
     let mut trajectories: Vec<TrajectoryPoint> = Vec::new();
+
+    // Covariance snapshots (for analysis)
+    let mut covariance_snapshots: Vec<CovarianceSnapshot> = Vec::new();
+
+    // Memory tracking
+    let mut peak_memory_mb: f64 = 0.0;
+    let mut current_memory_mb: f64 = 0.0;
 
     // Main processing loop
     let start = Utc::now();
@@ -366,25 +406,44 @@ async fn main() -> Result<()> {
                 .unwrap_or(std::time::Duration::from_secs(0))
                 .as_secs_f64();
 
-            if let Some(ekf) = ekf_state.as_ref() {
-                live_status.ekf_velocity = ekf.velocity;
-                live_status.ekf_distance = ekf.distance;
-                live_status.ekf_heading_deg = ekf.heading_deg;
+            if let Some(ekf_state_ref) = ekf_state.as_ref() {
+                live_status.ekf_velocity = ekf_state_ref.velocity;
+                live_status.ekf_distance = ekf_state_ref.distance;
+                live_status.ekf_heading_deg = ekf_state_ref.heading_deg;
 
                 // Record trajectory point for Python parity
                 let comp_vel = comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0);
                 trajectories.push(TrajectoryPoint {
                     timestamp: live_status::current_timestamp(),
-                    ekf_x: ekf.position_local.0,
-                    ekf_y: ekf.position_local.1,
-                    ekf_velocity: ekf.velocity,
-                    ekf_heading_deg: ekf.heading_deg,
+                    ekf_x: ekf_state_ref.position_local.0,
+                    ekf_y: ekf_state_ref.position_local.1,
+                    ekf_velocity: ekf_state_ref.velocity,
+                    ekf_heading_deg: ekf_state_ref.heading_deg,
                     comp_velocity: comp_vel,
+                });
+
+                // Record covariance snapshot for analysis
+                let (trace, diag) = ekf.get_covariance_snapshot();
+                covariance_snapshots.push(CovarianceSnapshot {
+                    timestamp: live_status::current_timestamp(),
+                    trace,
+                    p00: diag[0],
+                    p11: diag[1],
+                    p22: diag[2],
+                    p33: diag[3],
+                    p44: diag[4],
+                    p55: diag[5],
+                    p66: diag[6],
+                    p77: diag[7],
                 });
             }
             if let Some(comp) = comp_state.as_ref() {
                 live_status.comp_velocity = comp.velocity;
             }
+
+            // Update memory metrics
+            current_memory_mb = get_memory_mb();
+            peak_memory_mb = peak_memory_mb.max(current_memory_mb);
 
             let status_path = format!("{}/live_status.json", args.output_dir);
             let _ = live_status.save(&status_path);
@@ -419,6 +478,9 @@ async fn main() -> Result<()> {
                     gyro_samples: gyro_count,
                     gps_samples: gps_count,
                     gravity_magnitude,
+                    peak_memory_mb,
+                    current_memory_mb,
+                    covariance_snapshots: covariance_snapshots.clone(),
                 },
             };
             let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
@@ -493,6 +555,9 @@ async fn main() -> Result<()> {
             gyro_samples: gyro_count,
             gps_samples: gps_count,
             gravity_magnitude,
+            peak_memory_mb,
+            current_memory_mb,
+            covariance_snapshots: covariance_snapshots.clone(),
         },
     };
     let filename = format!(
