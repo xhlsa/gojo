@@ -12,10 +12,12 @@ mod incident;
 mod live_status;
 mod restart_manager;
 mod sensors;
+mod smoothing;
 
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
 use sensors::{AccelData, GpsData, GyroData};
+use smoothing::AccelSmoother;
 
 /// Get current memory usage in MB from /proc/self/status
 fn get_memory_mb() -> f64 {
@@ -41,8 +43,8 @@ struct Args {
     #[arg(value_name = "SECONDS", default_value = "0")]
     duration: u64,
 
-    /// Enable gyroscope processing
-    #[arg(long)]
+    /// Enable gyroscope processing (default: true)
+    #[arg(long, default_value = "true")]
     enable_gyro: bool,
 
     /// Filter type (ekf, complementary, both)
@@ -197,6 +199,9 @@ async fn main() -> Result<()> {
     let mut peak_memory_mb: f64 = 0.0;
     let mut current_memory_mb: f64 = 0.0;
 
+    // Hann-window smoothing for accelerometer magnitude (Python parity)
+    let mut accel_smoother = AccelSmoother::new(9);
+
     // Main processing loop
     let start = Utc::now();
     let mut last_save = Utc::now();
@@ -268,7 +273,10 @@ async fn main() -> Result<()> {
             let raw_accel_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
             let true_accel_mag = (raw_accel_mag - gravity_magnitude).abs(); // TRUE acceleration (subtract gravity)
 
-            // Detect incidents using true acceleration
+            // Apply Hann-window smoothing to accelerometer magnitude (Python parity)
+            let smoothed_accel_mag = accel_smoother.apply(true_accel_mag);
+
+            // Detect incidents using smoothed acceleration
             let gps_speed = if let Some(last) = readings_clone.lock().unwrap().last() {
                 last.gps.as_ref().map(|g| g.speed)
             } else {
@@ -284,7 +292,7 @@ async fn main() -> Result<()> {
             };
 
             if let Some(incident) = incident_detector.detect(
-                true_accel_mag,
+                smoothed_accel_mag,
                 0.0,
                 gps_speed,
                 accel.timestamp,
@@ -295,7 +303,7 @@ async fn main() -> Result<()> {
             }
 
             if args.filter == "ekf" || args.filter == "both" {
-                let _ = ekf.update_accelerometer(true_accel_mag);
+                let _ = ekf.update_accelerometer(smoothed_accel_mag);
             }
             if args.filter == "complementary" || args.filter == "both" {
                 let _ = comp_filter.update(accel.x, accel.y, accel.z, 0.0, 0.0, 0.0);
