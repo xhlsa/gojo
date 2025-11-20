@@ -7,6 +7,7 @@ import android.location.LocationListener
 import android.location.LocationManager
 import android.os.Bundle
 import android.util.Log
+import com.example.motiontracker.data.GpsStatus
 
 /**
  * Real-time GPS location collection via LocationManager
@@ -20,7 +21,8 @@ import android.util.Log
  */
 class LocationCollector(
     private val context: Context,
-    private val locationManager: LocationManager
+    private val locationManager: LocationManager,
+    private val service: MotionTrackerService? = null  // Optional service reference for GPS status updates
 ) : LocationListener {
     private val tag = "MotionTracker.Location"
 
@@ -134,6 +136,20 @@ class LocationCollector(
             }
 
             lastLocation = location
+
+            // Publish GPS status to service
+            try {
+                val gpsStatus = GpsStatus(
+                    fixCount = gpsCount + networkCount,
+                    lastFixTimestamp = location.time,
+                    accuracy = location.accuracy.toDouble(),
+                    locked = location.accuracy <= MIN_ACCURACY,
+                    provider = location.provider
+                )
+                service?.publishGpsStatus(gpsStatus)
+            } catch (e: Exception) {
+                Log.w(tag, "Failed to publish GPS status", e)
+            }
 
             // Log every 10th fix or on accuracy change
             if ((gpsCount + networkCount) % 10 == 0) {

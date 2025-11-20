@@ -10,7 +10,7 @@ pub mod storage;
 // Re-export public types for potential future usage
 pub use error::{MotionTrackerError, JResult};
 pub use sensor_receiver::{AccelSample, GpsSample, GyroSample, SensorReading};
-pub use session::{Session, SessionMetadata, SessionState};
+pub use session::{Session, SessionMetadata, SessionState, SessionConfig};
 pub use storage::{SessionExport, GpxTrack, SessionStats};
 
 // Android logging infrastructure

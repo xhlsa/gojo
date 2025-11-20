@@ -10,14 +10,20 @@ import android.content.pm.ServiceInfo
 import android.hardware.SensorManager
 import android.location.LocationManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import android.Manifest
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
 import android.content.pm.PackageManager
+import com.example.motiontracker.data.GpsStatus
+import com.example.motiontracker.data.HealthAlert
+import com.example.motiontracker.data.SessionConfig
 
 /**
  * Motion Tracker Foreground Service
@@ -41,6 +47,21 @@ class MotionTrackerService : Service() {
     private var sensorCollector: SensorCollector? = null
     private var locationCollector: LocationCollector? = null
     private var healthMonitor: HealthMonitor? = null
+
+    // SessionViewModel for coordinating state with Activity
+    private var sessionViewModel: SessionViewModel? = null
+
+    // Notification ticker: updates every ~1s
+    private var notificationHandler: Handler? = null
+    private val notificationTicker = object : Runnable {
+        override fun run() {
+            updateNotificationTick()
+            notificationHandler?.postDelayed(this, 1000L)  // Reschedule every 1s
+        }
+    }
+
+    // Elapsed seconds tracker
+    private var elapsedSeconds: Long = 0L
 
     companion object {
         private const val NOTIFICATION_ID = 1
@@ -108,7 +129,7 @@ class MotionTrackerService : Service() {
             // Start location collection (check permissions first)
             try {
                 if (hasLocationPermissions()) {
-                    locationCollector = LocationCollector(this, locationManager)
+                    locationCollector = LocationCollector(this, locationManager, this)
                     locationCollector?.start()
                     Log.d(tag, "Location collection started")
                 } else {
@@ -129,6 +150,14 @@ class MotionTrackerService : Service() {
                 // Don't stop service, continue without health monitoring
             }
 
+            // Start notification ticker (updates every ~1s)
+            if (notificationHandler == null) {
+                notificationHandler = Handler(Looper.getMainLooper())
+            }
+            elapsedSeconds = 0L
+            notificationHandler?.post(notificationTicker)
+            Log.d(tag, "Notification ticker started")
+
             Log.i(tag, "✓ Service running (WakeLock acquired, sensors + GPS + health monitor active)")
 
             return START_STICKY  // Restart if killed
@@ -144,6 +173,10 @@ class MotionTrackerService : Service() {
         Log.i(tag, "Service destroyed")
 
         try {
+            // Stop notification ticker
+            notificationHandler?.removeCallbacks(notificationTicker)
+            Log.d(tag, "Notification ticker stopped")
+
             // Stop health monitoring
             healthMonitor?.stop()
             healthMonitor = null
@@ -324,7 +357,7 @@ class MotionTrackerService : Service() {
             Thread.sleep(500)  // Wait for cleanup
 
             // Restart
-            locationCollector = LocationCollector(this, locationManager)
+            locationCollector = LocationCollector(this, locationManager, this)
             locationCollector?.start()
 
             Log.i(tag, "✓ Location collection restarted")
@@ -367,5 +400,93 @@ class MotionTrackerService : Service() {
         }
 
         return hasFineLocation && hasCoarseLocation && hasBackgroundLocation
+    }
+
+    /**
+     * Notification ticker: called every ~1s to update elapsed time
+     */
+    private fun updateNotificationTick() {
+        try {
+            elapsedSeconds++
+
+            // Publish to SessionViewModel if available
+            sessionViewModel?.updateElapsedTime(elapsedSeconds)
+
+            // Update notification with current sample counts
+            val counts = try {
+                JniBinding.getSampleCountsLabeled()
+            } catch (e: Exception) {
+                Log.w(tag, "Failed to get sample counts during tick", e)
+                SampleCounts(0, 0, 0)
+            }
+
+            val health = healthMonitor?.getHealthStatus()
+            val elapsedFormatted = String.format("%dm %02ds", elapsedSeconds / 60, elapsedSeconds % 60)
+
+            val contentText = if (health != null && !health.isHealthy) {
+                // Show warning if health issues
+                "⚠ Recording: $elapsedFormatted • A:${counts.accel} G:${counts.gyro} P:${counts.gps} (${health.summary()})"
+            } else {
+                // Normal status
+                "Recording: $elapsedFormatted • A:${counts.accel} G:${counts.gyro} P:${counts.gps}"
+            }
+
+            val intent = Intent(this, MotionTrackerActivity::class.java)
+            val pendingIntent = PendingIntent.getActivity(
+                this,
+                0,
+                intent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            )
+
+            val notification = NotificationCompat.Builder(this, NOTIFICATION_CHANNEL_ID)
+                .setContentTitle("Motion Tracker")
+                .setContentText(contentText)
+                .setSmallIcon(android.R.drawable.ic_media_play)
+                .setContentIntent(pendingIntent)
+                .setOngoing(true)  // Not dismissible
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+
+            val notificationManager = getSystemService(NotificationManager::class.java)
+            notificationManager?.notify(NOTIFICATION_ID, notification)
+        } catch (e: Exception) {
+            Log.e(tag, "Error in notification tick", e)
+        }
+    }
+
+    /**
+     * Publish GPS status update to SessionViewModel
+     * Called by LocationCollector when a fix is received
+     */
+    fun publishGpsStatus(status: GpsStatus) {
+        try {
+            sessionViewModel?.updateGpsStatus(status)
+            Log.d(tag, "GPS status published: ${status.indicator()}")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to publish GPS status", e)
+        }
+    }
+
+    /**
+     * Publish health alert to SessionViewModel
+     * Called by HealthMonitor on sensor failure or recovery
+     */
+    fun publishHealthAlert(alert: HealthAlert) {
+        try {
+            sessionViewModel?.publishHealthAlert(alert)
+            Log.w(tag, "Health alert published: $alert")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to publish health alert", e)
+        }
+    }
+
+    /**
+     * Set SessionViewModel reference for LiveData communication
+     * Called by Activity with its ViewModelprovider instance
+     */
+    fun setSessionViewModel(viewModel: SessionViewModel) {
+        sessionViewModel = viewModel
+        Log.d(tag, "SessionViewModel set")
     }
 }

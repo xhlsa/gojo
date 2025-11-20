@@ -5,6 +5,21 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+/// Session configuration from Kotlin
+/// Contains device info and sensor parameters
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SessionConfig {
+    pub device_model: String,
+    pub device_manufacturer: String,
+    pub os_version: u32,
+    pub accel_rate_hz: u32,
+    pub gyro_rate_hz: u32,
+    pub gps_rate_hz: f32,
+    pub ekf_process_noise: f64,
+    pub gps_noise_std: f64,
+    pub gyro_noise_std: f64,
+}
+
 /// Session state machine states
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum SessionState {
@@ -27,6 +42,7 @@ pub struct SessionMetadata {
     pub gps_sample_count: u32,
     pub distance_meters: f64,
     pub peak_speed_ms: f64,
+    pub config: SessionConfig,
 }
 
 /// Motion tracking session
@@ -43,8 +59,23 @@ impl Session {
     const GYRO_QUEUE_MAX: usize = 500;   // ~10 seconds at 50 Hz
     const GPS_QUEUE_MAX: usize = 100;    // ~500 seconds at 0.2 Hz
 
-    /// Create new session in Idle state
+    /// Create new session in Idle state with optional config
     pub fn new() -> Self {
+        Self::with_config(SessionConfig {
+            device_model: "Unknown".to_string(),
+            device_manufacturer: "Unknown".to_string(),
+            os_version: 0,
+            accel_rate_hz: 50,
+            gyro_rate_hz: 50,
+            gps_rate_hz: 0.2,
+            ekf_process_noise: 0.3,
+            gps_noise_std: 8.0,
+            gyro_noise_std: 0.0005,
+        })
+    }
+
+    /// Create new session with explicit configuration
+    pub fn with_config(config: SessionConfig) -> Self {
         let session_id = format!("session_{}", Utc::now().timestamp_millis());
         let start_time = Utc::now().to_rfc3339();
 
@@ -57,6 +88,7 @@ impl Session {
             gps_sample_count: 0,
             distance_meters: 0.0,
             peak_speed_ms: 0.0,
+            config,
         };
 
         Session {

@@ -1,6 +1,7 @@
 package com.example.motiontracker
 
 import android.util.Log
+import com.example.motiontracker.data.SessionConfig
 
 /**
  * JNI Bridge to Rust motion tracker core
@@ -41,6 +42,23 @@ object JniBinding {
             throw MotionTrackerException("Failed to start session")
         }
         Log.d(TAG, "Session started")
+    }
+
+    /**
+     * Start a new recording session with configuration
+     * Transition: Idle → Recording with device and sensor parameters
+     *
+     * @param config Session configuration (device model, sensor rates, EKF parameters)
+     * @throws MotionTrackerException if session already running or config invalid
+     */
+    @Throws(MotionTrackerException::class)
+    fun startSessionWithConfig(config: SessionConfig) {
+        val configJson = config.toJson()
+        val result = nativeStartSessionWithConfig(configJson)
+        if (result != 0) {
+            throw MotionTrackerException("Failed to start session with config")
+        }
+        Log.d(TAG, "Session started with config: ${config.deviceModel}")
     }
 
     /**
@@ -216,6 +234,7 @@ object JniBinding {
     // ========== Native JNI Functions ==========
 
     private external fun nativeStartSession(): Int
+    private external fun nativeStartSessionWithConfig(configJson: String): Int
     private external fun nativeStopSession(): Int
     private external fun nativePauseSession(): Int
     private external fun nativeResumeSession(): Int

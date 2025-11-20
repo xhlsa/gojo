@@ -37,6 +37,7 @@ import psutil
 import numpy as np
 import statistics
 import shutil
+import math
 from queue import Queue, Empty, Full
 from datetime import datetime
 from collections import deque
@@ -2376,6 +2377,8 @@ class FilterComparison:
     def _compute_hann_weights(self, length):
         if length <= 1:
             return [1.0]
+        if length == 2:
+            return [0.5, 0.5]
         weights = [
             0.5 - 0.5 * math.cos((2 * math.pi * i) / (length - 1))
             for i in range(length)

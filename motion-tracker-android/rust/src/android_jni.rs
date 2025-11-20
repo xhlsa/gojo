@@ -1,6 +1,6 @@
 use crate::error::{throw_java_exception, MotionTrackerError, JResult};
 use crate::sensor_receiver::{AccelSample, GpsSample, GyroSample};
-use crate::session::{Session, SessionState};
+use crate::session::{Session, SessionState, SessionConfig};
 use jni::objects::JClass;
 use jni::sys::{jdouble, jint, jstring, jintArray};
 use jni::JNIEnv;
@@ -50,6 +50,52 @@ fn start_session_impl(env: &mut JNIEnv) -> JResult<()> {
 
     // Log to Android
     android_log(env, "MotionTracker", "Session started");
+
+    Ok(())
+}
+
+/// JNI: Start a new recording session with configuration
+/// Parameters: config_json (JSON string from Kotlin SessionConfig)
+/// Returns: 0 on success, -1 on error (throws Java exception)
+#[no_mangle]
+pub extern "C" fn Java_com_example_motiontracker_JniBinding_startSessionWithConfig(
+    mut env: JNIEnv,
+    _class: JClass,
+    config_json: jstring,
+) -> jint {
+    match start_session_with_config_impl(&mut env, config_json) {
+        Ok(_) => 0,
+        Err(e) => {
+            let _ = throw_java_exception(&mut env, &e);
+            -1
+        }
+    }
+}
+
+fn start_session_with_config_impl(env: &mut JNIEnv, config_json: jstring) -> JResult<()> {
+    // Deserialize config from JSON
+    let jstring = unsafe { jni::objects::JString::from_raw(config_json) };
+    let java_str = env
+        .get_string(&jstring)
+        .map_err(|_| MotionTrackerError::JniError("Failed to read config JSON".to_string()))?;
+    let config_str: String = java_str.to_string_lossy().to_string();
+
+    let config: SessionConfig = serde_json::from_str(&config_str)
+        .map_err(|e| MotionTrackerError::Internal(format!("Invalid config JSON: {}", e)))?;
+
+    // Create session with config
+    let mut session_guard = GLOBAL_SESSION.lock().map_err(|_| {
+        MotionTrackerError::Internal("Failed to acquire global session lock".to_string())
+    })?;
+
+    let session = Arc::new(crate::session::Session::with_config(config));
+    *session_guard = Some(Arc::clone(&session));
+
+    // Start recording
+    session.start_recording()?;
+
+    // Log to Android
+    android_log(env, "MotionTracker", &format!("Session started with config: {}", session_guard.as_ref().map(|s| s.get_metadata().ok().map(|m| m.config.device_model).unwrap_or_default()).unwrap_or_default()));
 
     Ok(())
 }
