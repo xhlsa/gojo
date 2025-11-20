@@ -5,6 +5,43 @@
 > Python entrypoint: `./test_ekf.sh`
 > **Rust entrypoint (NEW):** `./motion_tracker_rs.sh [DURATION]`
 
+---
+
+## ⚠️ IMPORTANT: Cleanup Bad Drives & Logs (Nov 20, 2025)
+
+**Action Required:** Delete corrupted session files from debugging iterations
+
+During Rust refactoring (Nov 19-20), many failed test runs created incomplete/invalid data files:
+- Test files with 0-1 samples (incomplete calibration hangs)
+- Distance values of 14+ million meters (broken gravity calibration)
+- EKF velocity of 11,000+ m/s (invalid filter state)
+- Multiple attempts with restarting processes
+
+**Cleanup Command:**
+```bash
+# Remove all session files before Nov 20 08:49 (when system became stable)
+find ~/gojo/motion_tracker_sessions -name "comparison*.json" -newermt "2025-11-20 08:49" ! -newermt "2025-11-20 08:50" -delete
+
+# Or manually: keep only files from 15:49 onwards (15:49:02 is first stable run)
+ls -lht ~/gojo/motion_tracker_sessions/comparison*.json | tail -20
+# Delete the older ones in bulk
+```
+
+**Why This Matters:**
+- Old files skew statistics and analysis
+- Analysis scripts may fail on invalid data (0 samples, NaN values)
+- Dashboard may crash trying to render 11,000 m/s velocities
+- Takes up disk space (195+ files accumulated)
+
+**Which Runs Are Valid:**
+- ✅ Files from 15:49:02 onwards (Nov 20, 08:49 UTC)
+- ❌ Everything before (broken calibration, async time issues)
+
+**Rust Specific Issues Documented:**
+See bottom of this file: "Rust-Specific Issues Encountered (Nov 20, 2025)"
+
+---
+
 ## Nov 18, 2025 (Evening) - Rust Binary Enhanced with Python Test Lessons
 
 **Status:** ✅ PRODUCTION-GRADE PATTERNS ADDED - Gravity calibration, live monitoring, improved resilience
@@ -636,9 +673,150 @@ df -h | grep "storage/emulated"  # Should show 250+ GB free
 
 ---
 
+## Rust-Specific Issues Encountered (Nov 20, 2025)
+
+**Context:** Porting motion tracker from Python to Rust revealed several tokio/async runtime gotchas
+
+### 1. Async Context Time Measurement (CRITICAL BUG)
+**Problem:**
+```rust
+let start = Utc::now();
+loop {
+    let elapsed = Utc::now().signed_duration_since(start).num_seconds();
+    if elapsed > 60 { /* never executes */ }
+}
+```
+- `Utc::now()` returns 0 elapsed seconds indefinitely, even with thousands of iterations
+- Time measurement broken in tokio async context
+- Gravity calibration timeout never fired, causing infinite hangs
+
+**Root Cause:** Unclear - may be chrono + tokio interaction issue or misunderstanding of how time works in async loops
+
+**Solution:** Removed time-dependent logic from async event loop; use timeout patterns instead:
+```rust
+tokio::select! {
+    Some(sample) = receiver.recv() => { process(sample) }
+    _ = tokio::time::sleep(Duration::from_secs(60)) => { timeout() }
+}
+```
+
+### 2. Channel Non-Blocking Pattern with Timeouts
+**Problem:**
+```rust
+while let Ok(sample) = accel_rx.try_recv() {
+    if !calibration_complete {
+        // Check elapsed time
+        let elapsed = Utc::now().signed_duration_since(start).num_seconds();
+        if elapsed > 30 { /* UNREACHABLE if no samples */ }
+    }
+}
+```
+- Timeout code **inside** recv loop only executes when data arrives
+- If sensor initialization slow (6-10 seconds), calibration hangs before first sample
+- Main loop timeout check never reached because loop body doesn't execute
+
+**Solution:** Move timeout check to **main loop** before recv:
+```rust
+loop {
+    // Check timeout HERE (executes every iteration)
+    if !calibration_complete && elapsed_time > 60 {
+        gravity_magnitude = 9.81; // fallback
+    }
+
+    // Then recv and process samples
+    while let Ok(sample) = accel_rx.try_recv() {
+        // Process without timeout logic
+    }
+}
+```
+
+### 3. Arc<Mutex<T>> Complexity
+**Issues:**
+- Multiple locks on shared readings: `Arc<Mutex<Vec<SensorReading>>>`
+- Every read/write requires `.lock().unwrap()`
+- Easy to forget scope, holding locks across long operations
+- Risk of deadlock if locks acquired in different orders
+
+**What Worked:**
+- Explicit scope with `drop(lock)` to release early
+- Single-threaded lock usage (all in main loop, no contention)
+
+**Better Pattern:**
+```rust
+{
+    let mut readings = readings.lock().unwrap();
+    readings.push(data);
+    // Lock released here when guard drops
+}
+```
+
+### 4. Task Spawning and Restart Logic
+**Problem:**
+```rust
+let mut accel_handle = tokio::spawn(accel_loop());
+// Later, need to restart:
+accel_handle.abort();  // Kill old task
+accel_handle = tokio::spawn(accel_loop());  // Spawn new
+```
+- Restarting accel requires channel clones, task handles
+- Gyro restart coupled to accel restart (shared IMU sensor)
+- Health monitor thread detecting silence, signaling restarts
+- Complexity of managing task lifecycle
+
+**What Worked:**
+- Channels passed to tasks before spawning
+- Health monitor sending signals to main loop
+- Main loop handling restarts atomically
+
+### 5. Mutable State in Async Context
+**Issues:**
+```rust
+let mut gravity_samples = Vec::new();
+let mut calibration_complete = false;
+
+// Accel loop tries to push to gravity_samples
+while let Ok(accel) = accel_rx.try_recv() {
+    if !calibration_complete {
+        gravity_samples.push(mag);  // Only main thread can access
+    }
+}
+```
+- Accel/gyro/gps tasks are spawned, don't directly access mutable state
+- State must be shared via channels or Arc<Mutex>
+- No race conditions, but verbose
+
+**Solution:** Keep mutable state in main loop, use channels for communication only
+
+### Lessons for Future Rust Refactoring
+
+✅ **Do This:**
+- Use `tokio::select!` for timeouts (idiomatic, correct)
+- Keep mutable state in main thread only
+- Use channels for inter-task communication
+- Explicit lock scoping with drop/braces
+- Test async patterns with simple mock data first
+
+❌ **Don't Do This:**
+- Time-dependent logic in event loops (use select!)
+- Timeout checks inside recv loops (move to main loop)
+- Complex Arc<Mutex> patterns (prefer channels)
+- Tight polling loops without sleep (add `sleep(1ms)`)
+- Forget to abort/respawn handles properly
+
+### What Worked Well
+- ✅ tokio for concurrent task spawning
+- ✅ mpsc channels for producer-consumer
+- ✅ serde_json for sensor parsing
+- ✅ Release build performance (2.3MB binary)
+- ✅ Error handling with `?` operator
+- ✅ Struct-based configuration
+
+---
+
 ## Next Steps
 
 1. **Run extended test with real GPS + motion data** (vehicle environment)
 2. **Monitor stability metrics** (process count, FD count, restart attempts)
 3. **Plan Tier 1 GPS improvements** (see GPS_ROADMAP.md)
 4. **Validate heap/memory bounds** (20-30+ min test without death loop)
+5. **(Optional) Implement proper gravity calibration** as separate tokio task with select! timeout
