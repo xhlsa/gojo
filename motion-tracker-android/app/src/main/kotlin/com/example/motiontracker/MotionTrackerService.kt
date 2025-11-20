@@ -69,10 +69,18 @@ class MotionTrackerService : Service() {
     companion object {
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CHANNEL_ID = "motion_tracker_channel"
+
+        // Static instance for Activity to access (simple pattern for foreground service)
+        private var instance: MotionTrackerService? = null
+
+        fun getInstance(): MotionTrackerService? {
+            return instance
+        }
     }
 
     override fun onCreate() {
         super.onCreate()
+        instance = this
         Log.i(tag, "Service created")
 
         try {
@@ -176,6 +184,9 @@ class MotionTrackerService : Service() {
         Log.i(tag, "Service destroyed")
 
         try {
+            // Clear static instance
+            instance = null
+
             // Stop notification ticker
             notificationHandler?.removeCallbacks(notificationTicker)
             Log.d(tag, "Notification ticker stopped")

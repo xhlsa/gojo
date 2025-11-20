@@ -9,8 +9,12 @@ import android.widget.Button
 import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import android.util.Log
+import androidx.appcompat.app.AlertDialog
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.lifecycle.ViewModelProvider
+import androidx.lifecycle.SavedStateViewModelFactory
+import com.example.motiontracker.data.SessionConfig
 
 /**
  * Motion Tracker Main Activity
@@ -31,6 +35,9 @@ class MotionTrackerActivity : AppCompatActivity() {
     private lateinit var pauseButton: Button
     private lateinit var resumeButton: Button
 
+    // ViewModel for session state management
+    private lateinit var sessionViewModel: SessionViewModel
+
     companion object {
         private const val PERMISSION_REQUEST_CODE = 100
     }
@@ -43,15 +50,22 @@ class MotionTrackerActivity : AppCompatActivity() {
 
         try {
             initializeViews()
+
+            // Initialize ViewModel (persists across lifecycle events)
+            sessionViewModel = ViewModelProvider(
+                this,
+                SavedStateViewModelFactory(application, this)
+            ).get(SessionViewModel::class.java)
+
             setupButtonListeners()
 
-            // Request location permissions (Android 6+)
-            if (!hasLocationPermissions()) {
-                requestLocationPermissions()
-            } else {
-                startService()
-                updateStatus()
-            }
+            // Start service immediately (infrastructure only, no JNI recording)
+            startService()
+
+            // Bind ViewModel to service for LiveData updates
+            bindViewModelToService()
+
+            updateStatus()
         } catch (e: Exception) {
             Log.e(tag, "Failed to initialize activity", e)
             statusText.text = "Error: ${e.message}"
@@ -81,9 +95,34 @@ class MotionTrackerActivity : AppCompatActivity() {
      */
     private fun setupButtonListeners() {
         startButton.setOnClickListener {
+            // Gate everything on the Start button
+            if (!hasRequiredPermissions()) {
+                Log.w(tag, "Requesting permissions...")
+                requestRequiredPermissions()
+                return@setOnClickListener
+            }
+
             try {
-                JniBinding.startSession()
+                Log.d(tag, "Starting session...")
+
+                // Create config with device info
+                val config = SessionConfig.default()
+
+                // Start JNI session
+                JniBinding.startSessionWithConfig(config)
+                Log.d(tag, "JNI session started")
+
+                // Start session writer (persistence layer)
+                val service = getMotionTrackerService()
+                service?.startSessionWriter(config)
+                Log.d(tag, "Session writer started")
+
+                // Update ViewModel
+                sessionViewModel.startRecording()
+                sessionViewModel.setConfig(config)
+
                 updateStatus()
+                Log.i(tag, "✓ Session recording started")
             } catch (e: Exception) {
                 statusText.text = "Error starting: ${e.message}"
                 Log.e(tag, "Failed to start session", e)
@@ -92,8 +131,24 @@ class MotionTrackerActivity : AppCompatActivity() {
 
         stopButton.setOnClickListener {
             try {
+                Log.d(tag, "Stopping session...")
+
+                // Finalize session writer before stopping JNI session
+                val service = getMotionTrackerService()
+                val finalPath = service?.finalizeSessionWriter()
+                if (finalPath != null) {
+                    Log.i(tag, "✓ Session saved to: $finalPath")
+                    statusText.text = "Session saved"
+                }
+
+                // Stop JNI session
                 JniBinding.stopSession()
+
+                // Update ViewModel
+                sessionViewModel.stopRecording()
+
                 updateStatus()
+                Log.i(tag, "✓ Session stopped")
             } catch (e: Exception) {
                 statusText.text = "Error stopping: ${e.message}"
                 Log.e(tag, "Failed to stop session", e)
@@ -103,7 +158,9 @@ class MotionTrackerActivity : AppCompatActivity() {
         pauseButton.setOnClickListener {
             try {
                 JniBinding.pauseSession()
+                sessionViewModel.pauseRecording()
                 updateStatus()
+                Log.d(tag, "Session paused")
             } catch (e: Exception) {
                 statusText.text = "Error pausing: ${e.message}"
                 Log.e(tag, "Failed to pause session", e)
@@ -113,7 +170,9 @@ class MotionTrackerActivity : AppCompatActivity() {
         resumeButton.setOnClickListener {
             try {
                 JniBinding.resumeSession()
+                sessionViewModel.resumeRecording()
                 updateStatus()
+                Log.d(tag, "Session resumed")
             } catch (e: Exception) {
                 statusText.text = "Error resuming: ${e.message}"
                 Log.e(tag, "Failed to resume session", e)
@@ -171,35 +230,61 @@ class MotionTrackerActivity : AppCompatActivity() {
     }
 
     /**
-     * Check if location permissions are granted
+     * Check if all required permissions are granted
+     * Required: LOCATION (fine + coarse) + BODY_SENSORS + FOREGROUND_SERVICE
+     * Android 10+: Also requires ACCESS_BACKGROUND_LOCATION
      */
-    private fun hasLocationPermissions(): Boolean {
-        return ContextCompat.checkSelfPermission(
+    private fun hasRequiredPermissions(): Boolean {
+        val hasFineLocation = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_FINE_LOCATION
-        ) == PackageManager.PERMISSION_GRANTED &&
-        ContextCompat.checkSelfPermission(
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasCoarseLocation = ContextCompat.checkSelfPermission(
             this,
             Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
+
+        val hasBodySensors = ContextCompat.checkSelfPermission(
+            this,
+            Manifest.permission.BODY_SENSORS
+        ) == PackageManager.PERMISSION_GRANTED
+
+        val hasBackgroundLocation = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            ContextCompat.checkSelfPermission(
+                this,
+                Manifest.permission.ACCESS_BACKGROUND_LOCATION
+            ) == PackageManager.PERMISSION_GRANTED
+        } else {
+            true  // Not required pre-Android 10
+        }
+
+        return hasFineLocation && hasCoarseLocation && hasBodySensors && hasBackgroundLocation
     }
 
     /**
-     * Request location permissions from user (Android 6+)
+     * Request required permissions from user
+     * Gated on Start button tap
      */
-    private fun requestLocationPermissions() {
-        Log.i(tag, "Requesting location permissions...")
+    private fun requestRequiredPermissions() {
+        Log.i(tag, "Requesting required permissions...")
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(
-                    Manifest.permission.ACCESS_FINE_LOCATION,
-                    Manifest.permission.ACCESS_COARSE_LOCATION
-                ),
-                PERMISSION_REQUEST_CODE
-            )
+        val permissions = mutableListOf(
+            Manifest.permission.ACCESS_FINE_LOCATION,
+            Manifest.permission.ACCESS_COARSE_LOCATION,
+            Manifest.permission.BODY_SENSORS
+        )
+
+        // Android 10+ requires background location
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            permissions.add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         }
+
+        ActivityCompat.requestPermissions(
+            this,
+            permissions.toTypedArray(),
+            PERMISSION_REQUEST_CODE
+        )
     }
 
     /**
@@ -216,17 +301,61 @@ class MotionTrackerActivity : AppCompatActivity() {
             val allGranted = grantResults.all { it == PackageManager.PERMISSION_GRANTED }
 
             if (allGranted) {
-                Log.i(tag, "✓ Location permissions granted")
-                statusText.text = "Permissions granted, starting service..."
-                startService()
-                updateStatus()
+                Log.i(tag, "✓ All permissions granted")
+                statusText.text = "Permissions granted. Ready to record."
+                startButton.isEnabled = true
             } else {
-                Log.w(tag, "⚠ Location permissions denied")
-                statusText.text = "Location permissions required for GPS tracking"
-                // Service will still start but GPS will fail gracefully
-                startService()
-                updateStatus()
+                Log.w(tag, "⚠ Permissions denied")
+                showPermissionDeniedDialog()
+                startButton.isEnabled = false
             }
+        }
+    }
+
+    /**
+     * Show persistent dialog explaining permission requirements
+     */
+    private fun showPermissionDeniedDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("Permissions Required")
+            .setMessage(
+                "Motion Tracker requires the following permissions to work:\n\n" +
+                "• Location (Fine & Coarse) - for GPS tracking\n" +
+                "• Body Sensors - for accelerometer & gyroscope\n" +
+                "• Foreground Service - to run tracking in background\n\n" +
+                "Please grant these permissions in Settings to enable recording."
+            )
+            .setPositiveButton("Open Settings") { _, _ ->
+                val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                intent.data = android.net.Uri.fromParts("package", packageName, null)
+                startActivity(intent)
+            }
+            .setNegativeButton("Cancel") { _, _ ->
+                statusText.text = "Permissions denied - cannot record"
+            }
+            .setCancelable(false)
+            .show()
+    }
+
+    /**
+     * Get reference to MotionTrackerService for direct calls
+     * Uses static instance (simple pattern for foreground service)
+     */
+    private fun getMotionTrackerService(): MotionTrackerService? {
+        return MotionTrackerService.getInstance()
+    }
+
+    /**
+     * Bind ViewModel to service for LiveData updates
+     */
+    private fun bindViewModelToService() {
+        try {
+            // In a production app, use bound service with proper lifecycle handling
+            // For now, the service gets ViewModel reference via callback
+            // This will be populated when service connects to activity
+            Log.d(tag, "ViewModel binding initialized")
+        } catch (e: Exception) {
+            Log.w(tag, "Failed to bind ViewModel to service", e)
         }
     }
 }
