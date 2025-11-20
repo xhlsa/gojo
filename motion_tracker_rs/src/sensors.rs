@@ -1,6 +1,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::process::Command;
+use std::io::{BufRead, BufReader};
+use std::process::{Command, Stdio};
+use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
 use tokio::time::{interval, Duration};
 
@@ -30,17 +32,42 @@ pub struct GpsData {
 }
 
 pub async fn accel_loop(tx: Sender<AccelData>) {
-    let mut interval = interval(Duration::from_millis(20)); // ~50Hz sampling
+    // Start persistent termux-sensor process (reads continuously from LSM6DSO)
+    let mut sensor_proc = match Command::new("termux-sensor")
+        .arg("-d")
+        .arg("20")  // 20ms delay = ~50Hz sampling
+        .arg("-s")
+        .arg("accelerometer")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("[accel] Failed to spawn termux-sensor, falling back to mock data");
+            mock_accel_loop(tx).await;
+            return;
+        }
+    };
+
+    let stdout = match sensor_proc.stdout.take() {
+        Some(s) => s,
+        None => {
+            eprintln!("[accel] No stdout from termux-sensor");
+            return;
+        }
+    };
+
+    let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
 
-    loop {
-        interval.tick().await;
-
-        // Try to read from termux-sensor, fall back to mock data
-        let accel = match read_accelerometer() {
-            Some(data) => data,
-            None => mock_accel_data(),
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
         };
+
+        let accel = parse_accel_output(&line).unwrap_or_else(mock_accel_data);
 
         match tx.try_send(accel) {
             Ok(_) => {
@@ -54,8 +81,35 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
                 break;
             }
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
-                // Channel full, drop this sample
+                // Channel full, drop this sample (expected with 50Hz + processing delay)
             }
+        }
+    }
+
+    eprintln!("[accel] Stream ended after {} samples", sample_count);
+    let _ = sensor_proc.kill();
+}
+
+async fn mock_accel_loop(tx: Sender<AccelData>) {
+    let mut interval = interval(Duration::from_millis(20));
+    let mut sample_count = 0u64;
+
+    loop {
+        interval.tick().await;
+
+        let accel = mock_accel_data();
+        match tx.try_send(accel) {
+            Ok(_) => {
+                sample_count += 1;
+                if sample_count % 100 == 0 {
+                    eprintln!("[accel-mock] {} samples", sample_count);
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                eprintln!("[accel-mock] Channel closed after {} samples", sample_count);
+                break;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
         }
     }
 }
@@ -65,16 +119,42 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
         return;
     }
 
-    let mut interval = interval(Duration::from_millis(20)); // ~50Hz sampling
+    // Start persistent termux-sensor process for gyroscope (same LSM6DSO chip as accel)
+    let mut sensor_proc = match Command::new("termux-sensor")
+        .arg("-d")
+        .arg("20")  // 20ms delay = ~50Hz sampling
+        .arg("-s")
+        .arg("gyroscope")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(p) => p,
+        Err(_) => {
+            eprintln!("[gyro] Failed to spawn termux-sensor, falling back to mock data");
+            mock_gyro_loop(tx).await;
+            return;
+        }
+    };
+
+    let stdout = match sensor_proc.stdout.take() {
+        Some(s) => s,
+        None => {
+            eprintln!("[gyro] No stdout from termux-sensor");
+            return;
+        }
+    };
+
+    let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
 
-    loop {
-        interval.tick().await;
-
-        let gyro = match read_gyroscope() {
-            Some(data) => data,
-            None => mock_gyro_data(),
+    for line in reader.lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
         };
+
+        let gyro = parse_gyro_output(&line).unwrap_or_else(mock_gyro_data);
 
         match tx.try_send(gyro) {
             Ok(_) => {
@@ -90,6 +170,33 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
             Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                 // Channel full, drop this sample
             }
+        }
+    }
+
+    eprintln!("[gyro] Stream ended after {} samples", sample_count);
+    let _ = sensor_proc.kill();
+}
+
+async fn mock_gyro_loop(tx: Sender<GyroData>) {
+    let mut interval = interval(Duration::from_millis(20));
+    let mut sample_count = 0u64;
+
+    loop {
+        interval.tick().await;
+
+        let gyro = mock_gyro_data();
+        match tx.try_send(gyro) {
+            Ok(_) => {
+                sample_count += 1;
+                if sample_count % 100 == 0 {
+                    eprintln!("[gyro-mock] {} samples", sample_count);
+                }
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
+                eprintln!("[gyro-mock] Channel closed after {} samples", sample_count);
+                break;
+            }
+            Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {}
         }
     }
 }
@@ -123,40 +230,6 @@ pub async fn gps_loop(tx: Sender<GpsData>) {
     }
 }
 
-fn read_accelerometer() -> Option<AccelData> {
-    // Try to read from termux-sensor
-    // Format: Accelerometer event: x=X, y=Y, z=Z, accuracy=0, timestamp=TS
-    match Command::new("termux-sensor")
-        .arg("-n")
-        .arg("1")
-        .arg("-s")
-        .arg("accelerometer")
-        .output()
-    {
-        Ok(output) => {
-            let text = String::from_utf8_lossy(&output.stdout);
-            parse_accel_output(&text)
-        }
-        Err(_) => None,
-    }
-}
-
-fn read_gyroscope() -> Option<GyroData> {
-    // Try to read from termux-sensor
-    match Command::new("termux-sensor")
-        .arg("-n")
-        .arg("1")
-        .arg("-s")
-        .arg("gyroscope")
-        .output()
-    {
-        Ok(output) => {
-            let text = String::from_utf8_lossy(&output.stdout);
-            parse_gyro_output(&text)
-        }
-        Err(_) => None,
-    }
-}
 
 fn read_gps() -> Option<GpsData> {
     let output = Command::new("termux-location")
