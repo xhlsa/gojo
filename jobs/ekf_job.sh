@@ -24,8 +24,10 @@ LOG_FILE="$SCRIPT_DIR/ekf_job.log"
 
 log "Job started (cwd=$REPO_DIR, args file=$ARGS_FILE)"
 
-if [ ! -x "$REPO_DIR/test_ekf.sh" ]; then
-    die "test_ekf.sh not executable"
+RUNNER="$REPO_DIR/motion_tracker_rs.sh"
+
+if [ ! -x "$RUNNER" ]; then
+    die "motion_tracker_rs.sh not executable"
 fi
 
 if [ -s "$ARGS_FILE" ]; then
@@ -35,10 +37,10 @@ else
 fi
 
 cd "$REPO_DIR"
-log "Launching test_ekf.sh ${JOB_ARGS[*]} via $PREFIX/bin/bash"
-if "$PREFIX/bin/bash" "$REPO_DIR/test_ekf.sh" "${JOB_ARGS[@]}" >> "$LOG_FILE" 2>&1; then
-    log "test_ekf.sh completed successfully"
+log "Launching motion_tracker_rs.sh ${JOB_ARGS[*]} via $PREFIX/bin/bash"
+if "$PREFIX/bin/bash" "$RUNNER" "${JOB_ARGS[@]}" >> "$LOG_FILE" 2>&1; then
+    log "motion_tracker_rs.sh completed successfully"
 else
     status=$?
-    die "test_ekf.sh exited with code $status"
+    die "motion_tracker_rs.sh exited with code $status"
 fi

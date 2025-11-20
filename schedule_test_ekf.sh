@@ -56,4 +56,4 @@ termux-job-scheduler \
   --battery-not-low false >/dev/null
 
 echo "Scheduled EKF job ($JOB_ID) with arguments: $*"
-echo "Job will run test_ekf.sh in foreground service via Termux scheduler"
+echo "Job will run motion_tracker_rs.sh in foreground service via Termux scheduler"

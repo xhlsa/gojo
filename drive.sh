@@ -21,4 +21,4 @@ echo "[drive.sh] termux-job-scheduler not available; falling back to wakelock wr
 termux-wake-lock
 trap 'termux-wake-unlock' EXIT
 
-exec "$SCRIPT_DIR/test_ekf.sh" "$@"
+exec "$SCRIPT_DIR/motion_tracker_rs.sh" "$@"

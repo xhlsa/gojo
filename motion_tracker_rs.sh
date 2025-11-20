@@ -17,5 +17,19 @@ if [ ! -f target/release/motion_tracker ]; then
     cargo build --release --bin motion_tracker 2>&1 | grep -E "(Compiling|Finished|error)" || true
 fi
 
+# Convert legacy minute argument to seconds for Rust binary (expects seconds)
+converted_args=()
+if [ $# -gt 0 ] && [[ "$1" =~ ^[0-9]+$ ]]; then
+    minutes="$1"
+    shift
+    if [ "$minutes" -eq 0 ]; then
+        converted_args+=(0)
+    else
+        converted_args+=($((minutes * 60)))
+    fi
+fi
+
+converted_args+=("$@")
+
 # Run the binary
-./target/release/motion_tracker "$@"
+./target/release/motion_tracker "${converted_args[@]}"
