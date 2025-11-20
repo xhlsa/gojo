@@ -1,0 +1,206 @@
+[15:48:47] Motion Tracker RS Starting
+  Duration: 1800 seconds (0=continuous)
+  Enable Gyro: true
+  Filter Mode: both
+  Output Dir: /data/data/com.termux/files/home/gojo/motion_tracker_sessions
+[15:48:47] Using default gravity: 9.81 m/s²
+[15:48:47] Starting data collection...
+[gps] 1 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 2 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 3 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:49:02] Auto-saved 8 samples, 5 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_154902.json
+[15:49:02] Cleared 8 readings from memory to prevent unbounded growth
+[gps] 4 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 5 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 6 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 7 fixes
+[15:49:17] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_154917.json
+[15:49:17] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 8 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 9 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 10 fixes
+[15:49:32] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_154932.json
+[15:49:32] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 11 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 12 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 13 fixes
+[15:49:47] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_154947.json
+[15:49:47] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 14 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 15 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 16 fixes
+[15:50:03] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155003.json
+[15:50:03] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 17 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 18 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 19 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:50:18] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155018.json
+[15:50:18] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 20 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 21 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 22 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:50:33] Auto-saved 7 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155033.json
+[15:50:33] Cleared 7 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 23 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 24 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 25 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:50:48] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155048.json
+[15:50:48] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 26 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 27 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 28 fixes
+[15:51:03] Auto-saved 8 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155103.json
+[15:51:03] Cleared 8 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 29 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 30 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 31 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:51:18] Auto-saved 9 samples, 8 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155118.json
+[15:51:18] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 32 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 33 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 34 fixes
+[15:51:33] Auto-saved 9 samples, 9 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155133.json
+[15:51:33] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 35 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[accel] 100 samples
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 36 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 37 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:51:48] Auto-saved 10 samples, 11 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155148.json
+[15:51:48] Cleared 10 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 38 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 39 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 40 fixes
+[15:52:03] Auto-saved 9 samples, 15 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155203.json
+[15:52:03] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 41 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 42 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 43 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:52:18] Auto-saved 8 samples, 20 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155218.json
+[15:52:18] Cleared 8 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 44 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 45 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 46 fixes
+[15:52:33] Auto-saved 9 samples, 29 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155233.json
+[15:52:33] Cleared 9 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 47 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 48 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 49 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[15:52:49] Auto-saved 7 samples, 36 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_155249.json
+[15:52:49] Cleared 7 readings from memory to prevent unbounded growth
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 50 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK

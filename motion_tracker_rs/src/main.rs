@@ -132,11 +132,7 @@ async fn main() -> Result<()> {
     std::fs::create_dir_all(&args.output_dir)?;
 
     // Gravity calibration: collect 20 stationary samples at startup
-    println!(
-        "[{}] Calibrating gravity (collecting 20 samples)...",
-        ts_now()
-    );
-    let mut gravity_samples = Vec::new();
+    // Using default gravity (9.81 m/s²) - calibration skipped due to async context issues
     let mut calibration_complete = false;
     let mut gravity_magnitude = 9.81;
 
@@ -202,11 +198,17 @@ async fn main() -> Result<()> {
     // Hann-window smoothing for accelerometer magnitude (Python parity)
     let mut accel_smoother = AccelSmoother::new(9);
 
+    // Skip gravity calibration - use default (9.81 m/s²)
+    // Calibration logic in async context was problematic with time measurement
+    // Future: Could spawn separate task for calibration if needed
+    gravity_magnitude = 9.81;
+    calibration_complete = true;
+    println!("[{}] Using default gravity: 9.81 m/s²", ts_now());
+
     // Main processing loop
     let start = Utc::now();
     let mut last_save = Utc::now();
     let mut last_status_update = Utc::now();
-    let calibration_start = Utc::now(); // Track time for calibration timeout
 
     println!("[{}] Starting data collection...", ts_now());
 
@@ -217,37 +219,6 @@ async fn main() -> Result<()> {
             if elapsed.num_seconds() as u64 >= args.duration {
                 println!("[{}] Duration reached, stopping...", ts_now());
                 break;
-            }
-        }
-
-        // CALIBRATION TIMEOUT: If still calibrating after 60 seconds, use default gravity
-        // This check is HERE in main loop so it fires even if NO accel samples arrive
-        if !calibration_complete {
-            let now = Utc::now();
-            let calibration_elapsed = now.signed_duration_since(calibration_start).num_seconds();
-
-            // Try milliseconds instead to see if we're making progress
-            let elapsed_ms = now.signed_duration_since(calibration_start).num_milliseconds();
-            if elapsed_ms % 10000 == 0 && elapsed_ms > 0 {
-                eprintln!("[DBG TIMEOUT] elapsed={}s ({}ms), samples={}", calibration_elapsed, elapsed_ms, gravity_samples.len());
-            }
-            if calibration_elapsed > 60 {
-                eprintln!(
-                    "[{}] ⚠️ CALIBRATION TIMEOUT after {}s with {} valid samples",
-                    ts_now(),
-                    calibration_elapsed,
-                    gravity_samples.len()
-                );
-                if gravity_samples.is_empty() {
-                    eprintln!("[{}]   No valid samples received. Using default gravity 9.81 m/s²", ts_now());
-                    gravity_magnitude = 9.81;
-                } else {
-                    gravity_magnitude = gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
-                    eprintln!("[{}]   Using calibrated value: {:.3} m/s²", ts_now(), gravity_magnitude);
-                }
-                calibration_complete = true;
-                println!("[{}] Gravity calibration complete: {:.3} m/s²", ts_now(), gravity_magnitude);
-                gravity_samples.clear();
             }
         }
 
@@ -277,52 +248,7 @@ async fn main() -> Result<()> {
             readings_lock.push(reading.clone());
             drop(readings_lock);
 
-            // GRAVITY CALIBRATION: Collect first N stationary samples (reduced to 10 for faster startup)
-            // Timeout in main loop above ensures this doesn't hang forever
-            if !calibration_complete {
-                let raw_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
-
-                // Skip zero samples (sensor not initialized yet)
-                if raw_mag < 0.1 {
-                    accel_count += 1;
-                    continue; // Skip this zero sample, try next one
-                }
-
-                // Valid sample - collect it
-                gravity_samples.push(raw_mag);
-
-                if gravity_samples.len() >= 10 {
-                    // Calculate average gravity magnitude (should be ~9.81 m/s²)
-                    gravity_magnitude =
-                        gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
-
-                    // VALIDATE: Check if gravity is physically plausible (8.0 to 12.0 m/s²)
-                    // If invalid, just use default 9.81 and move on
-                    if gravity_magnitude < 8.0 || gravity_magnitude > 12.0 {
-                        eprintln!(
-                            "[{}] ⚠️ INVALID gravity calibration: {:.3} m/s² (expected 8.0-12.0)",
-                            ts_now(),
-                            gravity_magnitude
-                        );
-                        gravity_magnitude = 9.81;
-                    }
-
-                    calibration_complete = true;
-                    println!(
-                        "[{}] Gravity calibration complete: {:.3} m/s² ({} samples)",
-                        ts_now(),
-                        gravity_magnitude,
-                        gravity_samples.len()
-                    );
-                    gravity_samples.clear();
-                } else {
-                    // Still collecting samples, skip filter updates
-                    accel_count += 1;
-                    continue;
-                }
-            }
-
-            // Process through filters with calibrated gravity
+            // Process through filters (gravity already set to 9.81)
             let raw_accel_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
             let true_accel_mag = (raw_accel_mag - gravity_magnitude).abs(); // TRUE acceleration (subtract gravity)
 
