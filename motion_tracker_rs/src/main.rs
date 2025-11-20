@@ -365,8 +365,9 @@ async fn main() -> Result<()> {
 
         // Auto-save every 15 seconds
         if (now.signed_duration_since(last_save).num_seconds() as u64) >= 15 {
-            let readings_lock = readings.lock().unwrap();
+            let mut readings_lock = readings.lock().unwrap();
             let ekf_state = ekf.get_state();
+            let sample_count = readings_lock.len();
             let output = ComparisonOutput {
                 readings: readings_lock.clone(),
                 incidents: incidents.clone(),
@@ -384,10 +385,20 @@ async fn main() -> Result<()> {
             println!(
                 "[{}] Auto-saved {} samples, {} incidents to {}",
                 ts_now(),
-                readings_lock.len(),
+                sample_count,
                 incidents.len(),
                 filename
             );
+
+            // Clear readings vector to bound memory usage (all data is saved to disk)
+            // Filters maintain their own state, so this doesn't lose information
+            readings_lock.clear();
+            println!(
+                "[{}] Cleared {} readings from memory to prevent unbounded growth",
+                ts_now(),
+                sample_count
+            );
+
             drop(readings_lock);
             last_save = now;
         }
