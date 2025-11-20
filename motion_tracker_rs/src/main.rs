@@ -46,11 +46,23 @@ struct SensorReading {
     gps: Option<GpsData>,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+struct TrajectoryPoint {
+    timestamp: f64,
+    ekf_x: f64,
+    ekf_y: f64,
+    ekf_velocity: f64,
+    ekf_heading_deg: f64,
+    comp_velocity: f64,
+}
+
 #[derive(Serialize, Deserialize)]
 struct ComparisonOutput {
     readings: Vec<SensorReading>,
     incidents: Vec<incident::Incident>,
+    trajectories: Vec<TrajectoryPoint>,
     stats: Stats,
+    metrics: Metrics,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -60,6 +72,15 @@ struct Stats {
     ekf_velocity: f64,
     ekf_distance: f64,
     gps_fixes: u64,
+}
+
+#[derive(Serialize, Deserialize)]
+struct Metrics {
+    test_duration_seconds: u64,
+    accel_samples: u64,
+    gyro_samples: u64,
+    gps_samples: u64,
+    gravity_magnitude: f64,
 }
 
 #[tokio::main]
@@ -132,6 +153,9 @@ async fn main() -> Result<()> {
     let mut accel_count = 0u64;
     let mut gyro_count = 0u64;
     let mut gps_count = 0u64;
+
+    // Trajectory tracking (for Python parity)
+    let mut trajectories: Vec<TrajectoryPoint> = Vec::new();
 
     // Main processing loop
     let start = Utc::now();
@@ -346,6 +370,17 @@ async fn main() -> Result<()> {
                 live_status.ekf_velocity = ekf.velocity;
                 live_status.ekf_distance = ekf.distance;
                 live_status.ekf_heading_deg = ekf.heading_deg;
+
+                // Record trajectory point for Python parity
+                let comp_vel = comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0);
+                trajectories.push(TrajectoryPoint {
+                    timestamp: live_status::current_timestamp(),
+                    ekf_x: ekf.position_local.0,
+                    ekf_y: ekf.position_local.1,
+                    ekf_velocity: ekf.velocity,
+                    ekf_heading_deg: ekf.heading_deg,
+                    comp_velocity: comp_vel,
+                });
             }
             if let Some(comp) = comp_state.as_ref() {
                 live_status.comp_velocity = comp.velocity;
@@ -366,15 +401,24 @@ async fn main() -> Result<()> {
             let mut readings_lock = readings.lock().unwrap();
             let ekf_state = ekf.get_state();
             let sample_count = readings_lock.len();
+            let elapsed_secs = now.signed_duration_since(start).num_seconds().max(0) as u64;
             let output = ComparisonOutput {
                 readings: readings_lock.clone(),
                 incidents: incidents.clone(),
+                trajectories: trajectories.clone(),
                 stats: Stats {
                     total_samples: readings_lock.len(),
                     total_incidents: incidents.len(),
                     ekf_velocity: ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0),
                     ekf_distance: ekf_state.as_ref().map(|s| s.distance).unwrap_or(0.0),
                     gps_fixes: ekf_state.as_ref().map(|s| s.gps_updates).unwrap_or(0),
+                },
+                metrics: Metrics {
+                    test_duration_seconds: elapsed_secs,
+                    accel_samples: accel_count,
+                    gyro_samples: gyro_count,
+                    gps_samples: gps_count,
+                    gravity_magnitude,
                 },
             };
             let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
@@ -435,12 +479,20 @@ async fn main() -> Result<()> {
     let output = ComparisonOutput {
         readings: readings_lock.clone(),
         incidents: incidents.clone(),
+        trajectories: trajectories.clone(),
         stats: Stats {
             total_samples: readings_lock.len(),
             total_incidents: incidents.len(),
             ekf_velocity: ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0),
             ekf_distance: ekf_state.as_ref().map(|s| s.distance).unwrap_or(0.0),
             gps_fixes: ekf_state.as_ref().map(|s| s.gps_updates).unwrap_or(0),
+        },
+        metrics: Metrics {
+            test_duration_seconds: uptime,
+            accel_samples: accel_count,
+            gyro_samples: gyro_count,
+            gps_samples: gps_count,
+            gravity_magnitude,
         },
     };
     let filename = format!(
