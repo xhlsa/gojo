@@ -220,10 +220,18 @@ async fn main() -> Result<()> {
             }
         }
 
-        // CALIBRATION TIMEOUT: If still calibrating after 30 seconds, use default gravity
+        // CALIBRATION TIMEOUT: If still calibrating after 60 seconds, use default gravity
+        // This check is HERE in main loop so it fires even if NO accel samples arrive
         if !calibration_complete {
-            let calibration_elapsed = Utc::now().signed_duration_since(calibration_start).num_seconds();
-            if calibration_elapsed > 30 {
+            let now = Utc::now();
+            let calibration_elapsed = now.signed_duration_since(calibration_start).num_seconds();
+
+            // Try milliseconds instead to see if we're making progress
+            let elapsed_ms = now.signed_duration_since(calibration_start).num_milliseconds();
+            if elapsed_ms % 10000 == 0 && elapsed_ms > 0 {
+                eprintln!("[DBG TIMEOUT] elapsed={}s ({}ms), samples={}", calibration_elapsed, elapsed_ms, gravity_samples.len());
+            }
+            if calibration_elapsed > 60 {
                 eprintln!(
                     "[{}] ⚠️ CALIBRATION TIMEOUT after {}s with {} valid samples",
                     ts_now(),
@@ -270,67 +278,47 @@ async fn main() -> Result<()> {
             drop(readings_lock);
 
             // GRAVITY CALIBRATION: Collect first N stationary samples (reduced to 10 for faster startup)
+            // Timeout in main loop above ensures this doesn't hang forever
             if !calibration_complete {
-                // Check for calibration timeout (30 seconds)
-                let calibration_elapsed = Utc::now().signed_duration_since(calibration_start).num_seconds();
-                if calibration_elapsed > 30 {
-                    eprintln!(
-                        "[{}] ⚠️ CALIBRATION TIMEOUT after {}s with {} valid samples",
+                let raw_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
+
+                // Skip zero samples (sensor not initialized yet)
+                if raw_mag < 0.1 {
+                    accel_count += 1;
+                    continue; // Skip this zero sample, try next one
+                }
+
+                // Valid sample - collect it
+                gravity_samples.push(raw_mag);
+
+                if gravity_samples.len() >= 10 {
+                    // Calculate average gravity magnitude (should be ~9.81 m/s²)
+                    gravity_magnitude =
+                        gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
+
+                    // VALIDATE: Check if gravity is physically plausible (8.0 to 12.0 m/s²)
+                    // If invalid, just use default 9.81 and move on
+                    if gravity_magnitude < 8.0 || gravity_magnitude > 12.0 {
+                        eprintln!(
+                            "[{}] ⚠️ INVALID gravity calibration: {:.3} m/s² (expected 8.0-12.0)",
+                            ts_now(),
+                            gravity_magnitude
+                        );
+                        gravity_magnitude = 9.81;
+                    }
+
+                    calibration_complete = true;
+                    println!(
+                        "[{}] Gravity calibration complete: {:.3} m/s² ({} samples)",
                         ts_now(),
-                        calibration_elapsed,
+                        gravity_magnitude,
                         gravity_samples.len()
                     );
-                    if gravity_samples.is_empty() {
-                        eprintln!("[{}]   No valid samples received. Using default gravity 9.81 m/s²", ts_now());
-                        gravity_magnitude = 9.81;
-                    } else {
-                        gravity_magnitude = gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
-                        eprintln!("[{}]   Using calibrated value: {:.3} m/s²", ts_now(), gravity_magnitude);
-                    }
-                    calibration_complete = true;
-                    println!("[{}] Gravity calibration complete: {:.3} m/s²", ts_now(), gravity_magnitude);
                     gravity_samples.clear();
                 } else {
-                    let raw_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
-
-                    // Skip zero samples (sensor not initialized yet)
-                    if raw_mag < 0.1 {
-                        accel_count += 1;
-                        continue;
-                    }
-
-                    gravity_samples.push(raw_mag);
-
-                    if gravity_samples.len() >= 10 {
-                        // Calculate average gravity magnitude (should be ~9.81 m/s²)
-                        gravity_magnitude =
-                            gravity_samples.iter().sum::<f64>() / gravity_samples.len() as f64;
-
-                        // VALIDATE: Check if gravity is physically plausible (8.0 to 12.0 m/s²)
-                        // If invalid, just use default 9.81 and move on (don't retry forever)
-                        if gravity_magnitude < 8.0 || gravity_magnitude > 12.0 {
-                            eprintln!(
-                                "[{}] ⚠️ INVALID gravity calibration: {:.3} m/s² (expected 8.0-12.0)",
-                                ts_now(),
-                                gravity_magnitude
-                            );
-                            eprintln!("[{}]   Using default gravity 9.81 m/s² instead", ts_now());
-                            gravity_magnitude = 9.81;
-                        }
-
-                        calibration_complete = true;
-                        println!(
-                            "[{}] Gravity calibration complete: {:.3} m/s² ({} samples)",
-                            ts_now(),
-                            gravity_magnitude,
-                            gravity_samples.len()
-                        );
-                        gravity_samples.clear();
-                    } else {
-                        // Still calibrating, skip filter updates
-                        accel_count += 1;
-                        continue;
-                    }
+                    // Still collecting samples, skip filter updates
+                    accel_count += 1;
+                    continue;
                 }
             }
 

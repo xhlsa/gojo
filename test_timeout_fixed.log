@@ -1,0 +1,103 @@
+[15:34:36] Motion Tracker RS Starting
+  Duration: 1800 seconds (0=continuous)
+  Enable Gyro: true
+  Filter Mode: both
+  Output Dir: /data/data/com.termux/files/home/gojo/motion_tracker_sessions
+[15:34:36] Calibrating gravity (collecting 20 samples)...
+[15:34:36] Starting data collection...
+[gps] 1 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 2 fixes
+[HEALTH] ⚠️ Accel SILENT for 6.3s (restart attempt 0/60)
+[RESTART] Signaling Accel restart
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: OK
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+[gyro] 100 samples
+[HEALTH] ⚠️ Accel SILENT for 206.7s (restart attempt 1/60)
+[RESTART] Signaling Accel restart
+[HEALTH] ⚠️ GPS SILENT for 200.4s (restart attempt 0/60)
+[RESTART] Signaling GPS restart
+[15:38:03] ⚠️ CALIBRATION TIMEOUT after 206s with 0 valid samples
+[15:38:03]   No valid samples received. Using default gravity 9.81 m/s²
+[15:38:03] Gravity calibration complete: 9.810 m/s²
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: READY_TO_RESTART (attempt 0/60)
+[15:38:03] Auto-saved 0 samples, 0 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_153803.json
+[15:38:03] Cleared 0 readings from memory to prevent unbounded growth
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+[RESTART] Respawning GPS task...
+[RESTART] ✓ GPS restarted successfully after 0 attempt(s)
+[gps] 1 fixes
+[gps] 3 fixes
+[HEALTH] ⚠️ Accel SILENT for 208.7s (restart attempt 2/60)
+[RESTART] Signaling Accel restart
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+[gps] 4 fixes
+[gps] 5 fixes
+[gps] 6 fixes
+[gps] 7 fixes
+[gps] 8 fixes
+[gps] 9 fixes
+[gps] 10 fixes
+[gps] 11 fixes
+[gps] 12 fixes
+[gps] 13 fixes
+[gps] 14 fixes
+[gps] 15 fixes
+[gps] 16 fixes
+[gps] 17 fixes
+[gps] 18 fixes
+[gps] 19 fixes
+[gps] 20 fixes
+[gps] 21 fixes
+[gps] 22 fixes
+[gps] 23 fixes
+[gps] 24 fixes
+[gps] 25 fixes
+[gps] 26 fixes
+[gps] 27 fixes
+[gps] 28 fixes
+[gps] 29 fixes
+[gps] 30 fixes
+[gps] 31 fixes
+[gps] 32 fixes
+[gps] 33 fixes
+[gps] 34 fixes
+[gps] 35 fixes
+[gps] 36 fixes
+[gps] 37 fixes
+[gps] 38 fixes
+[gps] 39 fixes
+[gps] 40 fixes
+[gps] 41 fixes
+[gps] 42 fixes
+[HEALTH] ⚠️ Accel SILENT for 247.3s (restart attempt 3/60)
+[RESTART] Signaling Accel restart
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: OK
+[15:38:43] Auto-saved 0 samples, 0 incidents to /data/data/com.termux/files/home/gojo/motion_tracker_sessions/comparison_20251120_153843.json
+[15:38:43] Cleared 0 readings from memory to prevent unbounded growth
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+[gps] 2 fixes
+[gps] 3 fixes
+[gps] 4 fixes
+[gps] 5 fixes
+[gps] 6 fixes
+[gps] 7 fixes
+[gps] 8 fixes
+[gps] 9 fixes
+[HEALTH] ⚠️ Accel SILENT for 255.3s (restart attempt 4/60)
+[RESTART] Signaling Accel restart
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: OK
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+[gps] 10 fixes
+[gps] 11 fixes
+[HEALTH] ⚠️ Accel SILENT for 257.3s (restart attempt 5/60)
+[RESTART] Signaling Accel restart
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: OK
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)

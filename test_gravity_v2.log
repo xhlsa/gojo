@@ -1,0 +1,17 @@
+[15:09:29] Motion Tracker RS Starting
+  Duration: 1800 seconds (0=continuous)
+  Enable Gyro: true
+  Filter Mode: both
+  Output Dir: /data/data/com.termux/files/home/gojo/motion_tracker_sessions
+[15:09:29] Calibrating gravity (collecting 20 samples)...
+[15:09:29] Starting data collection...
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 1 fixes
+[STATUS] Accel: OK | Gyro: OK | GPS: OK
+[gps] 2 fixes
+[HEALTH] ⚠️ Accel SILENT for 6.7s (restart attempt 0/60)
+[RESTART] Signaling Accel restart
+[STATUS] Accel: READY_TO_RESTART (attempt 0/60) | Gyro: OK | GPS: OK
+[RESTART] Respawning Accel task...
+[RESTART] ✓ Accel restarted successfully after 0 attempt(s)
+motion_tracker_rs_minimal.sh: line 26: 23570 Killed                     ./target/release/motion_tracker --output-dir "$OUTPUT_DIR" "${converted_args[@]}"
