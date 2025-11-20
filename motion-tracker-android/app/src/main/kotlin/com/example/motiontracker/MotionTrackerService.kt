@@ -51,6 +51,9 @@ class MotionTrackerService : Service() {
     // SessionViewModel for coordinating state with Activity
     private var sessionViewModel: SessionViewModel? = null
 
+    // Session writer for persistent chunk streaming
+    private var sessionWriter: SessionWriter? = null
+
     // Notification ticker: updates every ~1s
     private var notificationHandler: Handler? = null
     private val notificationTicker = object : Runnable {
@@ -176,6 +179,10 @@ class MotionTrackerService : Service() {
             // Stop notification ticker
             notificationHandler?.removeCallbacks(notificationTicker)
             Log.d(tag, "Notification ticker stopped")
+
+            // Stop session writer
+            sessionWriter?.stop()
+            sessionWriter = null
 
             // Stop health monitoring
             healthMonitor?.stop()
@@ -479,6 +486,50 @@ class MotionTrackerService : Service() {
         } catch (e: Exception) {
             Log.w(tag, "Failed to publish health alert", e)
         }
+    }
+
+    /**
+     * Start session writer (called by Activity after starting JNI session)
+     *
+     * @param config Session configuration
+     */
+    fun startSessionWriter(config: SessionConfig) {
+        try {
+            if (sessionWriter != null) {
+                Log.w(tag, "Session writer already running")
+                return
+            }
+
+            sessionWriter = SessionWriter(this, config)
+            sessionWriter?.start()
+            Log.d(tag, "Session writer started")
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to start session writer", e)
+            publishHealthAlert(HealthAlert.FatalError("Session persistence failed: ${e.message}"))
+        }
+    }
+
+    /**
+     * Finalize session writer (called by Activity before stopping JNI session)
+     *
+     * @return Path to final.json if successful
+     */
+    fun finalizeSessionWriter(): String? {
+        return try {
+            val finalPath = sessionWriter?.finalize()
+            sessionWriter = null
+            finalPath
+        } catch (e: Exception) {
+            Log.e(tag, "Failed to finalize session writer", e)
+            null
+        }
+    }
+
+    /**
+     * Get session writer (for access to session directory/metadata)
+     */
+    fun getSessionWriter(): SessionWriter? {
+        return sessionWriter
     }
 
     /**
