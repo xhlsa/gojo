@@ -10,6 +10,7 @@ mod filters;
 mod health_monitor;
 mod incident;
 mod live_status;
+mod restart_manager;
 mod sensors;
 
 use filters::complementary::ComplementaryFilter;
@@ -108,14 +109,21 @@ async fn main() -> Result<()> {
     // Initialize health monitor
     let health_monitor = Arc::new(health_monitor::HealthMonitor::new());
 
+    // Initialize restart manager
+    let restart_manager = Arc::new(restart_manager::RestartManager::new());
+
     // Spawn sensor collection tasks (hold handles to keep tasks alive)
     let _accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
     let _gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
     let _gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
 
-    // Spawn health monitoring task
+    // Spawn health monitoring task with restart signaling
     let health_monitor_clone = health_monitor.clone();
-    let _health_handle = tokio::spawn(health_monitor::health_monitor_task(health_monitor_clone));
+    let restart_manager_clone = restart_manager.clone();
+    let _health_handle = tokio::spawn(health_monitor::health_monitor_task(
+        health_monitor_clone,
+        restart_manager_clone,
+    ));
 
     // Drop original senders so tasks only hold references
     drop(accel_tx);
@@ -347,6 +355,11 @@ async fn main() -> Result<()> {
 
             let status_path = format!("{}/live_status.json", args.output_dir);
             let _ = live_status.save(&status_path);
+
+            // Log restart status
+            let restart_status = restart_manager.status_report();
+            eprintln!("[STATUS] {}", restart_status);
+
             last_status_update = now;
         }
 

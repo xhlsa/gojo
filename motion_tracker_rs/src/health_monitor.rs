@@ -178,14 +178,17 @@ pub struct HealthReport {
     pub gps_restart_count: u32,
 }
 
-/// Spawn health monitoring task
-pub async fn health_monitor_task(monitor: Arc<HealthMonitor>) {
+/// Spawn health monitoring task with restart signaling
+pub async fn health_monitor_task(
+    monitor: Arc<HealthMonitor>,
+    restart_manager: Arc<crate::restart_manager::RestartManager>,
+) {
     loop {
         sleep(monitor.check_interval).await;
 
         let report = monitor.check_health();
 
-        // Log warnings for silent sensors
+        // Log warnings for silent sensors and signal restart
         if !report.accel_healthy && report.accel_can_restart {
             if let Some(duration) = report.accel_silence_duration {
                 eprintln!(
@@ -195,6 +198,7 @@ pub async fn health_monitor_task(monitor: Arc<HealthMonitor>) {
                     monitor.accel.max_restart_attempts
                 );
                 monitor.accel.increment_restart_attempts();
+                restart_manager.signal_accel_restart();
             }
         }
 
@@ -207,6 +211,7 @@ pub async fn health_monitor_task(monitor: Arc<HealthMonitor>) {
                     monitor.gps.max_restart_attempts
                 );
                 monitor.gps.increment_restart_attempts();
+                restart_manager.signal_gps_restart();
             }
         }
 
