@@ -1,0 +1,8 @@
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/debug/deps/num_complex-267d1a3531bbd22f.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/cast.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/pow.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/complex_float.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/debug/deps/libnum_complex-267d1a3531bbd22f.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/cast.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/pow.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/complex_float.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/cast.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/pow.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/num-complex-0.4.6/src/complex_float.rs:

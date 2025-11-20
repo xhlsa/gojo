@@ -7,6 +7,7 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
 mod filters;
+mod health_monitor;
 mod incident;
 mod live_status;
 mod sensors;
@@ -104,10 +105,17 @@ async fn main() -> Result<()> {
     let readings: Arc<Mutex<Vec<SensorReading>>> = Arc::new(Mutex::new(Vec::new()));
     let readings_clone = readings.clone();
 
+    // Initialize health monitor
+    let health_monitor = Arc::new(health_monitor::HealthMonitor::new());
+
     // Spawn sensor collection tasks (hold handles to keep tasks alive)
     let _accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
     let _gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
     let _gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
+
+    // Spawn health monitoring task
+    let health_monitor_clone = health_monitor.clone();
+    let _health_handle = tokio::spawn(health_monitor::health_monitor_task(health_monitor_clone));
 
     // Drop original senders so tasks only hold references
     drop(accel_tx);
@@ -138,6 +146,9 @@ async fn main() -> Result<()> {
 
         // Collect available sensor readings
         while let Ok(accel) = accel_rx.try_recv() {
+            // Update accel health
+            health_monitor.accel.update();
+
             let timestamp = accel.timestamp;
             let mut reading = SensorReading {
                 timestamp,
@@ -224,6 +235,9 @@ async fn main() -> Result<()> {
         }
 
         while let Ok(gyro) = gyro_rx.try_recv() {
+            // Update gyro health
+            health_monitor.gyro.update();
+
             if let Some(last) = readings.lock().unwrap().last_mut() {
                 last.gyro = Some(gyro.clone());
             }
@@ -260,6 +274,9 @@ async fn main() -> Result<()> {
         }
 
         while let Ok(gps) = gps_rx.try_recv() {
+            // Update GPS health
+            health_monitor.gps.update();
+
             if let Some(last) = readings.lock().unwrap().last_mut() {
                 last.gps = Some(gps.clone());
             }
@@ -300,6 +317,24 @@ async fn main() -> Result<()> {
             live_status.calibration_complete = calibration_complete;
             live_status.gravity_magnitude = gravity_magnitude;
             live_status.uptime_seconds = uptime;
+
+            // Add health status
+            let health_report = health_monitor.check_health();
+            live_status.accel_healthy = health_report.accel_healthy;
+            live_status.gyro_healthy = health_report.gyro_healthy;
+            live_status.gps_healthy = health_report.gps_healthy;
+            live_status.accel_silence_duration_secs = health_report
+                .accel_silence_duration
+                .unwrap_or(std::time::Duration::from_secs(0))
+                .as_secs_f64();
+            live_status.gyro_silence_duration_secs = health_report
+                .gyro_silence_duration
+                .unwrap_or(std::time::Duration::from_secs(0))
+                .as_secs_f64();
+            live_status.gps_silence_duration_secs = health_report
+                .gps_silence_duration
+                .unwrap_or(std::time::Duration::from_secs(0))
+                .as_secs_f64();
 
             if let Some(ekf) = ekf_state.as_ref() {
                 live_status.ekf_velocity = ekf.velocity;
