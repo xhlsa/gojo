@@ -211,7 +211,7 @@ async fn main() -> Result<()> {
     // Spawn health monitoring task with restart signaling
     let health_monitor_clone = health_monitor.clone();
     let restart_manager_clone = restart_manager.clone();
-    let _health_handle = tokio::spawn(health_monitor::health_monitor_task(
+    let health_handle = tokio::spawn(health_monitor::health_monitor_task(
         health_monitor_clone,
         restart_manager_clone,
     ));
@@ -581,6 +581,19 @@ async fn main() -> Result<()> {
         // 50ms is reasonable: allows other tasks to run frequently
         sleep(Duration::from_millis(50)).await;
     }
+
+    // CRITICAL: Abort background tasks before acquiring locks
+    // This prevents deadlock: if sensor tasks are holding locks while blocked
+    // on channel send, aborting them releases those locks immediately
+    println!("[CLEANUP] Main loop finished. Aborting background tasks...");
+    accel_handle.abort();
+    gyro_handle.abort();
+    gps_handle.abort();
+    health_handle.abort();
+
+    // Yield to runtime to complete task cleanup
+    tokio::task::yield_now().await;
+    println!("[CLEANUP] Background tasks aborted. Proceeding to final save...");
 
     // Final save
     let readings_lock = readings.lock().unwrap();
