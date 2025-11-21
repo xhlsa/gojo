@@ -115,7 +115,7 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
                                         Ok(_) => {
                                             sample_count += 1;
                                             if sample_count % 100 == 0 {
-                                                eprintln!("[accel] {} samples", sample_count);
+                                                eprintln!("[accel] {} samples SENT to channel", sample_count);
                                             }
                                         }
                                         Err(tokio::sync::mpsc::error::TrySendError::Closed(_)) => {
@@ -124,6 +124,9 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
                                         }
                                         Err(tokio::sync::mpsc::error::TrySendError::Full(_)) => {
                                             // Channel full, drop sample
+                                            if sample_count == 500 {
+                                                eprintln!("[accel] *** CHANNEL FULL at 500 samples, dropping future samples ***");
+                                            }
                                         }
                                     }
                                 }

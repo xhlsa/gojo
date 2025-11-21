@@ -265,7 +265,13 @@ async fn main() -> Result<()> {
 
     println!("[{}] Starting data collection...", ts_now());
 
+    let mut loop_count = 0;
     loop {
+        loop_count += 1;
+        if loop_count == 1 || loop_count % 1000 == 0 {
+            eprintln!("[MAIN LOOP] Iteration #{}", loop_count);
+        }
+
         // Non-blocking check for duration timeout
         if duration_rx.try_recv().is_ok() {
             println!("[{}] Duration reached, stopping...", ts_now());
@@ -273,7 +279,12 @@ async fn main() -> Result<()> {
         }
 
         // Collect available sensor readings
+        let mut accel_recv_count = 0;
         while let Ok(accel) = accel_rx.try_recv() {
+            accel_recv_count += 1;
+            if accel_recv_count == 1 || accel_recv_count % 100 == 0 {
+                eprintln!("[MAIN] Received accel sample #{}", accel_recv_count);
+            }
             // Update accel health
             health_monitor.accel.update();
 
@@ -566,7 +577,9 @@ async fn main() -> Result<()> {
             restart_manager.gps_restart_success();
         }
 
-        sleep(Duration::from_millis(1)).await;
+        // Yield to other tasks (accel/gyro/gps) to produce samples
+        // 50ms is reasonable: allows other tasks to run frequently
+        sleep(Duration::from_millis(50)).await;
     }
 
     // Final save
