@@ -29,6 +29,7 @@ pub struct GpsData {
     pub longitude: f64,
     pub accuracy: f64,
     pub speed: f64,
+    pub bearing: f64,
 }
 
 // Shared IMU stream - single termux-sensor process outputs both accel and gyro
@@ -350,6 +351,7 @@ fn read_gps() -> Option<GpsData> {
         longitude,
         accuracy,
         speed,
+        bearing: 0.0,
     })
 }
 
@@ -434,6 +436,7 @@ fn mock_gps_data() -> GpsData {
         longitude: -122.4194 + seq * 0.00001,
         accuracy: 5.0 + (seq * 0.1).sin() * 2.0,
         speed: 10.0 + (seq * 0.5).sin() * 5.0,
+        bearing: (seq * 10.0) % 360.0,
     }
 }
 

@@ -16,6 +16,10 @@ pub struct LiveStatus {
     pub calibration_complete: bool,
     pub gravity_magnitude: f64,
     pub uptime_seconds: u64,
+    // GPS data
+    pub gps_speed: f64,
+    pub gps_bearing: f64,
+    pub gps_accuracy: f64,
     // Health monitoring
     pub accel_healthy: bool,
     pub gyro_healthy: bool,
@@ -40,6 +44,9 @@ impl LiveStatus {
             calibration_complete: false,
             gravity_magnitude: 9.81,
             uptime_seconds: 0,
+            gps_speed: 0.0,
+            gps_bearing: 0.0,
+            gps_accuracy: 0.0,
             accel_healthy: true,
             gyro_healthy: true,
             gps_healthy: true,

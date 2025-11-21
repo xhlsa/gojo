@@ -314,6 +314,27 @@ impl EsEkf {
         self.gps_update_count += 1;
     }
 
+    /// Update with acceleration vector (proper physics: not magnitude, but components)
+    /// This respects the sign: forward acceleration (+) vs braking (-)
+    pub fn update_accelerometer_vector(&mut self, accel_x: f64, accel_y: f64, _accel_z: f64) {
+        // Calculate acceleration magnitude in heading direction (1D forward/backward)
+        let heading = self.state[6];
+        let forward_accel = accel_x * heading.cos() + accel_y * heading.sin();
+
+        // Update velocity based on proper integration of acceleration
+        let vel_before = self.state[4];
+        let vel_after = vel_before + forward_accel * self.dt;
+        self.state[4] = vel_after; // vx in heading direction
+        self.state[5] = 0.0; // vy = 0 in vehicle frame (no lateral motion in simple model)
+
+        // Update position based on velocity
+        self.state[2] += vel_after * heading.cos() * self.dt;
+        self.state[3] += vel_after * heading.sin() * self.dt;
+
+        self.accel_update_count += 1;
+    }
+
+    /// Legacy: scalar magnitude version (deprecated, kept for backwards compat during testing)
     pub fn update_accelerometer(&mut self, accel_magnitude: f64) {
         let measurement_matrix = self.accel_measurement_jacobian();
         let ax = self.state[4];
@@ -344,16 +365,22 @@ impl EsEkf {
         self.accel_update_count += 1;
     }
 
-    pub fn update_gyroscope(&mut self, _gyro_x: f64, _gyro_y: f64, gyro_z: f64) {
+    /// Update gyroscope: uses Z (yaw rate) for heading, X/Y for future 3D support
+    pub fn update_gyroscope(&mut self, gyro_x: f64, gyro_y: f64, gyro_z: f64) {
         if !self.enable_gyro {
             return;
         }
 
+        // For now, only use Z component (yaw/heading rate) in 2D motion model
+        // TODO: X and Y can be used for pitch/roll detection (vehicle pitch during acceleration)
         let measurement_matrix = Self::gyro_measurement_jacobian();
         let residual = arr1(&[gyro_z - self.state[7]]);
         let measurement_noise = Self::measurement_noise_from_var(self.r_gyro);
 
         self.kalman_update(&measurement_matrix, &residual, &measurement_noise);
+
+        // Update heading based on gyro measurement
+        self.state[6] += gyro_z * self.dt;
 
         self.gyro_update_count += 1;
     }
@@ -400,6 +427,21 @@ impl EsEkf {
             accel_updates: self.accel_update_count,
             gyro_updates: self.gyro_update_count,
         })
+    }
+
+    /// Zero Velocity Update (ZUPT): Force velocity AND acceleration to zero when vehicle is stationary
+    /// Used to prevent drift when accelerometer reads gravity + small noise
+    /// Zeroing acceleration prevents predict() from integrating velocity back in
+    pub fn apply_zupt(&mut self) {
+        self.state[2] = 0.0; // vx = 0
+        self.state[3] = 0.0; // vy = 0
+        self.state[4] = 0.0; // ax = 0 (prevent predict from integrating velocity back)
+        self.state[5] = 0.0; // ay = 0
+    }
+
+    /// Set heading state directly (for GPS-based alignment)
+    pub fn state_set_heading(&mut self, heading_rad: f64) {
+        self.state[6] = heading_rad;
     }
 
     /// Extract covariance snapshot for analysis (trace + diagonal entries)

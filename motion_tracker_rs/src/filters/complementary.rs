@@ -150,6 +150,13 @@ impl ComplementaryFilter {
     pub fn get_velocity(&self) -> f64 {
         self.velocity_magnitude()
     }
+
+    /// Zero Velocity Update (ZUPT): Force velocity to zero when vehicle is stationary
+    /// This clamps velocity to 0 while the vehicle is parked, but releases when motion resumes
+    pub fn apply_zupt(&mut self) {
+        self.vx = 0.0;
+        self.vy = 0.0;
+    }
 }
 
 fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
