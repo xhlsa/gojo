@@ -2,12 +2,14 @@ use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
-use std::sync::{Arc, Mutex};
+use std::collections::VecDeque;
+use std::sync::{Arc, RwLock};
 use std::panic;
 use std::fs::OpenOptions;
-use std::io::Write;
+use std::io::{Write, BufReader, BufRead};
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
+use std::process::{Command, Stdio};
 
 mod filters;
 mod health_monitor;
@@ -132,9 +134,223 @@ struct Metrics {
     covariance_snapshots: Vec<CovarianceSnapshot>,
 }
 
+/// Shared sensor state using RwLock for minimal contention
+#[derive(Clone)]
+struct SensorState {
+    pub accel_buffer: Arc<RwLock<VecDeque<AccelData>>>,
+    pub gyro_buffer: Arc<RwLock<VecDeque<GyroData>>>,
+    pub latest_accel: Arc<RwLock<Option<AccelData>>>,
+    pub latest_gyro: Arc<RwLock<Option<GyroData>>>,
+    pub accel_count: Arc<RwLock<u64>>,
+    pub gyro_count: Arc<RwLock<u64>>,
+}
+
+impl SensorState {
+    fn new() -> Self {
+        Self {
+            accel_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
+            gyro_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
+            latest_accel: Arc::new(RwLock::new(None)),
+            latest_gyro: Arc::new(RwLock::new(None)),
+            accel_count: Arc::new(RwLock::new(0u64)),
+            gyro_count: Arc::new(RwLock::new(0u64)),
+        }
+    }
+}
+
+/// Sensor reader task: parse JSON and push to shared state
+async fn accel_reader_task(state: SensorState) {
+    eprintln!("[accel-reader] Initializing accelerometer reader");
+
+    // Cleanup sensor
+    let _ = Command::new("termux-sensor").arg("-c").output();
+    sleep(Duration::from_millis(500)).await;
+
+    // Start termux-sensor with reliable delay (-d 20 = ~50Hz)
+    let mut child = match Command::new("termux-sensor")
+        .arg("-d")
+        .arg("20")  // ~50 Hz (empirically tested, reliable)
+        .arg("-s")
+        .arg("Accelerometer")  // Partial name works better than full sensor name
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(p) => {
+            eprintln!("[accel-reader] Process spawned");
+            p
+        }
+        Err(e) => {
+            eprintln!("[accel-reader] Failed to spawn: {}", e);
+            return;
+        }
+    };
+
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => {
+            eprintln!("[accel-reader] No stdout");
+            return;
+        }
+    };
+
+    // Wrap blocking BufReader.lines() in spawn_blocking to avoid blocking tokio runtime
+    let state_clone = state.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let reader = BufReader::new(stdout);
+        let mut line_count = 0u64;
+
+        // Line-by-line reader (NOT streaming deserializer)
+        for line in reader.lines() {
+            match line {
+                Ok(json_line) => {
+                    // Parse JSON from line
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&json_line) {
+                        if let Some(obj_map) = obj.as_object() {
+                            for (sensor_key, sensor_data) in obj_map.iter() {
+                                if sensor_key.contains("Accelerometer") {
+                                    if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                                        if values.len() >= 3 {
+                                            let accel = AccelData {
+                                                timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
+                                                x: values[0].as_f64().unwrap_or(0.0),
+                                                y: values[1].as_f64().unwrap_or(0.0),
+                                                z: values[2].as_f64().unwrap_or(0.0),
+                                            };
+
+                                            // Instantly acquire write lock, push, release
+                                            {
+                                                let mut buf = state_clone.accel_buffer.write().unwrap();
+                                                if buf.len() > 1024 {
+                                                    buf.pop_front();
+                                                }
+                                                buf.push_back(accel.clone());
+                                            }
+
+                                            // Update latest
+                                            {
+                                                let mut latest = state_clone.latest_accel.write().unwrap();
+                                                *latest = Some(accel);
+                                            }
+
+                                            // Increment count
+                                            {
+                                                let mut count = state_clone.accel_count.write().unwrap();
+                                                *count += 1;
+                                            }
+
+                                            line_count += 1;
+                                            if line_count % 100 == 0 {
+                                                eprintln!("[accel-reader] {} lines parsed", line_count);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        eprintln!("[accel-reader] Stream ended after {} lines", line_count);
+    })
+    .await;
+}
+
+/// Gyro reader task: same pattern as accel
+async fn gyro_reader_task(state: SensorState, enabled: bool) {
+    if !enabled {
+        return;
+    }
+
+    eprintln!("[gyro-reader] Initializing gyroscope reader");
+
+    let mut child = match Command::new("termux-sensor")
+        .arg("-d")
+        .arg("20")  // ~50 Hz (reliable)
+        .arg("-s")
+        .arg("Gyroscope")  // Partial name works better than full sensor name
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+    {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[gyro-reader] Failed to spawn: {}", e);
+            return;
+        }
+    };
+
+    let stdout = match child.stdout.take() {
+        Some(s) => s,
+        None => return,
+    };
+
+    // Wrap blocking BufReader.lines() in spawn_blocking
+    let state_clone = state.clone();
+    let _ = tokio::task::spawn_blocking(move || {
+        let reader = BufReader::new(stdout);
+        let mut line_count = 0u64;
+
+        for line in reader.lines() {
+            match line {
+                Ok(json_line) => {
+                    if let Ok(obj) = serde_json::from_str::<serde_json::Value>(&json_line) {
+                        if let Some(obj_map) = obj.as_object() {
+                            for (sensor_key, sensor_data) in obj_map.iter() {
+                                if sensor_key.contains("Gyroscope") {
+                                    if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                                        if values.len() >= 3 {
+                                            let gyro = GyroData {
+                                                timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
+                                                x: values[0].as_f64().unwrap_or(0.0),
+                                                y: values[1].as_f64().unwrap_or(0.0),
+                                                z: values[2].as_f64().unwrap_or(0.0),
+                                            };
+
+                                            {
+                                                let mut buf = state_clone.gyro_buffer.write().unwrap();
+                                                if buf.len() > 1024 {
+                                                    buf.pop_front();
+                                                }
+                                                buf.push_back(gyro.clone());
+                                            }
+
+                                            {
+                                                let mut latest = state_clone.latest_gyro.write().unwrap();
+                                                *latest = Some(gyro);
+                                            }
+
+                                            {
+                                                let mut count = state_clone.gyro_count.write().unwrap();
+                                                *count += 1;
+                                            }
+
+                                            line_count += 1;
+                                            if line_count % 100 == 0 {
+                                                eprintln!("[gyro-reader] {} lines parsed", line_count);
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+                Err(_) => break,
+            }
+        }
+
+        eprintln!("[gyro-reader] Stream ended after {} lines", line_count);
+    })
+    .await;
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
-    // Install panic hook to log panics to file
+    // Install panic hook
     let original_hook = panic::take_hook();
     panic::set_hook(Box::new(move |panic_info| {
         let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
@@ -151,11 +367,8 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|| "unknown location".to_string());
 
         debug_log(&format!("PANIC: {} at {}", msg, location));
-
-        // Print to stderr as well
         eprintln!("PANIC: {} at {}", msg, location);
 
-        // Call original hook
         original_hook(panic_info);
     }));
 
@@ -167,89 +380,45 @@ async fn main() -> Result<()> {
     println!("  Filter Mode: {}", args.filter);
     println!("  Output Dir: {}", args.output_dir);
 
-    // Create output directory
     std::fs::create_dir_all(&args.output_dir)?;
 
-    // Gravity calibration: collect 20 stationary samples at startup
-    // Using default gravity (9.81 m/s²) - calibration skipped due to async context issues
-    let mut calibration_complete = false;
-    let mut gravity_magnitude = 9.81;
+    // Shared sensor state
+    let sensor_state = SensorState::new();
 
-    // Initialize filters and incident detection
-    let mut ekf = EsEkf::new(
-        0.05, // dt = 50ms
-        8.0,  // gps_noise_std
-        0.5,  // accel_noise_std
-        args.enable_gyro,
-        0.0005, // gyro_noise_std (from CLAUDE.md)
-    );
+    // Spawn reader tasks (NOT filter tasks)
+    let accel_state = sensor_state.clone();
+    let accel_reader_handle = tokio::spawn(async move {
+        accel_reader_task(accel_state).await;
+    });
 
+    let gyro_state = sensor_state.clone();
+    let gyro_enabled = args.enable_gyro;
+    let gyro_reader_handle = tokio::spawn(async move {
+        gyro_reader_task(gyro_state, gyro_enabled).await;
+    });
+
+    // Initialize filters
+    let mut ekf = EsEkf::new(0.05, 8.0, 0.5, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
-
-    // Create channels for sensor data
-    let (accel_tx, mut accel_rx) = mpsc::channel::<AccelData>(500);
-    let (gyro_tx, mut gyro_rx) = mpsc::channel::<GyroData>(500);
-    let (gps_tx, mut gps_rx) = mpsc::channel::<GpsData>(100);
-
-    // Shared data collection
-    let readings: Arc<Mutex<Vec<SensorReading>>> = Arc::new(Mutex::new(Vec::new()));
-    let readings_clone = readings.clone();
-
-    // Initialize health monitor
-    let health_monitor = Arc::new(health_monitor::HealthMonitor::new());
-
-    // Initialize restart manager
-    let restart_manager = Arc::new(restart_manager::RestartManager::new());
-
-    // Spawn sensor collection tasks (mutable handles for respawning support)
-    let mut accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
-    let mut gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
-    let mut gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
-
-    // Spawn health monitoring task with restart signaling
-    let health_monitor_clone = health_monitor.clone();
-    let restart_manager_clone = restart_manager.clone();
-    let health_handle = tokio::spawn(health_monitor::health_monitor_task(
-        health_monitor_clone,
-        restart_manager_clone,
-    ));
-
-    // Keep senders in scope for respawning (don't drop)
-    // Tasks hold clones, we keep originals for respawn
-
-    // Sample counters
-    let mut accel_count = 0u64;
-    let mut gyro_count = 0u64;
-    let mut gps_count = 0u64;
-
-    // Trajectory tracking (for Python parity)
+    let mut readings: Vec<SensorReading> = Vec::new();
     let mut trajectories: Vec<TrajectoryPoint> = Vec::new();
-
-    // Covariance snapshots (for analysis)
     let mut covariance_snapshots: Vec<CovarianceSnapshot> = Vec::new();
 
-    // Memory tracking
     let mut peak_memory_mb: f64 = 0.0;
     let mut current_memory_mb: f64 = 0.0;
-
-    // Hann-window smoothing for accelerometer magnitude (Python parity)
     let mut accel_smoother = AccelSmoother::new(9);
+    let gravity_magnitude = 9.81;
+    let calibration_complete = true;
 
-    // Skip gravity calibration - use default (9.81 m/s²)
-    // Calibration logic in async context was problematic with time measurement
-    // Future: Could spawn separate task for calibration if needed
-    gravity_magnitude = 9.81;
-    calibration_complete = true;
     println!("[{}] Using default gravity: 9.81 m/s²", ts_now());
 
-    // Main processing loop with duration tracking via channel signal
     let start = Utc::now();
     let mut last_save = Utc::now();
     let mut last_status_update = Utc::now();
 
-    // Create channel for duration timeout signal (sent from separate task)
+    // Duration timeout
     let (duration_tx, mut duration_rx) = mpsc::channel::<()>(1);
     let _duration_handle = if args.duration > 0 {
         let tx = duration_tx.clone();
@@ -257,7 +426,7 @@ async fn main() -> Result<()> {
         Some(tokio::spawn(async move {
             sleep(Duration::from_secs(duration_secs)).await;
             eprintln!("[TIMEOUT] Duration timer fired after {} seconds", duration_secs);
-            let _ = tx.send(()).await; // Signal timeout
+            let _ = tx.send(()).await;
         }))
     } else {
         None
@@ -265,163 +434,65 @@ async fn main() -> Result<()> {
 
     println!("[{}] Starting data collection...", ts_now());
 
-    let mut loop_count = 0;
+    // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
-        loop_count += 1;
-        if loop_count == 1 || loop_count % 1000 == 0 {
-            eprintln!("[MAIN LOOP] Iteration #{}", loop_count);
-        }
-
-        // Non-blocking check for duration timeout
+        // Check duration
         if duration_rx.try_recv().is_ok() {
             println!("[{}] Duration reached, stopping...", ts_now());
             break;
         }
 
-        // Collect available sensor readings
-        let mut accel_recv_count = 0;
-        while let Ok(accel) = accel_rx.try_recv() {
-            accel_recv_count += 1;
-            if accel_recv_count == 1 || accel_recv_count % 100 == 0 {
-                eprintln!("[MAIN] Received accel sample #{}", accel_recv_count);
-            }
-            // Update accel health
-            health_monitor.accel.update();
+        // Acquire read lock on accel buffer
+        {
+            let mut buf = sensor_state.accel_buffer.write().unwrap();
+            while let Some(accel) = buf.pop_front() {
+                let raw_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
+                let true_mag = (raw_mag - gravity_magnitude).abs();
+                let smoothed_mag = accel_smoother.apply(true_mag);
 
-            let timestamp = accel.timestamp;
-            let mut reading = SensorReading {
-                timestamp,
-                accel: Some(accel.clone()),
-                gyro: None,
-                gps: None,
-            };
+                let reading = SensorReading {
+                    timestamp: accel.timestamp,
+                    accel: Some(accel.clone()),
+                    gyro: None,
+                    gps: None,
+                };
 
-            // Try to find matching gyro/gps
-            let mut readings_lock = readings_clone.lock().unwrap();
+                readings.push(reading);
 
-            if let Some(last) = readings_lock.last_mut() {
-                if (last.timestamp - timestamp).abs() < 0.1 {
-                    reading.gyro = last.gyro.clone();
-                    reading.gps = last.gps.clone();
+                if args.filter == "ekf" || args.filter == "both" {
+                    let _ = ekf.update_accelerometer(smoothed_mag);
+                }
+                if args.filter == "complementary" || args.filter == "both" {
+                    let _ = comp_filter.update(accel.x, accel.y, accel.z, 0.0, 0.0, 0.0);
                 }
             }
-
-            readings_lock.push(reading.clone());
-            drop(readings_lock);
-
-            // Process through filters (gravity already set to 9.81)
-            let raw_accel_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
-            let true_accel_mag = (raw_accel_mag - gravity_magnitude).abs(); // TRUE acceleration (subtract gravity)
-
-            // Apply Hann-window smoothing to accelerometer magnitude (Python parity)
-            let smoothed_accel_mag = accel_smoother.apply(true_accel_mag);
-
-            // Detect incidents using smoothed acceleration
-            let gps_speed = if let Some(last) = readings_clone.lock().unwrap().last() {
-                last.gps.as_ref().map(|g| g.speed)
-            } else {
-                None
-            };
-            let (lat, lon) = if let Some(last) = readings_clone.lock().unwrap().last() {
-                last.gps
-                    .as_ref()
-                    .map(|g| (g.latitude, g.longitude))
-                    .unwrap_or((0.0, 0.0))
-            } else {
-                (0.0, 0.0)
-            };
-
-            if let Some(incident) = incident_detector.detect(
-                smoothed_accel_mag,
-                0.0,
-                gps_speed,
-                accel.timestamp,
-                Some(lat),
-                Some(lon),
-            ) {
-                incidents.push(incident);
-            }
-
-            if args.filter == "ekf" || args.filter == "both" {
-                let _ = ekf.update_accelerometer(smoothed_accel_mag);
-            }
-            if args.filter == "complementary" || args.filter == "both" {
-                let _ = comp_filter.update(accel.x, accel.y, accel.z, 0.0, 0.0, 0.0);
-            }
-
-            accel_count += 1;
         }
 
-        while let Ok(gyro) = gyro_rx.try_recv() {
-            // Update gyro health
-            health_monitor.gyro.update();
+        // Acquire read lock on gyro buffer
+        {
+            let mut buf = sensor_state.gyro_buffer.write().unwrap();
+            while let Some(gyro) = buf.pop_front() {
+                if let Some(last) = readings.last_mut() {
+                    last.gyro = Some(gyro.clone());
+                }
 
-            if let Some(last) = readings.lock().unwrap().last_mut() {
-                last.gyro = Some(gyro.clone());
+                if args.filter == "ekf" || args.filter == "both" {
+                    let _ = ekf.update_gyroscope(gyro.x, gyro.y, gyro.z);
+                }
             }
-
-            // Detect swerving incidents with gyro
-            let gps_speed = readings
-                .lock()
-                .unwrap()
-                .last()
-                .and_then(|r| r.gps.as_ref().map(|g| g.speed));
-            let (lat, lon) = readings
-                .lock()
-                .unwrap()
-                .last()
-                .and_then(|r| r.gps.as_ref().map(|g| (g.latitude, g.longitude)))
-                .unwrap_or((0.0, 0.0));
-
-            if let Some(incident) = incident_detector.detect(
-                0.0,
-                gyro.z,
-                gps_speed,
-                gyro.timestamp,
-                Some(lat),
-                Some(lon),
-            ) {
-                incidents.push(incident);
-            }
-
-            if args.filter == "ekf" || args.filter == "both" {
-                let _ = ekf.update_gyroscope(gyro.x, gyro.y, gyro.z);
-            }
-
-            gyro_count += 1;
         }
 
-        while let Ok(gps) = gps_rx.try_recv() {
-            // Update GPS health
-            health_monitor.gps.update();
-
-            if let Some(last) = readings.lock().unwrap().last_mut() {
-                last.gps = Some(gps.clone());
-            }
-
-            if args.filter == "ekf" || args.filter == "both" {
-                let _ = ekf.update_gps(
-                    gps.latitude,
-                    gps.longitude,
-                    Some(gps.speed),
-                    Some(gps.accuracy),
-                );
-            }
-            if args.filter == "complementary" || args.filter == "both" {
-                let _ = comp_filter.update_gps(gps.latitude, gps.longitude);
-            }
-
-            gps_count += 1;
-        }
-
-        // Run predictions
+        // Run EKF prediction
         if args.filter == "ekf" || args.filter == "both" {
             let _ = ekf.predict();
         }
 
-        // Update live status every 2 seconds
+        // Status update every 2 seconds
         let now = Utc::now();
-        if (now.signed_duration_since(last_status_update).num_seconds() as u64) >= 2 {
+        if (now.signed_duration_since(last_status_update).num_seconds() as i64) >= 2i64 {
+            let accel_count = *sensor_state.accel_count.read().unwrap();
+            let gyro_count = *sensor_state.gyro_count.read().unwrap();
+
             let ekf_state = ekf.get_state();
             let comp_state = comp_filter.get_state();
             let uptime = now.signed_duration_since(start).num_seconds().max(0) as u64;
@@ -430,47 +501,26 @@ async fn main() -> Result<()> {
             live_status.timestamp = live_status::current_timestamp();
             live_status.accel_samples = accel_count;
             live_status.gyro_samples = gyro_count;
-            live_status.gps_fixes = gps_count;
+            live_status.gps_fixes = 0;
             live_status.incidents_detected = incidents.len() as u64;
             live_status.calibration_complete = calibration_complete;
             live_status.gravity_magnitude = gravity_magnitude;
             live_status.uptime_seconds = uptime;
-
-            // Add health status
-            let health_report = health_monitor.check_health();
-            live_status.accel_healthy = health_report.accel_healthy;
-            live_status.gyro_healthy = health_report.gyro_healthy;
-            live_status.gps_healthy = health_report.gps_healthy;
-            live_status.accel_silence_duration_secs = health_report
-                .accel_silence_duration
-                .unwrap_or(std::time::Duration::from_secs(0))
-                .as_secs_f64();
-            live_status.gyro_silence_duration_secs = health_report
-                .gyro_silence_duration
-                .unwrap_or(std::time::Duration::from_secs(0))
-                .as_secs_f64();
-            live_status.gps_silence_duration_secs = health_report
-                .gps_silence_duration
-                .unwrap_or(std::time::Duration::from_secs(0))
-                .as_secs_f64();
 
             if let Some(ekf_state_ref) = ekf_state.as_ref() {
                 live_status.ekf_velocity = ekf_state_ref.velocity;
                 live_status.ekf_distance = ekf_state_ref.distance;
                 live_status.ekf_heading_deg = ekf_state_ref.heading_deg;
 
-                // Record trajectory point for Python parity
-                let comp_vel = comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0);
                 trajectories.push(TrajectoryPoint {
                     timestamp: live_status::current_timestamp(),
                     ekf_x: ekf_state_ref.position_local.0,
                     ekf_y: ekf_state_ref.position_local.1,
                     ekf_velocity: ekf_state_ref.velocity,
                     ekf_heading_deg: ekf_state_ref.heading_deg,
-                    comp_velocity: comp_vel,
+                    comp_velocity: comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0),
                 });
 
-                // Record covariance snapshot for analysis
                 let (trace, diag) = ekf.get_covariance_snapshot();
                 covariance_snapshots.push(CovarianceSnapshot {
                     timestamp: live_status::current_timestamp(),
@@ -485,183 +535,123 @@ async fn main() -> Result<()> {
                     p77: diag[7],
                 });
             }
+
             if let Some(comp) = comp_state.as_ref() {
                 live_status.comp_velocity = comp.velocity;
             }
 
-            // Update memory metrics
             current_memory_mb = get_memory_mb();
             peak_memory_mb = peak_memory_mb.max(current_memory_mb);
 
             let status_path = format!("{}/live_status.json", args.output_dir);
             let _ = live_status.save(&status_path);
 
-            // Log restart status
-            let restart_status = restart_manager.status_report();
-            eprintln!("[STATUS] {}", restart_status);
+            eprintln!(
+                "[STATUS] Accel: {}, Gyro: {}, Mem: {:.1}MB",
+                accel_count, gyro_count, current_memory_mb
+            );
 
             last_status_update = now;
         }
 
         // Auto-save every 15 seconds
-        if (now.signed_duration_since(last_save).num_seconds() as u64) >= 15 {
-            let mut readings_lock = readings.lock().unwrap();
+        if (now.signed_duration_since(last_save).num_seconds() as i64) >= 15i64 {
+            let accel_count = *sensor_state.accel_count.read().unwrap();
             let ekf_state = ekf.get_state();
-            let sample_count = readings_lock.len();
-            let elapsed_secs = now.signed_duration_since(start).num_seconds().max(0) as u64;
+            let elapsed_secs = now.signed_duration_since(start).num_seconds().max(0i64) as u64;
+            let gyro_count = *sensor_state.gyro_count.read().unwrap();
+
             let output = ComparisonOutput {
-                readings: readings_lock.clone(),
+                readings: readings.clone(),
                 incidents: incidents.clone(),
                 trajectories: trajectories.clone(),
                 stats: Stats {
-                    total_samples: readings_lock.len(),
+                    total_samples: readings.len(),
                     total_incidents: incidents.len(),
                     ekf_velocity: ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0),
                     ekf_distance: ekf_state.as_ref().map(|s| s.distance).unwrap_or(0.0),
-                    gps_fixes: ekf_state.as_ref().map(|s| s.gps_updates).unwrap_or(0),
+                    gps_fixes: 0,
                 },
                 metrics: Metrics {
                     test_duration_seconds: elapsed_secs,
                     accel_samples: accel_count,
                     gyro_samples: gyro_count,
-                    gps_samples: gps_count,
+                    gps_samples: 0,
                     gravity_magnitude,
                     peak_memory_mb,
                     current_memory_mb,
                     covariance_snapshots: covariance_snapshots.clone(),
                 },
             };
+
             let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
             let json = serde_json::to_string_pretty(&output)?;
             std::fs::write(&filename, json)?;
+
             println!(
-                "[{}] Auto-saved {} samples, {} incidents to {}",
+                "[{}] Auto-saved {} samples to {}",
                 ts_now(),
-                sample_count,
-                incidents.len(),
+                readings.len(),
                 filename
             );
 
-            // Clear readings vector to bound memory usage (all data is saved to disk)
-            // Filters maintain their own state, so this doesn't lose information
-            readings_lock.clear();
-            println!(
-                "[{}] Cleared {} readings from memory to prevent unbounded growth",
-                ts_now(),
-                sample_count
-            );
-
-            drop(readings_lock);
+            readings.clear();
             last_save = now;
         }
 
-        // Check for sensor restarts (respawn tasks if needed)
-        if restart_manager.accel_ready_restart() {
-            eprintln!("[RESTART] Respawning Accel task...");
-            accel_handle.abort();
-            accel_handle = tokio::spawn(sensors::accel_loop(accel_tx.clone()));
-            restart_manager.accel_restart_success();
-        }
-
-        if restart_manager.gyro_ready_restart() && args.enable_gyro {
-            eprintln!("[RESTART] Respawning Gyro task...");
-            gyro_handle.abort();
-            gyro_handle = tokio::spawn(sensors::gyro_loop(gyro_tx.clone(), args.enable_gyro));
-            restart_manager.gyro_restart_success();
-        }
-
-        if restart_manager.gps_ready_restart() {
-            eprintln!("[RESTART] Respawning GPS task...");
-            gps_handle.abort();
-            gps_handle = tokio::spawn(sensors::gps_loop(gps_tx.clone()));
-            restart_manager.gps_restart_success();
-        }
-
-        // Yield to other tasks (accel/gyro/gps) to produce samples
-        // 50ms is reasonable: allows other tasks to run frequently
-        sleep(Duration::from_millis(50)).await;
+        // Consumer tick: 20ms (50Hz)
+        sleep(Duration::from_millis(20)).await;
     }
 
-    // CRITICAL: Abort background tasks before acquiring locks
-    // This prevents deadlock: if sensor tasks are holding locks while blocked
-    // on channel send, aborting them releases those locks immediately
-    println!("[CLEANUP] Main loop finished. Aborting background tasks...");
-    accel_handle.abort();
-    gyro_handle.abort();
-    gps_handle.abort();
-    health_handle.abort();
-
-    // Yield to runtime to complete task cleanup
+    // Abort reader tasks
+    println!("[CLEANUP] Aborting reader tasks...");
+    accel_reader_handle.abort();
+    gyro_reader_handle.abort();
     tokio::task::yield_now().await;
-    println!("[CLEANUP] Background tasks aborted. Proceeding to final save...");
 
     // Final save
-    let readings_lock = readings.lock().unwrap();
+    let accel_count = *sensor_state.accel_count.read().unwrap();
+    let gyro_count = *sensor_state.gyro_count.read().unwrap();
     let ekf_state = ekf.get_state();
-    let comp_state = comp_filter.get_state();
     let uptime = Utc::now().signed_duration_since(start).num_seconds().max(0) as u64;
 
     let output = ComparisonOutput {
-        readings: readings_lock.clone(),
+        readings: readings.clone(),
         incidents: incidents.clone(),
         trajectories: trajectories.clone(),
         stats: Stats {
-            total_samples: readings_lock.len(),
+            total_samples: readings.len(),
             total_incidents: incidents.len(),
             ekf_velocity: ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0),
             ekf_distance: ekf_state.as_ref().map(|s| s.distance).unwrap_or(0.0),
-            gps_fixes: ekf_state.as_ref().map(|s| s.gps_updates).unwrap_or(0),
+            gps_fixes: 0,
         },
         metrics: Metrics {
             test_duration_seconds: uptime,
             accel_samples: accel_count,
             gyro_samples: gyro_count,
-            gps_samples: gps_count,
+            gps_samples: 0,
             gravity_magnitude,
             peak_memory_mb,
             current_memory_mb,
             covariance_snapshots: covariance_snapshots.clone(),
         },
     };
-    let filename = format!(
-        "{}/comparison_{}_final.json",
-        args.output_dir,
-        ts_now_clean()
-    );
+
+    let filename = format!("{}/comparison_{}_final.json", args.output_dir, ts_now_clean());
     let json = serde_json::to_string_pretty(&output)?;
     std::fs::write(&filename, json)?;
+
     println!(
-        "[{}] Final save: {} samples, {} incidents to {}",
+        "[{}] Final save: {} samples to {}",
         ts_now(),
-        readings_lock.len(),
-        incidents.len(),
+        readings.len(),
         filename
     );
 
-    // Final live status update
-    let mut final_status = live_status::LiveStatus::new();
-    final_status.timestamp = live_status::current_timestamp();
-    final_status.accel_samples = accel_count;
-    final_status.gyro_samples = gyro_count;
-    final_status.gps_fixes = gps_count;
-    final_status.incidents_detected = incidents.len() as u64;
-    final_status.calibration_complete = calibration_complete;
-    final_status.gravity_magnitude = gravity_magnitude;
-    final_status.uptime_seconds = uptime;
-    if let Some(ekf) = ekf_state.as_ref() {
-        final_status.ekf_velocity = ekf.velocity;
-        final_status.ekf_distance = ekf.distance;
-        final_status.ekf_heading_deg = ekf.heading_deg;
-    }
-    if let Some(comp) = comp_state.as_ref() {
-        final_status.comp_velocity = comp.velocity;
-    }
-    let status_path = format!("{}/live_status_final.json", args.output_dir);
-    let _ = final_status.save(&status_path);
-
-    // Print stats
     println!("\n=== Final Stats ===");
-    println!("Total samples: {}", readings_lock.len());
+    println!("Total accel samples: {}", accel_count);
+    println!("Total gyro samples: {}", gyro_count);
     if let Some(ekf_state) = ekf.get_state() {
         println!("EKF velocity: {:.2} m/s", ekf_state.velocity);
         println!("EKF distance: {:.2} m", ekf_state.distance);

@@ -52,7 +52,7 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
     eprintln!("[accel] STARTUP: Spawning termux-sensor process...");
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
-        .arg("20")  // 20ms delay = ~50Hz sampling
+        .arg("10")  // 10ms delay = ~100Hz sampling (batch drained every 10ms)
         .arg("-s")
         .arg("lsm6dso LSM6DSO Accelerometer Non-wakeup")
         .stdout(Stdio::piped())
@@ -189,7 +189,7 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
 
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
-        .arg("20")
+        .arg("10")  // 10ms delay = ~100Hz sampling (batch drained every 10ms)
         .arg("-s")
         .arg("lsm6dso LSM6DSO Gyroscope Non-wakeup")
         .stdout(Stdio::piped())

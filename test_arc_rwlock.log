@@ -1,0 +1,22 @@
+[03:46:12] Motion Tracker RS Starting
+  Duration: 5 seconds (0=continuous)
+  Enable Gyro: true
+  Filter Mode: both
+  Output Dir: motion_tracker_sessions
+[03:46:12] Using default gravity: 9.81 m/s²
+[03:46:12] Starting data collection...
+[gyro-reader] Initializing gyroscope reader
+[accel-reader] Initializing accelerometer reader
+[accel-reader] Process spawned
+[STATUS] Accel: 0, Gyro: 0, Mem: 4.1MB
+[STATUS] Accel: 0, Gyro: 0, Mem: 4.1MB
+[TIMEOUT] Duration timer fired after 5 seconds
+[03:46:17] Duration reached, stopping...
+[CLEANUP] Aborting reader tasks...
+[03:46:17] Final save: 0 samples to motion_tracker_sessions/comparison_20251121_034617_final.json
+
+=== Final Stats ===
+Total accel samples: 0
+Total gyro samples: 0
+EKF velocity: 0.00 m/s
+EKF distance: 0.00 m
