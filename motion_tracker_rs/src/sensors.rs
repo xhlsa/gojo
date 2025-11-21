@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::io::{BufRead, BufReader};
+use std::io::{BufReader, Read};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc::Sender;
@@ -36,61 +36,66 @@ pub struct GpsData {
 static SHARED_IMU_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub async fn accel_loop(tx: Sender<AccelData>) {
-    // Start persistent termux-sensor process (outputs BOTH accel and gyro from LSM6DSO)
-    // This is a SHARED sensor stream that accel_loop and gyro_loop both read from
+    println!("[accel] Initializing accelerometer loop");
+
+    // CRITICAL: Cleanup sensor before starting to ensure accelerometer works
+    // Without this, accel may produce no output (Termux API quirk)
+    let _ = Command::new("termux-sensor")
+        .arg("-c")
+        .output();
+    println!("[accel] Sensor cleanup complete, waiting 500ms for backend reset...");
+
+    // Wait for sensor backend to fully reset after cleanup
+    tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
+
+    // Start persistent termux-sensor process for accelerometer (match gyro pattern exactly)
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
-        .arg("20")  // 20ms delay = ~50Hz sampling (applies to both sensors)
+        .arg("20")  // 20ms delay = ~50Hz sampling
+        .arg("-s")
+        .arg("lsm6dso LSM6DSO Accelerometer Non-wakeup")
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(Stdio::piped())
         .spawn()
     {
         Ok(p) => {
+            println!("[accel] ✓ Process spawned successfully");
             SHARED_IMU_INITIALIZED.store(true, std::sync::atomic::Ordering::Relaxed);
             p
         }
-        Err(_) => {
-            eprintln!("[accel] Failed to spawn termux-sensor, falling back to mock data");
+        Err(e) => {
+            println!("[accel] Failed to spawn termux-sensor: {}", e);
             mock_accel_loop(tx).await;
             return;
         }
     };
 
     let stdout = match sensor_proc.stdout.take() {
-        Some(s) => s,
+        Some(s) => {
+            println!("[accel] ✓ Got stdout, starting to read lines");
+            s
+        }
         None => {
-            eprintln!("[accel] No stdout from termux-sensor");
+            println!("[accel] No stdout from termux-sensor");
             return;
         }
     };
 
     let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
-    let mut json_buffer = String::new();
-    let mut brace_depth = 0i32;
 
-    for line_result in reader.lines() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+    println!("[accel] Starting streaming JSON deserializer");
+    let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
 
-        if line.is_empty() {
-            continue;
-        }
-
-        json_buffer.push_str(&line);
-        json_buffer.push('\n');
-
-        // Track brace depth to detect complete JSON objects
-        brace_depth += line.matches('{').count() as i32;
-        brace_depth -= line.matches('}').count() as i32;
-
-        // When we have a complete JSON object, parse it
-        if brace_depth == 0 && json_buffer.contains('{') && json_buffer.contains('}') {
-            // Parse JSON and extract accelerometer data
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+    for value_result in stream {
+        match value_result {
+            Ok(data) => {
                 if let Some(obj) = data.as_object() {
+                    // Skip empty {} objects (termux-sensor warmup phase)
+                    if obj.is_empty() {
+                        continue;
+                    }
+
                     for (sensor_key, sensor_data) in obj.iter() {
                         // Check if this is accelerometer data
                         if sensor_key.contains("Accelerometer") {
@@ -124,9 +129,10 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
                     }
                 }
             }
-
-            json_buffer.clear();
-            brace_depth = 0;
+            Err(e) => {
+                eprintln!("[accel] JSON error: {}", e);
+                break;
+            }
         }
     }
 
@@ -171,6 +177,10 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
     // the proper fix would be to have a shared message channel or parser.
     // For now, we spawn independent termux-sensor with explicit gyro sensor ID (fallback approach).
 
+    // Note: Gyro sensor cleanup is NOT needed here - accel_loop already does cleanup at startup
+    // Running cleanup twice causes race conditions and stream termination
+    eprintln!("[gyro] Starting gyro loop (skipping cleanup - accel already cleaned)");
+
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
         .arg("20")
@@ -198,28 +208,18 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
 
     let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
-    let mut json_buffer = String::new();
-    let mut brace_depth = 0i32;
 
-    for line_result in reader.lines() {
-        let line = match line_result {
-            Ok(l) => l,
-            Err(_) => break,
-        };
+    let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
 
-        if line.is_empty() {
-            continue;
-        }
-
-        json_buffer.push_str(&line);
-        json_buffer.push('\n');
-
-        brace_depth += line.matches('{').count() as i32;
-        brace_depth -= line.matches('}').count() as i32;
-
-        if brace_depth == 0 && json_buffer.contains('{') && json_buffer.contains('}') {
-            if let Ok(data) = serde_json::from_str::<serde_json::Value>(&json_buffer) {
+    for value_result in stream {
+        match value_result {
+            Ok(data) => {
                 if let Some(obj) = data.as_object() {
+                    // Skip empty {} objects (termux-sensor warmup phase)
+                    if obj.is_empty() {
+                        continue;
+                    }
+
                     for (sensor_key, sensor_data) in obj.iter() {
                         // Check if this is gyroscope data
                         if sensor_key.contains("Gyroscope") {
@@ -253,9 +253,10 @@ pub async fn gyro_loop(tx: Sender<GyroData>, enabled: bool) {
                     }
                 }
             }
-
-            json_buffer.clear();
-            brace_depth = 0;
+            Err(e) => {
+                eprintln!("[gyro] JSON error: {}", e);
+                break;
+            }
         }
     }
 
