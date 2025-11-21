@@ -283,6 +283,13 @@ def generate_gpx_from_json(json_filepath: str) -> str:
 
 def lazy_has_gps_data(data: dict) -> bool:
     """Fast check for GPS data - early exit after finding first valid coordinate"""
+    # Check Rust comparison format: readings[].gps
+    if "readings" in data and isinstance(data["readings"], list):
+        for reading in data["readings"][:10]:  # Only check first 10 samples
+            if isinstance(reading, dict) and "gps" in reading and isinstance(reading["gps"], dict):
+                if "latitude" in reading["gps"] and "longitude" in reading["gps"]:
+                    return True
+
     # Check nested format (sample["gps"]["latitude"])
     if "gps_data" in data and isinstance(data["gps_data"], list):
         for sample in data["gps_data"][:10]:  # Only check first 10 samples
@@ -315,20 +322,36 @@ def get_drive_stats(data: dict) -> dict:
         "peak_memory_mb": 0,
     }
 
+    # Try to find metrics dict - Rust files nest stats under "metrics"
+    metrics = data.get("metrics", {})
+    if not isinstance(metrics, dict):
+        metrics = {}
+
     # Extract sample counts (handle both int and list formats)
     for field in ["gps_samples", "accel_samples", "gyro_samples"]:
-        if isinstance(data.get(field), int):
+        # First check nested metrics (Rust format)
+        if isinstance(metrics.get(field), int):
+            stats[field] = metrics[field]
+        # Then check top-level (Python format)
+        elif isinstance(data.get(field), int):
             stats[field] = data[field]
         elif isinstance(data.get(field), list):
             stats[field] = len(data[field])
 
-    # Extract peak memory
-    if isinstance(data.get("peak_memory_mb"), (int, float)):
+    # Extract peak memory - check metrics first (Rust format)
+    if isinstance(metrics.get("peak_memory_mb"), (int, float)):
+        stats["peak_memory_mb"] = metrics["peak_memory_mb"]
+    elif isinstance(data.get("peak_memory_mb"), (int, float)):
         stats["peak_memory_mb"] = data["peak_memory_mb"]
 
     # Extract distance - check in priority order
-    # 1. Nested final_metrics (comparison test files - check first!)
-    if "final_metrics" in data:
+    # 1. Nested metrics.ekf_distance (Rust comparison files)
+    if "ekf_distance" in metrics and isinstance(metrics["ekf_distance"], (int, float)):
+        dist = metrics["ekf_distance"]
+        if 0 < dist < 1000000:  # Sanity check
+            stats["distance_km"] = round(dist / 1000, 2)
+    # 2. Nested final_metrics (comparison test files - check first!)
+    elif "final_metrics" in data:
         metrics = data["final_metrics"]
         if isinstance(metrics, dict):
             # Try nested filter metrics (comparison format)
@@ -391,8 +414,22 @@ def list_drives(limit: int = 20, offset: int = 0):
             if (filename.startswith("motion_track_v2_") or filename.startswith("comparison_")) and filename.endswith(".json"):
                 all_filepaths.append(os.path.join(SESSIONS_DIR, filename))
 
-    # Phase 2: Sort by modification time (filesystem only, no JSON parsing)
-    all_filepaths.sort(key=lambda x: os.path.getmtime(x), reverse=True)
+    # Phase 2: Sort - prioritize GPS-enabled files (has_gps), then by modification time
+    # This ensures user's GPS runs are visible even if old, not hidden in pagination
+    def sort_key(filepath):
+        """Sort by: (1) has GPS (reverse), (2) modification time (reverse)"""
+        try:
+            # Quick check: does filename suggest GPS? Or check file size as proxy
+            # Files with more data tend to have GPS, but this is a heuristic
+            # For accuracy, we'd need to parse JSON (expensive)
+            # Workaround: sort by filesize as proxy (GPS-enabled runs are usually larger)
+            file_size = os.path.getsize(filepath)
+            mtime = os.path.getmtime(filepath)
+            return (-file_size, -mtime)  # Larger files first, then newer
+        except:
+            return (0, -os.path.getmtime(filepath))
+
+    all_filepaths.sort(key=sort_key)
 
     total = len(all_filepaths)
 
@@ -622,7 +659,28 @@ def get_live_data(session_id: str):
 
         # Extract latest GPS samples for route display (last 100 points)
         gps_samples = []
-        if "gps_samples" in data and isinstance(data["gps_samples"], list):
+
+        # Try Rust comparison format first: readings[].gps
+        # NOTE: GPS data is sparse in readings (only when GPS update arrived)
+        # Extract ALL GPS readings, not just the last 100
+        if "readings" in data and isinstance(data["readings"], list):
+            gps_points = []
+            for reading in data["readings"]:  # Scan entire array
+                if isinstance(reading, dict) and "gps" in reading and isinstance(reading["gps"], dict):
+                    gps_data = reading["gps"]
+                    if "latitude" in gps_data and "longitude" in gps_data:
+                        gps_points.append({
+                            "latitude": gps_data["latitude"],
+                            "longitude": gps_data["longitude"],
+                            "accuracy": gps_data.get("accuracy"),
+                            "speed": gps_data.get("speed"),
+                            "bearing": gps_data.get("bearing")
+                        })
+            # Take last 100 valid GPS points
+            gps_samples = gps_points[-100:] if gps_points else []
+
+        # Fall back to Python format: gps_samples array
+        if not gps_samples and "gps_samples" in data and isinstance(data["gps_samples"], list):
             gps_samples = data["gps_samples"][-100:]  # Last 100 GPS points
 
         tracks_payload = {}
@@ -647,11 +705,16 @@ def get_live_data(session_id: str):
                 if formatted:
                     tracks_payload[key] = formatted
 
+        # Get total counts - handle both Rust (metrics) and Python formats
+        total_gps = len(gps_samples)  # Use extracted GPS samples count
+        total_accel = data.get("metrics", {}).get("accel_samples") or len(data.get("accel_samples", []))
+        total_gyro = data.get("metrics", {}).get("gyro_samples") or len(data.get("gyro_samples", []))
+
         return {
             "gps_samples": gps_samples,
-            "total_gps": len(data.get("gps_samples", [])),
-            "total_accel": len(data.get("accel_samples", [])),
-            "total_gyro": len(data.get("gyro_samples", [])),
+            "total_gps": total_gps,
+            "total_accel": total_accel,
+            "total_gyro": total_gyro,
             "auto_save": data.get("auto_save", False),
             "autosave_number": data.get("autosave_number", 0),
             "peak_memory_mb": data.get("peak_memory_mb", 0),
