@@ -36,19 +36,20 @@ pub struct GpsData {
 static SHARED_IMU_INITIALIZED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 pub async fn accel_loop(tx: Sender<AccelData>) {
-    println!("[accel] Initializing accelerometer loop");
+    eprintln!("[accel] STARTUP: Initializing accelerometer loop");
 
     // CRITICAL: Cleanup sensor before starting to ensure accelerometer works
     // Without this, accel may produce no output (Termux API quirk)
-    let _ = Command::new("termux-sensor")
+    let cleanup_result = Command::new("termux-sensor")
         .arg("-c")
         .output();
-    println!("[accel] Sensor cleanup complete, waiting 500ms for backend reset...");
+    eprintln!("[accel] STARTUP: Sensor cleanup complete: {:?}, waiting 500ms for backend reset...", cleanup_result.is_ok());
 
     // Wait for sensor backend to fully reset after cleanup
     tokio::time::sleep(tokio::time::Duration::from_millis(500)).await;
 
     // Start persistent termux-sensor process for accelerometer (match gyro pattern exactly)
+    eprintln!("[accel] STARTUP: Spawning termux-sensor process...");
     let mut sensor_proc = match Command::new("termux-sensor")
         .arg("-d")
         .arg("20")  // 20ms delay = ~50Hz sampling
@@ -59,12 +60,13 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
         .spawn()
     {
         Ok(p) => {
-            println!("[accel] ✓ Process spawned successfully");
+            eprintln!("[accel] STARTUP: ✓ Process spawned successfully");
             SHARED_IMU_INITIALIZED.store(true, std::sync::atomic::Ordering::Relaxed);
             p
         }
         Err(e) => {
-            println!("[accel] Failed to spawn termux-sensor: {}", e);
+            eprintln!("[accel] STARTUP: Failed to spawn termux-sensor: {}", e);
+            eprintln!("[accel] STARTUP: Falling back to mock data");
             mock_accel_loop(tx).await;
             return;
         }
@@ -72,11 +74,11 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
 
     let stdout = match sensor_proc.stdout.take() {
         Some(s) => {
-            println!("[accel] ✓ Got stdout, starting to read lines");
+            eprintln!("[accel] STARTUP: ✓ Got stdout, starting to read lines");
             s
         }
         None => {
-            println!("[accel] No stdout from termux-sensor");
+            eprintln!("[accel] STARTUP: No stdout from termux-sensor");
             return;
         }
     };
@@ -84,8 +86,9 @@ pub async fn accel_loop(tx: Sender<AccelData>) {
     let reader = BufReader::new(stdout);
     let mut sample_count = 0u64;
 
-    println!("[accel] Starting streaming JSON deserializer");
+    eprintln!("[accel] STARTUP: Starting streaming JSON deserializer");
     let stream = serde_json::Deserializer::from_reader(reader).into_iter::<Value>();
+    eprintln!("[accel] STARTUP: Deserializer created, entering stream loop");
 
     for value_result in stream {
         match value_result {

@@ -3,6 +3,9 @@ use chrono::Utc;
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
+use std::panic;
+use std::fs::OpenOptions;
+use std::io::Write;
 use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 
@@ -18,6 +21,17 @@ use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
 use sensors::{AccelData, GpsData, GyroData};
 use smoothing::AccelSmoother;
+
+/// Log to file for debugging (bypasses stdout which may be corrupted)
+fn debug_log(msg: &str) {
+    if let Ok(mut file) = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open("motion_tracker_debug.log")
+    {
+        let _ = writeln!(file, "[{}] {}", Utc::now().format("%H:%M:%S%.3f"), msg);
+    }
+}
 
 /// Get current memory usage in MB from /proc/self/status
 fn get_memory_mb() -> f64 {
@@ -120,6 +134,31 @@ struct Metrics {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install panic hook to log panics to file
+    let original_hook = panic::take_hook();
+    panic::set_hook(Box::new(move |panic_info| {
+        let msg = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic".to_string()
+        };
+
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_else(|| "unknown location".to_string());
+
+        debug_log(&format!("PANIC: {} at {}", msg, location));
+
+        // Print to stderr as well
+        eprintln!("PANIC: {} at {}", msg, location);
+
+        // Call original hook
+        original_hook(panic_info);
+    }));
+
     let args = Args::parse();
 
     println!("[{}] Motion Tracker RS Starting", ts_now());
