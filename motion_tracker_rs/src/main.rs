@@ -1012,7 +1012,9 @@ async fn main() -> Result<()> {
                 filename
             );
 
-            readings.clear();
+            // Don't clear readings - let them accumulate for the dashboard map track
+            // For short tests this is fine memory-wise, and GPS data needs to persist
+            // Only clear after final save at end of program
             last_save = now;
         }
 
