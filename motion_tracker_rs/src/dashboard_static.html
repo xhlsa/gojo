@@ -1,0 +1,157 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gojo Rust Dashboard</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            background-color: #1a1a1a;
+            color: #e0e0e0;
+            margin: 0;
+            padding: 20px;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+        }
+        .card {
+            background-color: #2d2d2d;
+            border-radius: 12px;
+            padding: 20px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.3);
+        }
+        h2 { margin-top: 0; color: #4caf50; border-bottom: 1px solid #444; padding-bottom: 10px; }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            font-size: 1.1em;
+        }
+        .value { font-weight: bold; font-family: monospace; font-size: 1.2em; }
+        .status-dot {
+            height: 12px;
+            width: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 10px;
+        }
+        .online { background-color: #4caf50; }
+        .offline { background-color: #f44336; }
+        .chart-container {
+            grid-column: 1 / -1;
+            background-color: #2d2d2d;
+            border-radius: 12px;
+            padding: 20px;
+            height: 300px;
+        }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h2>System Status</h2>
+        <div class="metric">
+            <span>Connection</span>
+            <span><span id="connection-dot" class="status-dot offline"></span><span id="connection-text">Disconnected</span></span>
+        </div>
+        <div class="metric">
+            <span>Uptime</span>
+            <span id="uptime" class="value">0s</span>
+        </div>
+        <div class="metric">
+            <span>FPS (Updates)</span>
+            <span id="fps" class="value">0</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Sensors</h2>
+        <div class="metric">
+            <span>Accel Samples</span>
+            <span id="accel-count" class="value">0</span>
+        </div>
+        <div class="metric">
+            <span>Gyro Samples</span>
+            <span id="gyro-count" class="value">0</span>
+        </div>
+        <div class="metric">
+            <span>GPS Fixes</span>
+            <span id="gps-count" class="value">0</span>
+        </div>
+    </div>
+
+    <div class="card">
+        <h2>Live Data</h2>
+        <div class="metric">
+            <span>Speed (GPS)</span>
+            <span class="value"><span id="speed">0.0</span> m/s</span>
+        </div>
+        <div class="metric">
+            <span>Total G-Force</span>
+            <span class="value"><span id="gforce">0.0</span> g</span>
+        </div>
+        <div class="metric">
+            <span>Heading</span>
+            <span class="value"><span id="heading">0</span>°</span>
+        </div>
+    </div>
+
+    <script>
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+        let socket;
+        let lastUpdate = Date.now();
+        let frames = 0;
+
+        function connect() {
+            socket = new WebSocket(wsUrl);
+
+            socket.onopen = () => {
+                document.getElementById('connection-dot').className = 'status-dot online';
+                document.getElementById('connection-text').textContent = 'Live';
+            };
+
+            socket.onclose = () => {
+                document.getElementById('connection-dot').className = 'status-dot offline';
+                document.getElementById('connection-text').textContent = 'Reconnecting...';
+                setTimeout(connect, 1000);
+            };
+
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                updateDashboard(data);
+                
+                // Calc FPS
+                frames++;
+                const now = Date.now();
+                if (now - lastUpdate >= 1000) {
+                    document.getElementById('fps').textContent = frames;
+                    frames = 0;
+                    lastUpdate = now;
+                }
+            };
+        }
+
+        function updateDashboard(data) {
+            document.getElementById('uptime').textContent = data.uptime + 's';
+            document.getElementById('accel-count').textContent = data.accel_samples.toLocaleString();
+            document.getElementById('gyro-count').textContent = data.gyro_samples.toLocaleString();
+            document.getElementById('gps-count').textContent = data.gps_fixes;
+            
+            document.getElementById('speed').textContent = data.gps_speed.toFixed(1);
+            
+            // Calculate G from raw accel if available, or use pre-calculated
+            const ax = data.accel_x || 0;
+            const ay = data.accel_y || 0;
+            const az = data.accel_z || 0;
+            const g = Math.sqrt(ax*ax + ay*ay + az*az) / 9.81;
+            document.getElementById('gforce').textContent = g.toFixed(2);
+            
+            document.getElementById('heading').textContent = (data.gps_bearing || 0).toFixed(0);
+        }
+
+        connect();
+    </script>
+</body>
+</html>

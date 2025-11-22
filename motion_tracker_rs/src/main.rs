@@ -72,6 +72,7 @@ mod live_status;
 mod restart_manager;
 mod types;
 mod smoothing;
+mod dashboard;
 
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
@@ -124,6 +125,10 @@ struct Args {
     /// Output directory
     #[arg(long, default_value = "motion_tracker_sessions")]
     output_dir: String,
+
+    /// Dashboard port (default: 8080)
+    #[arg(long, default_value = "8080")]
+    dashboard_port: u16,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -636,6 +641,13 @@ async fn main() -> Result<()> {
     // Initialize Health Monitor & Restart Manager
     let health_monitor = Arc::new(HealthMonitor::new());
     let restart_manager = Arc::new(RestartManager::new());
+
+    // Spawn Dashboard Task
+    let dashboard_state = sensor_state.clone();
+    let dashboard_port = args.dashboard_port;
+    tokio::spawn(async move {
+        dashboard::start_dashboard(dashboard_state, dashboard_port).await;
+    });
 
     // Spawn Health Monitor Task
     let hm_clone = health_monitor.clone();
