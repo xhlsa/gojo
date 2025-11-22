@@ -15,6 +15,56 @@ use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use nalgebra::Vector3;
 
+struct LowPassFilter {
+    alpha: f64,
+    last_output: Vector3<f64>,
+    initialized: bool,
+}
+
+impl LowPassFilter {
+    fn new(cutoff_hz: f64, sample_rate_hz: f64) -> Self {
+        let dt = 1.0 / sample_rate_hz;
+        let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff_hz);
+        let alpha = dt / (rc + dt);
+        Self {
+            alpha,
+            last_output: Vector3::zeros(),
+            initialized: false,
+        }
+    }
+
+    fn update(&mut self, input: Vector3<f64>) -> Vector3<f64> {
+        if !self.initialized {
+            self.last_output = input;
+            self.initialized = true;
+            return input;
+        }
+        self.last_output = self.last_output * (1.0 - self.alpha) + input * self.alpha;
+        self.last_output
+    }
+}
+
+struct IncidentCooldown {
+    last_trigger: f64,
+    cooldown_secs: f64,
+}
+
+impl IncidentCooldown {
+    fn new(cooldown_secs: f64) -> Self {
+        Self {
+            last_trigger: f64::NEG_INFINITY,
+            cooldown_secs,
+        }
+    }
+
+    fn ready_and_touch(&mut self, now: f64) -> bool {
+        if now - self.last_trigger >= self.cooldown_secs {
+            self.last_trigger = now;
+            return true;
+        }
+        false
+    }
+}
 mod filters;
 mod health_monitor;
 mod incident;
@@ -596,6 +646,7 @@ async fn main() -> Result<()> {
     let mut accel_smoother = AccelSmoother::new(9);
     // Low-pass filter for accelerometer to reduce high-frequency jitter (cup holder rattle)
     let mut accel_lpf = LowPassFilter::new(4.0, 50.0);
+    let mut incident_cooldown = IncidentCooldown::new(1.0); // 1s cooldown between incident logs
 
     let start = Utc::now();
     let mut last_save = Utc::now();
@@ -688,6 +739,9 @@ async fn main() -> Result<()> {
     let zupt_accel_threshold_low = 9.5;
     let zupt_accel_threshold_high = 10.1;
     let zupt_gyro_threshold = 0.1; // rad/s
+    let brake_threshold = 4.0; // m/s^2 (sustained maneuvers)
+    let turn_threshold = 4.0;  // m/s^2 (reuse accel magnitude for lateral events)
+    let crash_threshold = 20.0; // m/s^2 (instant shocks)
 
     // GPS tracking
     let mut last_gps_timestamp = 0.0f64;
@@ -714,6 +768,10 @@ async fn main() -> Result<()> {
 
         // Acquire read lock on accel buffer
         {
+            let gps_snapshot = {
+                let g = sensor_state.latest_gps.read().await;
+                g.clone()
+            };
             let mut buf = sensor_state.accel_buffer.write().await;
             while let Some(mut accel) = buf.pop_front() {
                 // Track filtered acceleration magnitude BEFORE subtracting gravity (for ZUPT detection)
@@ -747,6 +805,45 @@ async fn main() -> Result<()> {
                 };
 
                 readings.push(reading);
+
+                // ===== INCIDENT DETECTION =====
+                // Sustained maneuvers (filtered, gravity-removed)
+                if corrected_mag > brake_threshold || corrected_mag > turn_threshold {
+                    if incident_cooldown.ready_and_touch(accel.timestamp) {
+                        eprintln!("[INCIDENT] Hard Maneuver Detected: {:.1} m/s^2", corrected_mag);
+                        let (lat, lon, speed) = gps_snapshot
+                            .as_ref()
+                            .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
+                            .unwrap_or((None, None, None));
+                        incidents.push(incident::Incident {
+                            timestamp: accel.timestamp,
+                            incident_type: "hard_maneuver".to_string(),
+                            magnitude: corrected_mag,
+                            gps_speed: speed,
+                            latitude: lat,
+                            longitude: lon,
+                        });
+                    }
+                }
+
+                // Instant shocks (raw magnitude)
+                if raw_vec.norm() > crash_threshold {
+                    if incident_cooldown.ready_and_touch(accel.timestamp) {
+                        eprintln!("[CRASH] High G Event: {:.1} m/s^2", raw_vec.norm());
+                        let (lat, lon, speed) = gps_snapshot
+                            .as_ref()
+                            .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
+                            .unwrap_or((None, None, None));
+                        incidents.push(incident::Incident {
+                            timestamp: accel.timestamp,
+                            incident_type: "impact".to_string(),
+                            magnitude: raw_vec.norm(),
+                            gps_speed: speed,
+                            latitude: lat,
+                            longitude: lon,
+                        });
+                    }
+                }
 
                 // Check if stationary (for ZUPT)
                 let is_still = raw_accel_mag > zupt_accel_threshold_low && raw_accel_mag < zupt_accel_threshold_high;
@@ -1061,6 +1158,32 @@ async fn main() -> Result<()> {
                     let _ = comp_filter.update(corrected_vec.x, corrected_vec.y, corrected_vec.z, 0.0, 0.0, 0.0);
                 }
 
+                // Incident detection on final drain (best-effort)
+                if corrected_mag > brake_threshold || corrected_mag > turn_threshold {
+                    if incident_cooldown.ready_and_touch(accel.timestamp) {
+                        incidents.push(incident::Incident {
+                            timestamp: accel.timestamp,
+                            incident_type: "hard_maneuver".to_string(),
+                            magnitude: corrected_mag,
+                            gps_speed: None,
+                            latitude: None,
+                            longitude: None,
+                        });
+                    }
+                }
+                if raw_vec.norm() > crash_threshold {
+                    if incident_cooldown.ready_and_touch(accel.timestamp) {
+                        incidents.push(incident::Incident {
+                            timestamp: accel.timestamp,
+                            incident_type: "impact".to_string(),
+                            magnitude: raw_vec.norm(),
+                            gps_speed: None,
+                            latitude: None,
+                            longitude: None,
+                        });
+                    }
+                }
+
                 count += 1;
             }
             count
@@ -1193,32 +1316,4 @@ fn ts_now() -> String {
 
 fn ts_now_clean() -> String {
     Utc::now().format("%Y%m%d_%H%M%S").to_string()
-}
-struct LowPassFilter {
-    alpha: f64,
-    last_output: Vector3<f64>,
-    initialized: bool,
-}
-
-impl LowPassFilter {
-    fn new(cutoff_hz: f64, sample_rate_hz: f64) -> Self {
-        let dt = 1.0 / sample_rate_hz;
-        let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff_hz);
-        let alpha = dt / (rc + dt);
-        Self {
-            alpha,
-            last_output: Vector3::zeros(),
-            initialized: false,
-        }
-    }
-
-    fn update(&mut self, input: Vector3<f64>) -> Vector3<f64> {
-        if !self.initialized {
-            self.last_output = input;
-            self.initialized = true;
-            return input;
-        }
-        self.last_output = self.last_output * (1.0 - self.alpha) + input * self.alpha;
-        self.last_output
-    }
 }
