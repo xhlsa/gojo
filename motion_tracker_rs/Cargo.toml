@@ -7,6 +7,10 @@ edition = "2021"
 name = "motion_tracker"
 path = "src/main.rs"
 
+[[bin]]
+name = "dashboard"
+path = "src/bin/dashboard.rs"
+
 [lib]
 name = "motion_tracker_rs"
 path = "src/lib.rs"
