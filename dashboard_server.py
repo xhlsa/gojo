@@ -486,7 +486,10 @@ def list_drives(limit: int = 20, offset: int = 0):
             data = load_json_file(filepath)
             stats = get_drive_stats(data)
             timestamp = parse_timestamp(filename)
-            gpx_filepath = filepath.replace(".json", ".gpx")
+            if filepath.endswith(".json.gz"):
+                gpx_filepath = filepath.replace(".json.gz", ".gpx")
+            else:
+                gpx_filepath = filepath.replace(".json", ".gpx")
 
             # Check GPX using lazy function (only first 10 samples)
             has_gpx = os.path.exists(gpx_filepath) or lazy_has_gps_data(data)
@@ -536,9 +539,9 @@ def get_drive_details(drive_id: str):
             session_path = os.path.join(SESSIONS_SUBDIR, session_dir)
             if os.path.isdir(session_path):
                 for filename in os.listdir(session_path):
-                    if filename.startswith(drive_id) and filename.endswith(".json"):
+                    if filename.startswith(drive_id) and (filename.endswith(".json") or filename.endswith(".json.gz")):
                         json_filepath = os.path.join(session_path, filename)
-                        gpx_filepath = json_filepath.replace(".json", ".gpx")
+                        gpx_filepath = json_filepath.replace(".json.gz", ".gpx").replace(".json", ".gpx")
                         break
             if json_filepath:
                 break
@@ -546,9 +549,9 @@ def get_drive_details(drive_id: str):
     # Search in main sessions directory if not found
     if not json_filepath and os.path.exists(SESSIONS_DIR):
         for filename in os.listdir(SESSIONS_DIR):
-            if filename.startswith(drive_id) and filename.endswith(".json"):
+            if filename.startswith(drive_id) and (filename.endswith(".json") or filename.endswith(".json.gz")):
                 json_filepath = os.path.join(SESSIONS_DIR, filename)
-                gpx_filepath = json_filepath.replace(".json", ".gpx")
+                gpx_filepath = json_filepath.replace(".json.gz", ".gpx").replace(".json", ".gpx")
                 break
 
     if not json_filepath:
@@ -615,7 +618,7 @@ def get_drive_gpx(drive_id: str):
                     if filename.startswith(drive_id):
                         if filename.endswith(".gpx"):
                             gpx_filepath = os.path.join(session_path, filename)
-                        elif filename.endswith(".json"):
+                        elif filename.endswith(".json") or filename.endswith(".json.gz"):
                             json_filepath = os.path.join(session_path, filename)
             if gpx_filepath or json_filepath:
                 break
@@ -626,7 +629,7 @@ def get_drive_gpx(drive_id: str):
             if filename.startswith(drive_id):
                 if filename.endswith(".gpx"):
                     gpx_filepath = os.path.join(SESSIONS_DIR, filename)
-                elif filename.endswith(".json"):
+                elif filename.endswith(".json") or filename.endswith(".json.gz"):
                     json_filepath = os.path.join(SESSIONS_DIR, filename)
             if gpx_filepath or json_filepath:
                 break
