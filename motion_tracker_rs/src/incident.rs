@@ -32,8 +32,13 @@ impl IncidentDetector {
         lat: Option<f64>,
         lon: Option<f64>,
     ) -> Option<Incident> {
-        // Impact: accel > 1.5g (highest severity, check first)
-        if accel_mag > 1.5 {
+        // Thresholds (aligned with main.rs)
+        let crash_threshold = 20.0; // m/s^2
+        let hard_maneuver_threshold = 4.0; // m/s^2
+        let swerve_threshold_deg = 45.0; // deg/s
+
+        // Impact: > 20 m/s^2 (highest severity, check first)
+        if accel_mag > crash_threshold {
             return Some(Incident {
                 timestamp,
                 incident_type: "impact".to_string(),
@@ -44,21 +49,26 @@ impl IncidentDetector {
             });
         }
 
-        // Hard braking: accel > 0.8g
-        if accel_mag > 0.8 {
-            return Some(Incident {
-                timestamp,
-                incident_type: "hard_braking".to_string(),
-                magnitude: accel_mag,
-                gps_speed,
-                latitude: lat,
-                longitude: lon,
-            });
+        // Hard Maneuver (Braking/Turn): > 4.0 m/s^2
+        // Only if moving > 2 m/s to avoid handling noise
+        if accel_mag > hard_maneuver_threshold {
+             if let Some(speed) = gps_speed {
+                if speed > 2.0 {
+                    return Some(Incident {
+                        timestamp,
+                        incident_type: "hard_maneuver".to_string(),
+                        magnitude: accel_mag,
+                        gps_speed: Some(speed),
+                        latitude: lat,
+                        longitude: lon,
+                    });
+                }
+             }
         }
 
-        // Swerving: gyro_z > 60°/sec with GPS speed > 2 m/s
-        let gyro_thresh = 60.0 * std::f64::consts::PI / 180.0; // Convert to rad/s
-        if gyro_z.abs() > gyro_thresh {
+        // Swerving: gyro_z > 45°/sec with GPS speed > 2 m/s
+        let gyro_thresh_rad = swerve_threshold_deg * std::f64::consts::PI / 180.0;
+        if gyro_z.abs() > gyro_thresh_rad {
             if let Some(speed) = gps_speed {
                 if speed > 2.0 {
                     // Apply cooldown

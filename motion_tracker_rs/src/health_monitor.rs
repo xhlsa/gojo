@@ -200,6 +200,13 @@ pub async fn health_monitor_task(
                 monitor.accel.increment_restart_attempts();
                 restart_manager.signal_accel_restart();
             }
+        } else if report.accel_healthy {
+            // Recovery check: If we were previously failing (attempts > 0), confirm recovery
+            if monitor.accel.get_restart_attempts() > 0 {
+                eprintln!("[HEALTH] ✓ Accel recovered! Resetting restart counters.");
+                monitor.accel.reset_restart_attempts();
+                restart_manager.accel_restart_success();
+            }
         }
 
         if !report.gps_healthy && report.gps_can_restart {
@@ -213,6 +220,27 @@ pub async fn health_monitor_task(
                 monitor.gps.increment_restart_attempts();
                 restart_manager.signal_gps_restart();
             }
+        } else if report.gps_healthy {
+            if monitor.gps.get_restart_attempts() > 0 {
+                 eprintln!("[HEALTH] ✓ GPS recovered! Resetting restart counters.");
+                 monitor.gps.reset_restart_attempts();
+                 restart_manager.gps_restart_success();
+            }
+        }
+
+        // Gyro is part of Accel/IMU for restarts, but track its health separately
+        if !report.gyro_healthy && !report.accel_healthy && report.gyro_restart_count < 60 {
+             // If BOTH are silent, we already handled accel.
+             // If ONLY gyro is silent, we might need to restart the whole IMU.
+             // Current architecture restarts IMU based on accel signal.
+             // Let's signal gyro restart too just to be safe/complete.
+             monitor.gyro.increment_restart_attempts();
+             restart_manager.signal_gyro_restart();
+        } else if report.gyro_healthy {
+             if monitor.gyro.get_restart_attempts() > 0 {
+                 monitor.gyro.reset_restart_attempts();
+                 restart_manager.gyro_restart_success();
+             }
         }
 
         // Log max restart attempts exceeded

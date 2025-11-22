@@ -70,12 +70,12 @@ mod health_monitor;
 mod incident;
 mod live_status;
 mod restart_manager;
-mod sensors;
+mod types;
 mod smoothing;
 
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
-use sensors::{AccelData, GpsData, GyroData};
+use types::{AccelData, GpsData, GyroData};
 use smoothing::AccelSmoother;
 
 /// Log to file for debugging (bypasses stdout which may be corrupted)
@@ -132,6 +132,7 @@ struct SensorReading {
     accel: Option<AccelData>,
     gyro: Option<GyroData>,
     gps: Option<GpsData>,
+    roughness: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -353,7 +354,7 @@ fn calculate_biases(
 /// Combined sensor reader task: Read BOTH accel and gyro from single termux-sensor stream
 /// Accel and gyro come from same LSM6DSO IMU, must be in same command
 /// Handles multi-line pretty-printed JSON by accumulating until complete object
-async fn imu_reader_task(state: SensorState) {
+async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>) {
     eprintln!("[imu-reader] Initializing IMU reader (accel + gyro together)");
 
     // Cleanup sensor
@@ -443,6 +444,7 @@ async fn imu_reader_task(state: SensorState) {
                         if sensor_key.contains("Accelerometer") {
                             if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
                                 if values.len() >= 3 {
+                                    health_monitor.accel.update(); // Heartbeat
                                     let accel = AccelData {
                                         timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
                                         x: values[0].as_f64().unwrap_or(0.0),
@@ -474,6 +476,7 @@ async fn imu_reader_task(state: SensorState) {
                         } else if sensor_key.contains("Gyroscope") {
                             if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
                                 if values.len() >= 3 {
+                                    health_monitor.gyro.update(); // Heartbeat
                                     let gyro = GyroData {
                                         timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
                                         x: values[0].as_f64().unwrap_or(0.0),
@@ -518,10 +521,14 @@ async fn imu_reader_task(state: SensorState) {
     }
 
     eprintln!("[imu-reader] Stream ended: Accel: {}, Gyro: {}", accel_count, gyro_count);
+    
+    // If stream ends naturally (not crash), we should still signal failure so it restarts
+    // But if it was closed explicitly via Abort, this won't be reached.
 }
 
+
 /// GPS reader task: Poll termux-location every 1000ms
-async fn gps_reader_task(state: SensorState) {
+async fn gps_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>) {
     eprintln!("[gps-reader] Initializing GPS reader");
     let mut fix_count = 0u64;
 
@@ -546,6 +553,8 @@ async fn gps_reader_task(state: SensorState) {
                             obj.get("bearing").and_then(|v| v.as_f64()),
                             obj.get("accuracy").and_then(|v| v.as_f64()),
                         ) {
+                            health_monitor.gps.update(); // Heartbeat
+
                             let gps_data = GpsData {
                                 timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
                                 latitude: lat,
@@ -582,6 +591,10 @@ async fn gps_reader_task(state: SensorState) {
         }
     }
 }
+
+
+use health_monitor::HealthMonitor;
+use restart_manager::RestartManager;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -620,16 +633,61 @@ async fn main() -> Result<()> {
     // Shared sensor state
     let sensor_state = SensorState::new();
 
+    // Initialize Health Monitor & Restart Manager
+    let health_monitor = Arc::new(HealthMonitor::new());
+    let restart_manager = Arc::new(RestartManager::new());
+
+    // Spawn Health Monitor Task
+    let hm_clone = health_monitor.clone();
+    let rm_clone = restart_manager.clone();
+    tokio::spawn(async move {
+        health_monitor::health_monitor_task(hm_clone, rm_clone).await;
+    });
+
     // Spawn combined IMU reader task (accel + gyro from single termux-sensor stream)
     let imu_state = sensor_state.clone();
+    let imu_hm = health_monitor.clone();
+    let imu_rm = restart_manager.clone();
     let imu_reader_handle = tokio::spawn(async move {
-        imu_reader_task(imu_state).await;
+        // Supervisor loop
+        loop {
+            // Check if we can start/restart
+            let can_run = imu_rm.accel_ready_restart(); // Using accel as proxy for shared IMU
+
+            if can_run {
+                eprintln!("[SUPERVISOR] Starting IMU task...");
+                // Run the task - if it returns, it failed or finished
+                imu_reader_task(imu_state.clone(), imu_hm.clone()).await;
+                
+                // If task exits, report failure
+                eprintln!("[SUPERVISOR] IMU task exited unexpectedly.");
+                imu_rm.accel_restart_failed(); // Record failure to trigger backoff
+                imu_rm.gyro_restart_failed();
+            } else {
+                // Backoff wait
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
     });
 
     // Spawn GPS reader task (polls termux-location every 1000ms)
     let gps_state = sensor_state.clone();
+    let gps_hm = health_monitor.clone();
+    let gps_rm = restart_manager.clone();
     let gps_reader_handle = tokio::spawn(async move {
-        gps_reader_task(gps_state).await;
+        loop {
+             let can_run = gps_rm.gps_ready_restart();
+
+            if can_run {
+                eprintln!("[SUPERVISOR] Starting GPS task...");
+                gps_reader_task(gps_state.clone(), gps_hm.clone()).await;
+                
+                eprintln!("[SUPERVISOR] GPS task exited unexpectedly.");
+                gps_rm.gps_restart_failed();
+            } else {
+                sleep(Duration::from_millis(100)).await;
+            }
+        }
     });
 
     // Initialize filters
@@ -647,6 +705,7 @@ async fn main() -> Result<()> {
     // Low-pass filter for accelerometer to reduce high-frequency jitter (cup holder rattle)
     let mut accel_lpf = LowPassFilter::new(4.0, 50.0);
     let mut incident_cooldown = IncidentCooldown::new(1.0); // 1s cooldown between incident logs
+    let mut avg_roughness: f64 = 0.0;
 
     let start = Utc::now();
     let mut last_save = Utc::now();
@@ -787,6 +846,11 @@ async fn main() -> Result<()> {
                 let mut corrected_y = corrected_vec.y;
                 let corrected_z = corrected_vec.z;
 
+                // High-pass component (what LPF removed)
+                let vibration_vec = raw_vec - filtered_vec;
+                let roughness_instant = vibration_vec.norm();
+                avg_roughness = avg_roughness * 0.9 + roughness_instant * 0.1;
+
                 // Apply virtual kick if active
                 if kick_frames_remaining > 0 {
                     corrected_y += 5.0; // Forward acceleration (Y-axis)
@@ -802,47 +866,49 @@ async fn main() -> Result<()> {
                     accel: Some(accel.clone()),
                     gyro: None,
                     gps: None,
+                    roughness: Some(avg_roughness),
                 };
 
                 readings.push(reading);
 
                 // ===== INCIDENT DETECTION =====
-                // Sustained maneuvers (filtered, gravity-removed)
-                if corrected_mag > brake_threshold || corrected_mag > turn_threshold {
-                    if incident_cooldown.ready_and_touch(accel.timestamp) {
-                        eprintln!("[INCIDENT] Hard Maneuver Detected: {:.1} m/s^2", corrected_mag);
-                        let (lat, lon, speed) = gps_snapshot
-                            .as_ref()
-                            .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
-                            .unwrap_or((None, None, None));
-                        incidents.push(incident::Incident {
-                            timestamp: accel.timestamp,
-                            incident_type: "hard_maneuver".to_string(),
-                            magnitude: corrected_mag,
-                            gps_speed: speed,
-                            latitude: lat,
-                            longitude: lon,
-                        });
-                    }
-                }
+                // Sustained maneuvers (filtered, gravity-removed) gated by EKF speed
+                let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
+                
+                // Extract raw gyro Z (if available) for swerve detection
+                let gyro_z = readings.last().and_then(|r| r.gyro.as_ref()).map(|g| g.z).unwrap_or(0.0);
+                let (lat, lon, speed) = gps_snapshot
+                    .as_ref()
+                    .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
+                    .unwrap_or((None, None, None));
 
-                // Instant shocks (raw magnitude)
-                if raw_vec.norm() > crash_threshold {
-                    if incident_cooldown.ready_and_touch(accel.timestamp) {
-                        eprintln!("[CRASH] High G Event: {:.1} m/s^2", raw_vec.norm());
-                        let (lat, lon, speed) = gps_snapshot
-                            .as_ref()
-                            .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
-                            .unwrap_or((None, None, None));
-                        incidents.push(incident::Incident {
-                            timestamp: accel.timestamp,
-                            incident_type: "impact".to_string(),
-                            magnitude: raw_vec.norm(),
-                            gps_speed: speed,
-                            latitude: lat,
-                            longitude: lon,
-                        });
-                    }
+                // Use unified detector (handles cooldowns internally for swerves, we handle global cooldown here)
+                if incident_cooldown.ready_and_touch(accel.timestamp) {
+                     // Pass corrected_mag (gravity removed) for maneuvers, but raw shock might need raw_vec
+                     // The detector logic we updated expects magnitude in m/s^2
+                     // For impacts, we want the raw shock. For maneuvers, we want the linear acceleration.
+                     // We'll pass the larger of the two to catch both cases, or prioritize based on magnitude.
+                     
+                     // Check for impact using RAW vector (includes gravity but shock is huge)
+                     let shock_val = raw_vec.norm();
+                     
+                     // Check for maneuver using CORRECTED vector
+                     let maneuver_val = corrected_mag;
+
+                     // Priority to Impact
+                     let detection_val = if shock_val > 20.0 { shock_val } else { maneuver_val };
+                     
+                     if let Some(incident) = incident_detector.detect(
+                         detection_val,
+                         gyro_z,
+                         Some(ekf_speed), // Use EKF speed as it's smoother/more reliable than raw GPS for gating
+                         accel.timestamp,
+                         lat,
+                         lon
+                     ) {
+                         eprintln!("[INCIDENT] {} Detected: {:.1} (Unit)", incident.incident_type, incident.magnitude);
+                         incidents.push(incident);
+                     }
                 }
 
                 // Check if stationary (for ZUPT)
@@ -973,6 +1039,7 @@ async fn main() -> Result<()> {
                             speed: gps.speed,
                             bearing: gps.bearing,
                         }),
+                        roughness: None,
                     };
                     readings.push(gps_reading);
                 }
@@ -1147,6 +1214,7 @@ async fn main() -> Result<()> {
                     accel: Some(accel.clone()),
                     gyro: None,
                     gps: None,
+                    roughness: Some(avg_roughness),
                 };
 
                 readings.push(reading);

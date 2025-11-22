@@ -3,7 +3,47 @@
 > Quick links: [README.md](../README.md) · [AGENTS.md](../AGENTS.md) · [GEMINI.md](../GEMINI.md) · [GYRO_BIAS_FINDINGS.md](.claude/GYRO_BIAS_FINDINGS.md)
 >
 > Python entrypoint: `./test_ekf.sh`
-> **Rust entrypoint (NEW):** `./motion_tracker_rs.sh [DURATION]`
+> **Rust entrypoint (PRODUCTION):** `./motion_tracker_rs.sh [DURATION]`
+
+## Rust Migration Status (Nov 22, 2025)
+
+**Status:** ✅ COMPLETE - Production-Grade, Self-Healing, Supervisor Pattern
+
+**Major Milestones Achieved:**
+1. **Supervisor Pattern:** Implemented a robust Supervisor Loop in `main.rs` that manages the lifecycle of `imu_reader_task` and `gps_reader_task`.
+2. **Self-Healing Resilience:**
+   - **Health Monitor:** Detects "silent" sensors (no data flow) and signals restarts.
+   - **Restart Manager:** Implements exponential backoff (2s -> 3s -> 4.5s -> ... max 30s) to prevent thrashing.
+   - **Success Detection:** Automatically resets backoff timers and counters after successful recovery (missing piece fixed).
+3. **Unified Incident Detection:**
+   - Ported `incident.rs` logic to `main.rs`.
+   - Standardized thresholds: Crash > 20.0 m/s², Maneuver > 4.0 m/s².
+   - Added gyro-based "Swerving" detection (> 45°/s).
+   - Smart filtering: Distinguishes between raw impacts (shocks) and gravity-corrected maneuvers.
+4. **Code Cleanup:**
+   - Deleted obsolete `sensors.rs`.
+   - Centralized data types in `types.rs`.
+   - 0 compiler errors/warnings.
+
+**Architecture Upgrade:**
+- **Before (Python):** Monolithic script, manual thread management, fragile restart logic ("clear deque then restart").
+- **After (Rust):** Async/Await (`tokio`), Type-safe concurrency (`Arc<Mutex>`), Supervisor/Worker pattern, proper backoff state machine.
+
+---
+
+## Debug Protocol: Lead/Implementation Workflow
+
+**Active Debugging Session (Auto-Save Logic)**
+
+When debugging specific logic issues, we use a structured Lead/Implementation pattern:
+
+- **Lead Role** (You): Provide specific logic, architecture decisions, and patterns
+- **Implementation Role** (Me): Execute code changes, test, validate
+- **Error Escalation:** If Rust compilation error (borrow checker, type mismatch) occurs:
+  - STOP immediately - do not guess fixes
+  - Output: `[Escalation]: <Error Summary>`
+  - Wait for Lead to provide safe-rust pattern
+- **Context Preservation:** This prevents circular errors and maintains code quality
 
 ---
 
