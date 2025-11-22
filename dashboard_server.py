@@ -563,32 +563,7 @@ def get_drive_details(drive_id: str):
         timestamp = parse_timestamp(os.path.basename(json_filepath))
 
         # Check if GPX exists or can be generated from JSON (same logic as /api/drives)
-        has_gpx = os.path.exists(gpx_filepath)
-        if not has_gpx:
-            # Check if JSON has actual GPS points (with lat/lon) that can be converted
-            try:
-                # motion_track_v2 format with gps_data containing actual GPS coordinates
-                if "gps_data" in data and isinstance(data["gps_data"], list) and len(data["gps_data"]) > 0:
-                    for sample in data["gps_data"]:
-                        if "gps" in sample and isinstance(sample["gps"], dict):
-                            if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
-                                has_gpx = True
-                                break
-                # motion_track_v2 format with gps_samples array
-                elif "gps_samples" in data and isinstance(data["gps_samples"], list) and len(data["gps_samples"]) > 0:
-                    for sample in data["gps_samples"]:
-                        if isinstance(sample, dict):
-                            # Check nested format (sample["gps"]["latitude"])
-                            if "gps" in sample and isinstance(sample["gps"], dict):
-                                if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
-                                    has_gpx = True
-                                    break
-                            # Check flat format (sample["latitude"]) - comparison files use this
-                            elif "latitude" in sample and "longitude" in sample:
-                                has_gpx = True
-                                break
-            except:
-                pass
+        has_gpx = os.path.exists(gpx_filepath) or lazy_has_gps_data(data)
 
         return {
             "id": drive_id,
