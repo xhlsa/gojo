@@ -13,6 +13,7 @@ use tokio::sync::mpsc;
 use tokio::time::{sleep, Duration};
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
+use nalgebra::Vector3;
 
 mod filters;
 mod health_monitor;
@@ -593,6 +594,8 @@ async fn main() -> Result<()> {
     let mut peak_memory_mb: f64 = 0.0;
     let mut current_memory_mb: f64 = 0.0;
     let mut accel_smoother = AccelSmoother::new(9);
+    // Low-pass filter for accelerometer to reduce high-frequency jitter (cup holder rattle)
+    let mut accel_lpf = LowPassFilter::new(4.0, 50.0);
 
     let start = Utc::now();
     let mut last_save = Utc::now();
@@ -713,14 +716,18 @@ async fn main() -> Result<()> {
         {
             let mut buf = sensor_state.accel_buffer.write().await;
             while let Some(mut accel) = buf.pop_front() {
-                // Track raw acceleration magnitude BEFORE subtracting gravity (for ZUPT detection)
-                let raw_accel_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
+                // Track filtered acceleration magnitude BEFORE subtracting gravity (for ZUPT detection)
+                let raw_vec = Vector3::new(accel.x, accel.y, accel.z);
+                let filtered_vec = accel_lpf.update(raw_vec);
+                let raw_accel_mag = filtered_vec.norm();
                 last_accel_mag_raw = raw_accel_mag;
 
                 // Apply calibration: subtract gravity bias to get true linear acceleration
-                let mut corrected_x = accel.x - gravity_bias.0;
-                let mut corrected_y = accel.y - gravity_bias.1;
-                let corrected_z = accel.z - gravity_bias.2;
+                let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
+                let corrected_vec = filtered_vec - gravity_vec;
+                let mut corrected_x = corrected_vec.x;
+                let mut corrected_y = corrected_vec.y;
+                let corrected_z = corrected_vec.z;
 
                 // Apply virtual kick if active
                 if kick_frames_remaining > 0 {
@@ -746,8 +753,8 @@ async fn main() -> Result<()> {
 
                 // ===== DYNAMIC GRAVITY CALIBRATION: Accumulate samples during stillness =====
                 if is_still {
-                    // Accumulate raw accel reading (before gravity subtraction) for gravity refinement
-                    dyn_calib.accumulate(accel.x, accel.y, accel.z);
+                    // Accumulate filtered accel reading (before gravity subtraction) for gravity refinement
+                    dyn_calib.accumulate(filtered_vec.x, filtered_vec.y, filtered_vec.z);
                 }
 
                 // Only update filters if NOT still (to prevent noise integration)
@@ -1031,11 +1038,11 @@ async fn main() -> Result<()> {
             let mut buf = sensor_state.accel_buffer.write().await;
             let mut count = 0;
             while let Some(accel) = buf.pop_front() {
-                // Apply calibration: subtract gravity bias
-                let corrected_x = accel.x - gravity_bias.0;
-                let corrected_y = accel.y - gravity_bias.1;
-                let corrected_z = accel.z - gravity_bias.2;
-                let corrected_mag = (corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z).sqrt();
+                let raw_vec = Vector3::new(accel.x, accel.y, accel.z);
+                let filtered_vec = accel_lpf.update(raw_vec);
+                let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
+                let corrected_vec = filtered_vec - gravity_vec;
+                let corrected_mag = (corrected_vec.x * corrected_vec.x + corrected_vec.y * corrected_vec.y + corrected_vec.z * corrected_vec.z).sqrt();
                 let smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 let reading = SensorReading {
@@ -1048,10 +1055,10 @@ async fn main() -> Result<()> {
                 readings.push(reading);
 
                 if args.filter == "ekf" || args.filter == "both" {
-                    let _ = ekf.update_accelerometer_vector(corrected_x, corrected_y, corrected_z);
+                    let _ = ekf.update_accelerometer_vector(corrected_vec.x, corrected_vec.y, corrected_vec.z);
                 }
                 if args.filter == "complementary" || args.filter == "both" {
-                    let _ = comp_filter.update(corrected_x, corrected_y, corrected_z, 0.0, 0.0, 0.0);
+                    let _ = comp_filter.update(corrected_vec.x, corrected_vec.y, corrected_vec.z, 0.0, 0.0, 0.0);
                 }
 
                 count += 1;
@@ -1186,4 +1193,32 @@ fn ts_now() -> String {
 
 fn ts_now_clean() -> String {
     Utc::now().format("%Y%m%d_%H%M%S").to_string()
+}
+struct LowPassFilter {
+    alpha: f64,
+    last_output: Vector3<f64>,
+    initialized: bool,
+}
+
+impl LowPassFilter {
+    fn new(cutoff_hz: f64, sample_rate_hz: f64) -> Self {
+        let dt = 1.0 / sample_rate_hz;
+        let rc = 1.0 / (2.0 * std::f64::consts::PI * cutoff_hz);
+        let alpha = dt / (rc + dt);
+        Self {
+            alpha,
+            last_output: Vector3::zeros(),
+            initialized: false,
+        }
+    }
+
+    fn update(&mut self, input: Vector3<f64>) -> Vector3<f64> {
+        if !self.initialized {
+            self.last_output = input;
+            self.initialized = true;
+            return input;
+        }
+        self.last_output = self.last_output * (1.0 - self.alpha) + input * self.alpha;
+        self.last_output
+    }
 }

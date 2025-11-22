@@ -307,9 +307,10 @@ impl EsEkf {
         if let Some((lat_prev, lon_prev)) = self.last_position {
             let delta_dist = haversine_distance(lat_prev, lon_prev, latitude, longitude);
             // Reject GPS jitter when stationary: require either a minimum speed or a meaningful jump
-            let speed_ok = gps_speed.map(|s| s > 0.5).unwrap_or(false);
+            let speed_ok = gps_speed.map(|s| s > 1.0).unwrap_or(false);
             let acc_limit = gps_accuracy.unwrap_or(5.0).max(1.0); // meters
-            let dist_ok = delta_dist > acc_limit * 0.5; // ignore hops smaller than half the reported accuracy
+            // Require movement greater than 1x accuracy (more conservative than before)
+            let dist_ok = delta_dist > acc_limit * 1.0;
             if speed_ok || dist_ok {
                 self.accumulated_distance += delta_dist;
             }
