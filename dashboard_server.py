@@ -39,6 +39,10 @@ except ImportError:
 def maybe_replay_trajectories(data: dict) -> dict:
     """Reconstruct EKF/complementary trajectories if the session lacks step-by-step points."""
     trajectories = data.get("trajectories") or {}
+    if not isinstance(trajectories, dict):
+        # Rust comparison files store a flat list of trajectory points without lat/lon;
+        # treat those as "no trajectories" so callers can fall back to GPS.
+        return {}
     has_dense = any(len(trajectories.get(key, [])) >= 20 for key in ("ekf", "complementary", "es_ekf"))
     if has_dense or replay_mod is None:
         return trajectories
@@ -173,6 +177,18 @@ def generate_gpx_from_json(json_filepath: str) -> str:
 
         # Try to extract GPS data from various formats
         gps_points = []
+
+        # Format 0: Rust comparison format with readings[].gps
+        if "readings" in data and isinstance(data["readings"], list):
+            for reading in data["readings"]:
+                gps = reading.get("gps")
+                if isinstance(gps, dict) and "latitude" in gps and "longitude" in gps:
+                    gps_points.append({
+                        "lat": gps["latitude"],
+                        "lon": gps["longitude"],
+                        "ele": gps.get("altitude", 0),
+                        "time": reading.get("timestamp", ""),
+                    })
 
         # Format 1: motion_track_v2 with gps_data array
         if "gps_data" in data and isinstance(data["gps_data"], list):
