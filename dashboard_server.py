@@ -87,7 +87,7 @@ def maybe_replay_trajectories(data: dict) -> dict:
 
 # Metadata cache configuration
 CACHE_FILE = os.path.join(SESSIONS_DIR, '.drive_cache.pkl')
-CACHE_VERSION = 1
+CACHE_VERSION = 2
 
 
 def get_cached_metadata():
@@ -299,31 +299,46 @@ def generate_gpx_from_json(json_filepath: str) -> str:
 
 def lazy_has_gps_data(data: dict) -> bool:
     """Fast check for GPS data - early exit after finding first valid coordinate"""
+    # Quick signal from metrics
+    metrics = data.get("metrics") or {}
+    if isinstance(metrics, dict) and isinstance(metrics.get("gps_samples"), int) and metrics["gps_samples"] > 0:
+        return True
+
+    def scan_list(items):
+        """Check up to the first 1000 entries (spaced) for gps lat/lon."""
+        if not isinstance(items, list) or not items:
+            return False
+        n = len(items)
+        max_checks = 1000
+        idxs = list(range(min(n, 200)))
+        stride = max(1, n // max(max_checks - len(idxs), 1))
+        idxs += list(range(200, min(n, max_checks), stride))
+        for i in idxs:
+            item = items[i]
+            if not isinstance(item, dict):
+                continue
+            gps = item.get("gps")
+            if isinstance(gps, dict) and "latitude" in gps and "longitude" in gps:
+                return True
+            if "latitude" in item and "longitude" in item:
+                return True
+        return False
+
     # Check Rust comparison format: readings[].gps
-    if "readings" in data and isinstance(data["readings"], list):
-        for reading in data["readings"][:10]:  # Only check first 10 samples
-            if isinstance(reading, dict) and "gps" in reading and isinstance(reading["gps"], dict):
-                if "latitude" in reading["gps"] and "longitude" in reading["gps"]:
-                    return True
+    if scan_list(data.get("readings")):
+        return True
 
     # Check nested format (sample["gps"]["latitude"])
-    if "gps_data" in data and isinstance(data["gps_data"], list):
-        for sample in data["gps_data"][:10]:  # Only check first 10 samples
+    gps_data = data.get("gps_data")
+    if isinstance(gps_data, list):
+        for sample in gps_data[:1000]:
             if isinstance(sample, dict) and "gps" in sample and isinstance(sample["gps"], dict):
                 if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
                     return True
 
     # Check gps_samples array
-    if "gps_samples" in data and isinstance(data["gps_samples"], list):
-        for sample in data["gps_samples"][:10]:  # Only check first 10 samples
-            if isinstance(sample, dict):
-                # Nested format
-                if "gps" in sample and isinstance(sample["gps"], dict):
-                    if "latitude" in sample["gps"] and "longitude" in sample["gps"]:
-                        return True
-                # Flat format (comparison files)
-                elif "latitude" in sample and "longitude" in sample:
-                    return True
+    if scan_list(data.get("gps_samples")):
+        return True
 
     return False
 
