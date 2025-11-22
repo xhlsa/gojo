@@ -306,7 +306,13 @@ impl EsEkf {
 
         if let Some((lat_prev, lon_prev)) = self.last_position {
             let delta_dist = haversine_distance(lat_prev, lon_prev, latitude, longitude);
-            self.accumulated_distance += delta_dist;
+            // Reject GPS jitter when stationary: require either a minimum speed or a meaningful jump
+            let speed_ok = gps_speed.map(|s| s > 0.5).unwrap_or(false);
+            let acc_limit = gps_accuracy.unwrap_or(5.0).max(1.0); // meters
+            let dist_ok = delta_dist > acc_limit * 0.5; // ignore hops smaller than half the reported accuracy
+            if speed_ok || dist_ok {
+                self.accumulated_distance += delta_dist;
+            }
         }
 
         self.last_position = Some((latitude, longitude));
@@ -317,19 +323,19 @@ impl EsEkf {
     /// Update with acceleration vector (proper physics: not magnitude, but components)
     /// This respects the sign: forward acceleration (+) vs braking (-)
     pub fn update_accelerometer_vector(&mut self, accel_x: f64, accel_y: f64, _accel_z: f64) {
-        // Calculate acceleration magnitude in heading direction (1D forward/backward)
+        // Rotate body-frame acceleration into world-frame using current heading
         let heading = self.state[6];
-        let forward_accel = accel_x * heading.cos() + accel_y * heading.sin();
+        // Maintain state layout: [0]=x, [1]=y, [2]=vx, [3]=vy, [4]=ax, [5]=ay, [6]=heading, [7]=heading_rate
+        let accel_world_x = accel_x * heading.cos() - accel_y * heading.sin();
+        let accel_world_y = accel_x * heading.sin() + accel_y * heading.cos();
 
-        // Update velocity based on proper integration of acceleration
-        let vel_before = self.state[4];
-        let vel_after = vel_before + forward_accel * self.dt;
-        self.state[4] = vel_after; // vx in heading direction
-        self.state[5] = 0.0; // vy = 0 in vehicle frame (no lateral motion in simple model)
+        // Store measured acceleration in the acceleration slots
+        self.state[4] = accel_world_x;
+        self.state[5] = accel_world_y;
 
-        // Update position based on velocity
-        self.state[2] += vel_after * heading.cos() * self.dt;
-        self.state[3] += vel_after * heading.sin() * self.dt;
+        // Integrate velocity using measured acceleration (position integration remains in predict())
+        self.state[2] += accel_world_x * self.dt;
+        self.state[3] += accel_world_y * self.dt;
 
         self.accel_update_count += 1;
     }

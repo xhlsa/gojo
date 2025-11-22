@@ -1095,6 +1095,27 @@ async fn main() -> Result<()> {
     gps_reader_handle.abort();
     tokio::task::yield_now().await;
 
+    // Final stillness clamp: if sensors or GPS say we're stationary, zero velocity/accel
+    let latest_gps_speed = sensor_state
+        .latest_gps
+        .read()
+        .await
+        .as_ref()
+        .map(|g| g.speed)
+        .unwrap_or(0.0);
+    let stationary_sensors = last_accel_mag_raw > zupt_accel_threshold_low
+        && last_accel_mag_raw < zupt_accel_threshold_high
+        && last_gyro_mag < zupt_gyro_threshold;
+    let stationary = stationary_sensors || latest_gps_speed < 0.3;
+    if stationary {
+        if args.filter == "ekf" || args.filter == "both" {
+            ekf.apply_zupt();
+        }
+        if args.filter == "complementary" || args.filter == "both" {
+            comp_filter.apply_zupt();
+        }
+    }
+
     // Final save
     let accel_count = *sensor_state.accel_count.read().await;
     let gyro_count = *sensor_state.gyro_count.read().await;
