@@ -180,6 +180,7 @@ struct ComparisonOutput {
     trajectories: Vec<TrajectoryPoint>,
     stats: Stats,
     metrics: Metrics,
+    system_health: String,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -941,6 +942,9 @@ async fn main() -> Result<()> {
                 // Use filtered_vec (low-pass but NOT gravity-corrected) - 15D subtracts its own bias estimate
                 ekf_15d.predict((filtered_vec.x, filtered_vec.y, filtered_vec.z), (0.0, 0.0, 0.0));
 
+                // Activate measurement update for accel bias estimation
+                ekf_15d.update_accel((filtered_vec.x, filtered_vec.y, filtered_vec.z));
+
                 // We'll update this reading with 13D/15D data later if gyro arrives
                 readings.push(SensorReading {
                     timestamp: accel.timestamp,
@@ -1056,6 +1060,9 @@ async fn main() -> Result<()> {
 
                     // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
                     ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+
+                    // Activate measurement update for gyro bias estimation
+                    ekf_15d.update_gyro((corrected_gx, corrected_gy, corrected_gz));
                     last.experimental_15d = Some(ekf_15d.get_state());
                 }
 
@@ -1406,6 +1413,7 @@ async fn main() -> Result<()> {
                     current_memory_mb,
                     covariance_snapshots: covariance_snapshots.clone(),
                 },
+                system_health: restart_manager.status_report(),
             };
 
             let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
@@ -1594,6 +1602,7 @@ async fn main() -> Result<()> {
             current_memory_mb,
             covariance_snapshots: covariance_snapshots.clone(),
         },
+        system_health: restart_manager.status_report(),
     };
 
     let filename = format!("{}/comparison_{}_final.json", args.output_dir, ts_now_clean());
