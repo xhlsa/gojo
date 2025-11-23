@@ -1,5 +1,9 @@
+use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
+
+const CIRCUIT_BREAKER_WINDOW: Duration = Duration::from_secs(10);
+const CIRCUIT_BREAKER_FAILS: usize = 5;
 
 /// Tracks restart state for a single sensor
 #[derive(Clone, Debug)]
@@ -11,6 +15,8 @@ pub struct RestartState {
     pub max_attempts: u32,
     pub base_cooldown: Duration,
     pub current_cooldown: Duration,
+    failure_window: VecDeque<Instant>,
+    circuit_tripped: bool,
 }
 
 impl RestartState {
@@ -24,6 +30,8 @@ impl RestartState {
             max_attempts,
             base_cooldown,
             current_cooldown: base_cooldown,
+            failure_window: VecDeque::with_capacity(CIRCUIT_BREAKER_FAILS + 1),
+            circuit_tripped: false,
         }
     }
 
@@ -40,6 +48,8 @@ impl RestartState {
     /// Record a failed restart attempt and calculate next retry time
     pub fn record_failed_attempt(&mut self) {
         self.attempts += 1;
+
+        self.record_failure_window();
 
         // Exponential backoff: multiply cooldown by 1.5 each time, cap at 30 seconds
         self.current_cooldown = Duration::from_secs_f64(
@@ -66,11 +76,17 @@ impl RestartState {
         self.attempts = 0;
         self.current_cooldown = self.base_cooldown;
         self.next_retry_time = Instant::now();
+        self.failure_window.clear();
+        self.circuit_tripped = false;
     }
 
     /// Check if max attempts exceeded
     pub fn can_restart(&self) -> bool {
         self.attempts < self.max_attempts
+    }
+
+    pub fn circuit_tripped(&self) -> bool {
+        self.circuit_tripped
     }
 
     /// Get formatted status
@@ -95,6 +111,30 @@ impl RestartState {
             "{}: READY_TO_RESTART (attempt {}/{})",
             self.name, self.attempts, self.max_attempts
         )
+    }
+
+    fn record_failure_window(&mut self) {
+        let now = Instant::now();
+        self.failure_window.push_back(now);
+
+        while let Some(front) = self.failure_window.front() {
+            if now.duration_since(*front) > CIRCUIT_BREAKER_WINDOW {
+                self.failure_window.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if self.failure_window.len() >= CIRCUIT_BREAKER_FAILS {
+            self.circuit_tripped = true;
+            self.restart_needed = false;
+            eprintln!(
+                "[RESTART] {} circuit breaker tripped ({} failures in {:.0?}); shutting down restarts",
+                self.name,
+                self.failure_window.len(),
+                CIRCUIT_BREAKER_WINDOW
+            );
+        }
     }
 }
 
@@ -176,7 +216,7 @@ impl RestartManager {
         self.accel
             .lock()
             .ok()
-            .map(|s| s.can_retry() && s.can_restart())
+            .map(|s| s.can_retry() && s.can_restart() && !s.circuit_tripped())
             .unwrap_or(false)
     }
 
@@ -184,7 +224,7 @@ impl RestartManager {
         self.gyro
             .lock()
             .ok()
-            .map(|s| s.can_retry() && s.can_restart())
+            .map(|s| s.can_retry() && s.can_restart() && !s.circuit_tripped())
             .unwrap_or(false)
     }
 
@@ -192,7 +232,7 @@ impl RestartManager {
         self.gps
             .lock()
             .ok()
-            .map(|s| s.can_retry() && s.can_restart())
+            .map(|s| s.can_retry() && s.can_restart() && !s.circuit_tripped())
             .unwrap_or(false)
     }
 
@@ -232,6 +272,22 @@ impl RestartManager {
         if let Ok(mut state) = self.gps.lock() {
             state.record_failed_attempt();
         }
+    }
+
+    pub fn any_circuit_tripped(&self) -> bool {
+        self.accel_circuit_tripped() || self.gyro_circuit_tripped() || self.gps_circuit_tripped()
+    }
+
+    pub fn accel_circuit_tripped(&self) -> bool {
+        self.accel.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
+    }
+
+    pub fn gyro_circuit_tripped(&self) -> bool {
+        self.gyro.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
+    }
+
+    pub fn gps_circuit_tripped(&self) -> bool {
+        self.gps.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
     }
 }
 
@@ -278,6 +334,19 @@ mod tests {
 
         state.record_failed_attempt();
         assert!(!state.can_restart());
+    }
+
+    #[test]
+    fn test_circuit_breaker_trips() {
+        let mut state = RestartState::new("test", 10, 1);
+        state.signal_restart();
+
+        for _ in 0..CIRCUIT_BREAKER_FAILS {
+            state.record_failed_attempt();
+        }
+
+        assert!(state.circuit_tripped());
+        assert!(!state.restart_needed);
     }
 
     #[test]

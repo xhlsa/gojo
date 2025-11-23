@@ -23,6 +23,8 @@ struct DashboardMetrics {
     gps_fixes: u64,
     gps_speed: f64,
     gps_bearing: f64,
+    gps_lat: f64,
+    gps_lon: f64,
     accel_x: f64,
     accel_y: f64,
     accel_z: f64,
@@ -64,10 +66,10 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
             let gps_count = *state.gps_count.read().await;
             
             let gps_data = state.latest_gps.read().await;
-            let (speed, bearing) = if let Some(g) = gps_data.as_ref() {
-                (g.speed, g.bearing)
+            let (speed, bearing, lat, lon) = if let Some(g) = gps_data.as_ref() {
+                (g.speed, g.bearing, g.latitude, g.longitude)
             } else {
-                (0.0, 0.0)
+                (0.0, 0.0, 0.0, 0.0)
             };
             
             let accel_data = state.latest_accel.read().await;
@@ -84,6 +86,8 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 gps_fixes: gps_count,
                 gps_speed: speed,
                 gps_bearing: bearing,
+                gps_lat: lat,
+                gps_lon: lon,
                 accel_x: ax,
                 accel_y: ay,
                 accel_z: az,

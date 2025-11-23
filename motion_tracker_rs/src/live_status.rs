@@ -20,6 +20,8 @@ pub struct LiveStatus {
     pub gps_speed: f64,
     pub gps_bearing: f64,
     pub gps_accuracy: f64,
+    pub gps_lat: f64,
+    pub gps_lon: f64,
     // Health monitoring
     pub accel_healthy: bool,
     pub gyro_healthy: bool,
@@ -47,6 +49,8 @@ impl LiveStatus {
             gps_speed: 0.0,
             gps_bearing: 0.0,
             gps_accuracy: 0.0,
+            gps_lat: 0.0,
+            gps_lon: 0.0,
             accel_healthy: true,
             gyro_healthy: true,
             gps_healthy: true,

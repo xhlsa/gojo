@@ -488,6 +488,8 @@ struct LiveStatus {
     gps_fixes: u64,
     gps_speed: Option<f64>,
     gps_bearing: Option<f64>,
+    gps_lat: Option<f64>,
+    gps_lon: Option<f64>,
     gravity_magnitude: Option<f64>,
     uptime_seconds: u64,
     #[serde(default)]

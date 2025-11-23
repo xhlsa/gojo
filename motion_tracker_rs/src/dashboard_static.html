@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Motion Tracker Dashboard</title>
+    <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css" />
+    <script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
     <style>
         * {
             margin: 0;
@@ -197,26 +199,33 @@
         }
         .map-container {
             grid-column: 1 / -1;
-            height: 400px;
+            width: 100%;
+            height: 500px;
             border-radius: 12px;
             overflow: hidden;
             background-color: #2d2d2d;
+            position: relative;
         }
-        #track-canvas {
+        #map {
             width: 100%;
-            height: 100%;
-            display: block;
-            background-color: #1a1a1a;
+            height: 500px;
+            position: relative;
         }
-        .canvas-stats {
-            padding: 10px 15px;
-            background-color: #2d2d2d;
-            font-size: 0.9em;
+        .map-stats {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            padding: 6px 12px;
+            background-color: rgba(45, 45, 45, 0.95);
+            font-size: 0.85em;
             color: #999;
             border-top: 1px solid #444;
-        }
-        .canvas-stats div {
-            margin: 3px 0;
+            z-index: 10;
+            text-align: center;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
         }
         .no-gps-message {
             display: flex;
@@ -231,23 +240,23 @@
         }
         .stats-grid {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-            gap: 15px;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 10px;
         }
         .stat-card {
             background-color: #2d2d2d;
-            border-radius: 12px;
-            padding: 15px;
+            border-radius: 8px;
+            padding: 10px 12px;
             text-align: center;
         }
         .stat-label {
             color: #999;
-            font-size: 0.9em;
-            margin-bottom: 8px;
+            font-size: 0.75em;
+            margin-bottom: 4px;
         }
         .stat-value {
             color: #4caf50;
-            font-size: 1.8em;
+            font-size: 1.2em;
             font-weight: bold;
         }
     </style>
@@ -357,8 +366,8 @@
             <button id="back-btn" style="margin-bottom: 15px; padding: 8px 16px; background-color: #4caf50; color: white; border: none; border-radius: 6px; cursor: pointer;">Back to Drives</button>
             <div class="drive-detail">
                 <div class="map-container">
-                    <canvas id="track-canvas"></canvas>
-                    <div id="canvas-stats" class="canvas-stats" style="display:none;"></div>
+                    <div id="map"></div>
+                    <div id="map-stats" class="map-stats" style="display:none;"></div>
                 </div>
                 <div class="stats-grid">
                     <div class="stat-card">
@@ -568,7 +577,9 @@
             document.getElementById('detail-memory').textContent = result.stats.peak_memory_mb.toFixed(1) + ' MB';
 
             switchView('detail');
-            loadMapData(driveId);
+
+            // Small delay to let DOM settle before loading map
+            setTimeout(() => loadMapData(driveId), 100);
         }
 
         async function loadMapData(driveId) {
@@ -596,14 +607,22 @@
                 return;
             }
 
-            renderTrackOnCanvas(gpsPoints);
+            renderTrackOnMap(gpsPoints);
         }
 
+        let map = null;
+
         function renderNoGPSMessage() {
-            const canvas = document.getElementById('track-canvas');
-            const container = canvas.parentElement;
-            canvas.style.display = 'none';
-            document.getElementById('canvas-stats').style.display = 'none';
+            const mapDiv = document.getElementById('map');
+            const container = mapDiv.parentElement;
+            mapDiv.style.display = 'none';
+            document.getElementById('map-stats').style.display = 'none';
+
+            // Clean up existing map
+            if (map) {
+                map.remove();
+                map = null;
+            }
 
             const msg = document.createElement('div');
             msg.className = 'no-gps-message';
@@ -612,95 +631,130 @@
             container.appendChild(msg);
         }
 
-        function renderTrackOnCanvas(gpsPoints) {
+        function renderTrackOnMap(gpsPoints) {
             // Clean up any previous message
             const oldMsg = document.getElementById('no-gps-msg');
             if (oldMsg) oldMsg.remove();
 
-            const canvas = document.getElementById('track-canvas');
-            canvas.style.display = 'block';
+            const mapDiv = document.getElementById('map');
+            mapDiv.style.display = 'block';
 
-            // Resize canvas for sharp rendering
-            const rect = canvas.parentElement.getBoundingClientRect();
-            canvas.width = rect.width;
-            canvas.height = rect.height;
-
-            const ctx = canvas.getContext('2d');
-
-            // Calculate bounds with 10% padding
-            const bounds = calculateBounds(gpsPoints);
-            const latSpan = bounds.maxLat - bounds.minLat;
-            const lonSpan = bounds.maxLon - bounds.minLon;
-            const padding = 0.1;
-            const paddedBounds = {
-                minLat: bounds.minLat - latSpan * padding,
-                maxLat: bounds.maxLat + latSpan * padding,
-                minLon: bounds.minLon - lonSpan * padding,
-                maxLon: bounds.maxLon + lonSpan * padding
-            };
-
-            // Clear canvas
-            ctx.fillStyle = '#1a1a1a';
-            ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-            // Draw track line
-            if (gpsPoints.length > 1) {
-                ctx.strokeStyle = '#4caf50';
-                ctx.lineWidth = 3;
-                ctx.lineJoin = 'round';
-                ctx.lineCap = 'round';
-                ctx.beginPath();
-
-                for (let i = 0; i < gpsPoints.length; i++) {
-                    const xy = latLonToXY(gpsPoints[i].lat, gpsPoints[i].lon, paddedBounds, canvas.width, canvas.height);
-                    if (i === 0) {
-                        ctx.moveTo(xy.x, xy.y);
-                    } else {
-                        ctx.lineTo(xy.x, xy.y);
-                    }
-                }
-                ctx.stroke();
+            // Clean up existing map
+            if (map) {
+                map.remove();
+                map = null;
             }
 
-            // Draw start marker (green circle)
-            const startXY = latLonToXY(gpsPoints[0].lat, gpsPoints[0].lon, paddedBounds, canvas.width, canvas.height);
-            ctx.fillStyle = '#4caf50';
-            ctx.beginPath();
-            ctx.arc(startXY.x, startXY.y, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            // Calculate center and bounds
+            const bounds = calculateBounds(gpsPoints);
+            const centerLat = (bounds.minLat + bounds.maxLat) / 2;
+            const centerLon = (bounds.minLon + bounds.maxLon) / 2;
 
-            // Draw start label
-            ctx.fillStyle = '#4caf50';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillText('START', startXY.x + 10, startXY.y - 8);
+            // Validate bounds before initializing map
+            const isValid = (num) => isFinite(num) && !isNaN(num);
 
-            // Draw end marker (red circle)
-            const endXY = latLonToXY(gpsPoints[gpsPoints.length - 1].lat, gpsPoints[gpsPoints.length - 1].lon, paddedBounds, canvas.width, canvas.height);
-            ctx.fillStyle = '#f44336';
-            ctx.beginPath();
-            ctx.arc(endXY.x, endXY.y, 6, 0, Math.PI * 2);
-            ctx.fill();
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = 2;
-            ctx.stroke();
+            if (!isValid(bounds.minLat) || !isValid(bounds.maxLat) ||
+                !isValid(bounds.minLon) || !isValid(bounds.maxLon)) {
+                console.error("Invalid bounds detected:", bounds);
+                renderNoGPSMessage();
+                return;
+            }
 
-            // Draw end label
-            ctx.fillStyle = '#f44336';
-            ctx.font = 'bold 12px Arial';
-            ctx.textAlign = 'left';
-            ctx.fillText('END', endXY.x + 10, endXY.y - 8);
+            // Initialize map with preserveDrawingBuffer for Android
+            map = new maplibregl.Map({
+                container: 'map',
+                preserveDrawingBuffer: true,
+                style: {
+                    version: 8,
+                    sources: {
+                        'osm': {
+                            type: 'raster',
+                            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+                            tileSize: 256,
+                            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+                        }
+                    },
+                    layers: [{
+                        id: 'osm',
+                        type: 'raster',
+                        source: 'osm',
+                        minzoom: 0,
+                        maxzoom: 19
+                    }]
+                },
+                center: [centerLon, centerLat],
+                zoom: 13
+            });
+
+            map.on('load', () => {
+                // Add GPS track line
+                map.addSource('route', {
+                    type: 'geojson',
+                    data: {
+                        type: 'Feature',
+                        geometry: {
+                            type: 'LineString',
+                            coordinates: gpsPoints.map(p => [p.lon, p.lat])
+                        }
+                    }
+                });
+
+                map.addLayer({
+                    id: 'route',
+                    type: 'line',
+                    source: 'route',
+                    layout: {
+                        'line-join': 'round',
+                        'line-cap': 'round'
+                    },
+                    paint: {
+                        'line-color': '#4caf50',
+                        'line-width': 4
+                    }
+                });
+
+                // Add start marker (green)
+                new maplibregl.Marker({ color: '#4caf50' })
+                    .setLngLat([gpsPoints[0].lon, gpsPoints[0].lat])
+                    .setPopup(new maplibregl.Popup().setHTML('<strong>START</strong>'))
+                    .addTo(map);
+
+                // Add end marker (red)
+                new maplibregl.Marker({ color: '#f44336' })
+                    .setLngLat([gpsPoints[gpsPoints.length - 1].lon, gpsPoints[gpsPoints.length - 1].lat])
+                    .setPopup(new maplibregl.Popup().setHTML('<strong>END</strong>'))
+                    .addTo(map);
+
+                // Force resize BEFORE fitBounds
+                map.resize();
+
+                // Check for single-point bounds
+                if (bounds.minLat === bounds.maxLat && bounds.minLon === bounds.maxLon) {
+                    map.jumpTo({ center: [bounds.minLon, bounds.minLat], zoom: 15 });
+                    return;
+                }
+
+                // Wait one frame for resize to take effect
+                requestAnimationFrame(() => {
+                    try {
+                        map.fitBounds([
+                            [bounds.minLon, bounds.minLat],
+                            [bounds.maxLon, bounds.maxLat]
+                        ], {
+                            padding: 50,
+                            animate: false,
+                            maxZoom: 17
+                        });
+                    } catch (error) {
+                        console.error("fitBounds failed:", error);
+                    }
+                });
+            });
 
             // Display stats
-            const statsDiv = document.getElementById('canvas-stats');
+            const statsDiv = document.getElementById('map-stats');
             statsDiv.style.display = 'block';
-            statsDiv.innerHTML = `
-                <div><strong>GPS Points:</strong> ${gpsPoints.length}</div>
-                <div><strong>Bounds:</strong> ${bounds.minLat.toFixed(5)}°N to ${bounds.maxLat.toFixed(5)}°N, ${bounds.minLon.toFixed(5)}°W to ${bounds.maxLon.toFixed(5)}°W</div>
-            `;
+            statsDiv.innerHTML = `<strong>${gpsPoints.length} GPS points</strong> • ${bounds.minLat.toFixed(4)}°, ${bounds.minLon.toFixed(4)}° to ${bounds.maxLat.toFixed(4)}°, ${bounds.maxLon.toFixed(4)}°`;
         }
 
         function calculateBounds(gpsPoints) {
@@ -717,16 +771,6 @@
             }
 
             return { minLat, maxLat, minLon, maxLon };
-        }
-
-        function latLonToXY(lat, lon, bounds, canvasWidth, canvasHeight) {
-            const x = (lon - bounds.minLon) / (bounds.maxLon - bounds.minLon);
-            const y = (bounds.maxLat - lat) / (bounds.maxLat - bounds.minLat);
-
-            return {
-                x: x * canvasWidth,
-                y: y * canvasHeight
-            };
         }
 
         function downloadGPX(driveId) {

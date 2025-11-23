@@ -439,6 +439,17 @@ async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>)
         }
         json_buffer.push_str(trimmed);
 
+        // Safety valve: drop malformed/too-large JSON to avoid unbounded growth
+        if json_buffer.len() > 4096 {
+            eprintln!(
+                "[imu-reader] WARN: JSON buffer exceeded {} bytes, discarding partial object",
+                json_buffer.len()
+            );
+            json_buffer.clear();
+            brace_depth = 0;
+            continue;
+        }
+
         // When braces are balanced (and not zero), we have a complete object
         if brace_depth == 0 && !json_buffer.is_empty() && json_buffer.contains('{') {
             // Try to parse the accumulated JSON
@@ -663,6 +674,11 @@ async fn main() -> Result<()> {
     let imu_reader_handle = tokio::spawn(async move {
         // Supervisor loop
         loop {
+            if imu_rm.accel_circuit_tripped() || imu_rm.gyro_circuit_tripped() {
+                eprintln!("[SUPERVISOR] IMU circuit breaker tripped; exiting to avoid restart loop.");
+                std::process::exit(2);
+            }
+
             // Check if we can start/restart
             let can_run = imu_rm.accel_ready_restart(); // Using accel as proxy for shared IMU
 
@@ -675,6 +691,11 @@ async fn main() -> Result<()> {
                 eprintln!("[SUPERVISOR] IMU task exited unexpectedly.");
                 imu_rm.accel_restart_failed(); // Record failure to trigger backoff
                 imu_rm.gyro_restart_failed();
+
+                if imu_rm.accel_circuit_tripped() || imu_rm.gyro_circuit_tripped() {
+                    eprintln!("[SUPERVISOR] IMU circuit breaker tripped after repeated failures; exiting.");
+                    std::process::exit(2);
+                }
             } else {
                 // Backoff wait
                 sleep(Duration::from_millis(100)).await;
@@ -688,6 +709,11 @@ async fn main() -> Result<()> {
     let gps_rm = restart_manager.clone();
     let gps_reader_handle = tokio::spawn(async move {
         loop {
+             if gps_rm.gps_circuit_tripped() {
+                 eprintln!("[SUPERVISOR] GPS circuit breaker tripped; exiting to avoid restart loop.");
+                 std::process::exit(2);
+             }
+
              let can_run = gps_rm.gps_ready_restart();
 
             if can_run {
@@ -696,6 +722,11 @@ async fn main() -> Result<()> {
                 
                 eprintln!("[SUPERVISOR] GPS task exited unexpectedly.");
                 gps_rm.gps_restart_failed();
+
+                if gps_rm.gps_circuit_tripped() {
+                    eprintln!("[SUPERVISOR] GPS circuit breaker tripped after repeated failures; exiting.");
+                    std::process::exit(2);
+                }
             } else {
                 sleep(Duration::from_millis(100)).await;
             }
@@ -925,9 +956,10 @@ async fn main() -> Result<()> {
 
                 // Check if stationary (for ZUPT)
                 let is_still = raw_accel_mag > zupt_accel_threshold_low && raw_accel_mag < zupt_accel_threshold_high;
+                let surface_smooth = avg_roughness < 0.5;
 
                 // ===== DYNAMIC GRAVITY CALIBRATION: Accumulate samples during stillness =====
-                if is_still {
+                if is_still && surface_smooth && ekf_speed < 0.1 {
                     // Accumulate filtered accel reading (before gravity subtraction) for gravity refinement
                     dyn_calib.accumulate(filtered_vec.x, filtered_vec.y, filtered_vec.z);
                 }
@@ -1087,6 +1119,8 @@ async fn main() -> Result<()> {
                 live_status.gps_speed = gps.speed;
                 live_status.gps_bearing = gps.bearing;
                 live_status.gps_accuracy = gps.accuracy;
+                live_status.gps_lat = gps.latitude;
+                live_status.gps_lon = gps.longitude;
                 live_status.gps_healthy = true;
             }
             // Calculate magnitude of calibrated gravity vector
