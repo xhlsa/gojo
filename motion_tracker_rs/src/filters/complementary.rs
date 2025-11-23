@@ -9,6 +9,7 @@ pub struct ComplementaryFilterState {
     pub distance: f64,
 }
 
+#[allow(dead_code)]
 pub struct ComplementaryFilter {
     // State vector: [x, y, vx, vy, heading]
     x: f64,
@@ -32,6 +33,7 @@ pub struct ComplementaryFilter {
     accel_weight: f64, // 0.3 = 30% trust accel
 }
 
+#[allow(dead_code)]
 impl ComplementaryFilter {
     pub fn new() -> Self {
         Self {

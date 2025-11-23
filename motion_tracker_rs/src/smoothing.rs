@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use std::collections::VecDeque;
 
 /// Hann-window smoothing for accelerometer magnitudes

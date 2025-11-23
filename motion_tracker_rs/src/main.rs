@@ -1,3 +1,6 @@
+#![allow(unused_imports)]
+#![allow(unused_mut)]
+
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
@@ -6,7 +9,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::panic;
-use std::fs::OpenOptions;
+use std::fs::{OpenOptions, File};
 use std::io::Write;
 use std::process::Stdio;
 use tokio::sync::mpsc;
@@ -14,6 +17,8 @@ use tokio::time::{sleep, Duration};
 use tokio::process::Command;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use nalgebra::Vector3;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 
 struct LowPassFilter {
     alpha: f64,
@@ -181,6 +186,7 @@ struct ComparisonOutput {
     stats: Stats,
     metrics: Metrics,
     system_health: String,
+    track_path: Vec<[f64; 2]>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -627,6 +633,63 @@ async fn gps_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>)
 use health_monitor::HealthMonitor;
 use restart_manager::RestartManager;
 
+/// Build track path from GPS readings with >5m distance downsampling
+fn build_track_path(readings: &[SensorReading]) -> Vec<[f64; 2]> {
+    let mut track_path = Vec::new();
+    let mut last_point: Option<[f64; 2]> = None;
+
+    for reading in readings {
+        if let Some(gps) = &reading.gps {
+            let current_point = [gps.latitude, gps.longitude];
+
+            if let Some(last) = last_point {
+                let dist_sq = (current_point[0] - last[0]).powi(2) +
+                              (current_point[1] - last[1]).powi(2);
+                // ~5 meters in degrees at equator
+                let threshold_sq = 0.00005_f64; // (0.0000447)^2 ≈ 5m
+                if dist_sq >= threshold_sq {
+                    track_path.push(current_point);
+                    last_point = Some(current_point);
+                }
+            } else {
+                track_path.push(current_point);
+                last_point = Some(current_point);
+            }
+        }
+    }
+    track_path
+}
+
+/// Save JSON with gzip compression, returning the actual filename written
+fn save_json_compressed(output: &ComparisonOutput, output_dir: &str, is_final: bool) -> Result<String> {
+    // Build temp file path
+    let temp_path = format!("{}/current_session.json.gz.tmp", output_dir);
+    let active_path = format!("{}/current_session.json.gz", output_dir);
+
+    // Serialize to JSON
+    let json = serde_json::to_string_pretty(&output)?;
+
+    // Write to temp file with gzip compression
+    {
+        let file = File::create(&temp_path)?;
+        let mut encoder = GzEncoder::new(file, Compression::default());
+        encoder.write_all(json.as_bytes())?;
+        encoder.finish()?;
+    }
+
+    // Atomic rename: move temp -> active
+    std::fs::rename(&temp_path, &active_path)?;
+
+    // If final save, rename to timestamped version
+    if is_final {
+        let final_path = format!("{}/drive_{}.json.gz", output_dir, ts_now_clean());
+        std::fs::copy(&active_path, &final_path)?;
+        Ok(final_path)
+    } else {
+        Ok(active_path)
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     // Install panic hook
@@ -906,7 +969,7 @@ async fn main() -> Result<()> {
                 g.clone()
             };
             let mut buf = sensor_state.accel_buffer.write().await;
-            while let Some(mut accel) = buf.pop_front() {
+            while let Some(accel) = buf.pop_front() {
                 // Track filtered acceleration magnitude BEFORE subtracting gravity (for ZUPT detection)
                 let raw_vec = Vector3::new(accel.x, accel.y, accel.z);
                 let filtered_vec = accel_lpf.update(raw_vec);
@@ -933,7 +996,7 @@ async fn main() -> Result<()> {
                 }
 
                 let corrected_mag = (corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z).sqrt();
-                let smoothed_mag = accel_smoother.apply(corrected_mag);
+                let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 // Feed accel to 13D filter (prediction phase with zero gyro)
                 ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
@@ -964,7 +1027,7 @@ async fn main() -> Result<()> {
                 
                 // Extract raw gyro Z (if available) for swerve detection
                 let gyro_z = readings.last().and_then(|r| r.gyro.as_ref()).map(|g| g.z).unwrap_or(0.0);
-                let (lat, lon, speed) = gps_snapshot
+                let (lat, lon, _speed) = gps_snapshot
                     .as_ref()
                     .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
                     .unwrap_or((None, None, None));
@@ -1097,7 +1160,7 @@ async fn main() -> Result<()> {
 
             // ===== DYNAMIC GRAVITY REFINEMENT: Apply EMA update if enough samples accumulated =====
             if let Some(new_gravity) = dyn_calib.calculate_estimate() {
-                let old_gravity = dyn_calib.gravity_estimate;
+                let _old_gravity = dyn_calib.gravity_estimate;
                 dyn_calib.update_with_ema(new_gravity);
                 let new_estimate = dyn_calib.gravity_estimate;
 
@@ -1380,6 +1443,7 @@ async fn main() -> Result<()> {
             let gyro_count = *sensor_state.gyro_count.read().await;
             let gps_count = *sensor_state.gps_count.read().await;
 
+            let track_path = build_track_path(&readings);
             let output = ComparisonOutput {
                 readings: readings.clone(),
                 incidents: incidents.clone(),
@@ -1414,11 +1478,10 @@ async fn main() -> Result<()> {
                     covariance_snapshots: covariance_snapshots.clone(),
                 },
                 system_health: restart_manager.status_report(),
+                track_path,
             };
 
-            let filename = format!("{}/comparison_{}.json", args.output_dir, ts_now_clean());
-            let json = serde_json::to_string_pretty(&output)?;
-            std::fs::write(&filename, json)?;
+            let filename = save_json_compressed(&output, &args.output_dir, false)?;
 
             println!(
                 "[{}] Auto-saved {} samples to {}",
@@ -1451,7 +1514,7 @@ async fn main() -> Result<()> {
                 let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
                 let corrected_vec = filtered_vec - gravity_vec;
                 let corrected_mag = (corrected_vec.x * corrected_vec.x + corrected_vec.y * corrected_vec.y + corrected_vec.z * corrected_vec.z).sqrt();
-                let smoothed_mag = accel_smoother.apply(corrected_mag);
+                let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 let reading = SensorReading {
                     timestamp: accel.timestamp,
@@ -1569,6 +1632,7 @@ async fn main() -> Result<()> {
     let ekf_state = ekf.get_state();
     let uptime = Utc::now().signed_duration_since(start).num_seconds().max(0) as u64;
 
+    let track_path = build_track_path(&readings);
     let output = ComparisonOutput {
         readings: readings.clone(),
         incidents: incidents.clone(),
@@ -1603,11 +1667,10 @@ async fn main() -> Result<()> {
             covariance_snapshots: covariance_snapshots.clone(),
         },
         system_health: restart_manager.status_report(),
+        track_path,
     };
 
-    let filename = format!("{}/comparison_{}_final.json", args.output_dir, ts_now_clean());
-    let json = serde_json::to_string_pretty(&output)?;
-    std::fs::write(&filename, json)?;
+    let filename = save_json_compressed(&output, &args.output_dir, true)?;
 
     println!(
         "[{}] Final save: {} samples to {}",

@@ -1,5 +1,6 @@
 #![allow(unsafe_op_in_unsafe_fn)]
 #![allow(non_local_definitions)]
+#![allow(unused_imports)]
 
 use nalgebra::{DMatrix, DVector};
 use ndarray::{arr1, Array1, Array2};

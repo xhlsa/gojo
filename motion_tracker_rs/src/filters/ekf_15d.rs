@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// 15-Dimensional Extended Kalman Filter (Full IMU Bias Estimation)
 ///
 /// State Vector (15D):

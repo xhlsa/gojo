@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// 13-Dimensional Extended Kalman Filter (Experimental Shadow Mode)
 ///
 /// State Vector (13D):

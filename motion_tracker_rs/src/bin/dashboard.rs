@@ -11,9 +11,10 @@ use axum::{
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{net::SocketAddr, path::PathBuf, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, time::Duration, io::Read};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
+use flate2::read::GzDecoder;
 
 #[derive(Parser, Debug)]
 #[command(name = "dashboard")]
@@ -139,6 +140,16 @@ fn parse_timestamp_from_filename(filename: &str) -> Option<chrono::DateTime<chro
     None
 }
 
+/// Read and decompress a gzip JSON file
+fn read_gzipped_json(path: &std::path::PathBuf) -> Result<Value, Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(path)?;
+    let mut decoder = GzDecoder::new(file);
+    let mut contents = String::new();
+    decoder.read_to_string(&mut contents)?;
+    let data = serde_json::from_str::<Value>(&contents)?;
+    Ok(data)
+}
+
 fn extract_drive_stats(data: &Value) -> DriveStats {
     let mut stats = DriveStats {
         gps_samples: 0,
@@ -237,7 +248,7 @@ async fn list_drives_handler(
     let limit = params.limit.unwrap_or(20).min(100) as usize;
     let offset = params.offset.unwrap_or(0) as usize;
 
-    // Scan directory for JSON files
+    // Scan directory for drive files (compressed gzip JSON)
     let mut filepaths = Vec::new();
 
     match std::fs::read_dir(&state.data_dir) {
@@ -246,8 +257,8 @@ async fn list_drives_handler(
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        if (name.starts_with("comparison_") || name.starts_with("motion_track_v2_"))
-                            && name.ends_with(".json") {
+                        // Only list finalized drive files (drive_*.json.gz), ignore current_session
+                        if name.starts_with("drive_") && name.ends_with(".json.gz") {
                             filepaths.push(path);
                         }
                     }
@@ -280,10 +291,9 @@ async fn list_drives_handler(
     let mut drives = Vec::new();
 
     for filepath in paginated {
-        if let Ok(content) = std::fs::read_to_string(&filepath) {
-            if let Ok(data) = serde_json::from_str::<Value>(&content) {
-                if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
-                    let drive_id = filename.replace(".json", "");
+        if let Ok(data) = read_gzipped_json(&filepath) {
+            if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
+                let drive_id = filename.replace(".json.gz", "");
 
                     let timestamp = parse_timestamp_from_filename(filename)
                         .map(|dt| dt.to_rfc3339())
@@ -330,7 +340,6 @@ async fn list_drives_handler(
                         has_gps,
                         file_size_mb: file_size,
                     });
-                }
             }
         }
     }
@@ -348,17 +357,14 @@ async fn drive_details_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
 ) -> Result<Json<DriveDetailsResponse>, (StatusCode, String)> {
-    // Find the file
-    let json_path = state.data_dir.join(format!("{}.json", drive_id));
+    // Find the file (gzipped format)
+    let json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
 
     if !json_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
     }
 
-    let content = std::fs::read_to_string(&json_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let data: Value = serde_json::from_str(&content)
+    let data = read_gzipped_json(&json_path)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let timestamp = parse_timestamp_from_filename(&drive_id)
@@ -391,16 +397,13 @@ async fn drive_gpx_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let json_path = state.data_dir.join(format!("{}.json", drive_id));
+    let json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
 
     if !json_path.exists() {
         return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
     }
 
-    let content = std::fs::read_to_string(&json_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
-
-    let data: Value = serde_json::from_str(&content)
+    let data = read_gzipped_json(&json_path)
         .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let gpx = generate_gpx_from_json(&data)?;

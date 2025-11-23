@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 use ndarray::{arr1, Array1, Array2};
 use serde::{Deserialize, Serialize};
 
@@ -373,7 +375,7 @@ impl EsEkf {
     }
 
     /// Update gyroscope: uses Z (yaw rate) for heading, X/Y for future 3D support
-    pub fn update_gyroscope(&mut self, gyro_x: f64, gyro_y: f64, gyro_z: f64) {
+    pub fn update_gyroscope(&mut self, _gyro_x: f64, _gyro_y: f64, gyro_z: f64) {
         if !self.enable_gyro {
             return;
         }
