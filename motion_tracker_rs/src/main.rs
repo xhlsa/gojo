@@ -1204,6 +1204,21 @@ async fn main() -> Result<()> {
                 ekf_13d_state.quaternion.3,
             );
 
+            // Log orientation (quaternion) to Rerun for 3D rotation visualization
+            logger.log_orientation(
+                ekf_13d_state.quaternion.0,
+                ekf_13d_state.quaternion.1,
+                ekf_13d_state.quaternion.2,
+                ekf_13d_state.quaternion.3,
+            );
+
+            // Log local XYZ position to Rerun for trajectory visualization
+            logger.log_position(
+                ekf_13d_state.position.0,
+                ekf_13d_state.position.1,
+                ekf_13d_state.position.2,
+            );
+
             // Log filter comparison: EKF (8D) vs 13D
             let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
             let ekf_13d_speed = (ekf_13d_state.velocity.0 * ekf_13d_state.velocity.0
@@ -1277,6 +1292,12 @@ async fn main() -> Result<()> {
                 live_status.gps_lat = gps.latitude;
                 live_status.gps_lon = gps.longitude;
                 live_status.gps_healthy = true;
+
+                // Log GPS ground truth to Rerun visualization
+                if let Some(ref logger) = rerun_logger {
+                    logger.set_time(gps.timestamp);
+                    logger.log_gps(gps.latitude, gps.longitude, 0.0, gps.speed);
+                }
 
                 // Calculate virtual dyno specific power
                 if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
