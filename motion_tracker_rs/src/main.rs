@@ -73,6 +73,7 @@ mod restart_manager;
 mod types;
 mod smoothing;
 mod dashboard;
+mod physics;
 
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
@@ -138,6 +139,8 @@ struct SensorReading {
     gyro: Option<GyroData>,
     gps: Option<GpsData>,
     roughness: Option<f64>,
+    horsepower: f64,
+    torque_nm: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -910,6 +913,8 @@ async fn main() -> Result<()> {
                     gyro: None,
                     gps: None,
                     roughness: Some(avg_roughness),
+                    horsepower: 0.0,
+                    torque_nm: 0.0,
                 };
 
                 readings.push(reading);
@@ -1084,6 +1089,8 @@ async fn main() -> Result<()> {
                             bearing: gps.bearing,
                         }),
                         roughness: None,
+                        horsepower: 0.0,
+                        torque_nm: 0.0,
                     };
                     readings.push(gps_reading);
                 }
@@ -1122,6 +1129,18 @@ async fn main() -> Result<()> {
                 live_status.gps_lat = gps.latitude;
                 live_status.gps_lon = gps.longitude;
                 live_status.gps_healthy = true;
+
+                // Calculate virtual dyno horsepower
+                if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
+                    let vehicle_params = physics::VehicleParams::default();
+                    let power = physics::calculate_horsepower(
+                        gps.speed,
+                        accel.x,  // Longitudinal acceleration (already includes gravity component)
+                        vehicle_params,
+                    );
+                    live_status.horsepower = (power.horsepower * 100.0).round() / 100.0;  // 2 decimal places
+                    live_status.torque_nm = (power.torque_nm * 100.0).round() / 100.0;
+                }
             }
             // Calculate magnitude of calibrated gravity vector
             let gravity_mag = (gravity_bias.0 * gravity_bias.0 + gravity_bias.1 * gravity_bias.1 + gravity_bias.2 * gravity_bias.2).sqrt();
@@ -1261,6 +1280,8 @@ async fn main() -> Result<()> {
                     gyro: None,
                     gps: None,
                     roughness: Some(avg_roughness),
+                    horsepower: 0.0,
+                    torque_nm: 0.0,
                 };
 
                 readings.push(reading);

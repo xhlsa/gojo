@@ -29,6 +29,9 @@ pub struct LiveStatus {
     pub accel_silence_duration_secs: f64,
     pub gyro_silence_duration_secs: f64,
     pub gps_silence_duration_secs: f64,
+    // Virtual dyno (power)
+    pub horsepower: f64,
+    pub torque_nm: f64,
 }
 
 impl LiveStatus {
@@ -57,6 +60,8 @@ impl LiveStatus {
             accel_silence_duration_secs: 0.0,
             gyro_silence_duration_secs: 0.0,
             gps_silence_duration_secs: 0.0,
+            horsepower: 0.0,
+            torque_nm: 0.0,
         }
     }
 

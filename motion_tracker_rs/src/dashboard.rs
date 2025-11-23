@@ -28,6 +28,8 @@ struct DashboardMetrics {
     accel_x: f64,
     accel_y: f64,
     accel_z: f64,
+    horsepower: f64,
+    torque_nm: f64,
 }
 
 pub async fn start_dashboard(sensor_state: SensorState, port: u16) {
@@ -79,6 +81,16 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 (0.0, 0.0, 0.0)
             };
 
+            // Calculate horsepower
+            let (hp, torque) = if speed > 5.0 && ax != 0.0 {
+                use crate::physics;
+                let vehicle_params = physics::VehicleParams::default();
+                let power = physics::calculate_horsepower(speed, ax, vehicle_params);
+                ((power.horsepower * 100.0).round() / 100.0, (power.torque_nm * 100.0).round() / 100.0)
+            } else {
+                (0.0, 0.0)
+            };
+
             DashboardMetrics {
                 uptime: start_time.elapsed().as_secs(),
                 accel_samples: accel_count,
@@ -91,6 +103,8 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 accel_x: ax,
                 accel_y: ay,
                 accel_z: az,
+                horsepower: hp,
+                torque_nm: torque,
             }
         };
 
