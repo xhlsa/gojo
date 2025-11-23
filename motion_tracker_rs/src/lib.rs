@@ -7,6 +7,8 @@ use numpy::{PyArray1, PyArray2, ToPyArray};
 use pyo3::types::PyDict;
 use pyo3::{exceptions::PyValueError, prelude::*};
 
+pub mod factors;
+
 /// Simple state update representing `x_new = x + v * dt`.
 ///
 /// This mirrors the Python ES-EKF step so we can check parity between the two implementations.
