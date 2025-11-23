@@ -92,7 +92,7 @@ impl Ekf15d {
             10.0, 10.0, 10.0,        // velocity: 10 m²/s² uncertainty
             1.0, 1.0, 1.0, 1.0,      // quaternion: 1.0 (unitless)
             0.1, 0.1, 0.1,           // gyro bias: 0.1 rad²/s²
-            0.01, 0.01, 0.01,        // accel bias: 0.01 m²/s⁴
+            0.01, 0.01,              // accel bias (x, y): 0.01 m²/s⁴ [z is placeholder]
         ];
         for (i, &val) in diag.iter().enumerate() {
             covariance[[i, i]] = val;
