@@ -347,6 +347,11 @@ impl Ekf13d {
         self.state[2] = 0.0;
     }
 
+    /// Check if origin has been initialized
+    pub fn is_origin_set(&self) -> bool {
+        self.origin.is_some()
+    }
+
     /// Initialize quaternion (assumes level start)
     pub fn set_initial_quaternion(&mut self, yaw_rad: f64) {
         // Quaternion from yaw only (roll=0, pitch=0)

@@ -933,7 +933,7 @@ async fn main() -> Result<()> {
                 }
 
                 let corrected_mag = (corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z).sqrt();
-                let smoothed_mag = accel_smoother.apply(corrected_mag);
+                let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 // Feed accel to 13D filter (prediction phase with zero gyro)
                 ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
@@ -964,7 +964,7 @@ async fn main() -> Result<()> {
                 
                 // Extract raw gyro Z (if available) for swerve detection
                 let gyro_z = readings.last().and_then(|r| r.gyro.as_ref()).map(|g| g.z).unwrap_or(0.0);
-                let (lat, lon, speed) = gps_snapshot
+                let (lat, lon, _speed) = gps_snapshot
                     .as_ref()
                     .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
                     .unwrap_or((None, None, None));
@@ -1097,7 +1097,7 @@ async fn main() -> Result<()> {
 
             // ===== DYNAMIC GRAVITY REFINEMENT: Apply EMA update if enough samples accumulated =====
             if let Some(new_gravity) = dyn_calib.calculate_estimate() {
-                let old_gravity = dyn_calib.gravity_estimate;
+                let _old_gravity = dyn_calib.gravity_estimate;
                 dyn_calib.update_with_ema(new_gravity);
                 let new_estimate = dyn_calib.gravity_estimate;
 
@@ -1138,7 +1138,10 @@ async fn main() -> Result<()> {
                     }
 
                     // Update 13D filter with GPS
-                    // Use current GPS as origin on first fix; subsequent updates use that origin
+                    // Initialize origin on first fix for proper coordinate transformation
+                    if !ekf_13d.is_origin_set() {
+                        ekf_13d.set_origin(gps.latitude, gps.longitude);
+                    }
                     ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
 
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)

@@ -148,6 +148,7 @@ impl EsEkf {
         h
     }
 
+    #[allow(dead_code)]
     fn accel_measurement_jacobian(&self) -> Array2<f64> {
         let ax = self.state[4];
         let ay = self.state[5];
@@ -468,6 +469,7 @@ impl EsEkf {
     }
 }
 
+#[allow(dead_code)]
 fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
     const R: f64 = 6_371_000.0;
     let d_lat = (lat - origin_lat).to_radians();
@@ -486,6 +488,7 @@ fn meters_to_latlon(x: f64, y: f64, origin_lat: f64, origin_lon: f64) -> (f64, f
     (lat, lon)
 }
 
+#[allow(dead_code)]
 fn haversine_distance(lat1: f64, lon1: f64, lat2: f64, lon2: f64) -> f64 {
     const R: f64 = 6_371_000.0;
     let d_lat = (lat2 - lat1).to_radians();
