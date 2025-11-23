@@ -33,6 +33,8 @@ axum = { version = "0.7", features = ["ws"] }
 tower = { version = "0.4", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "trace", "cors"] }
 futures = "0.3"
+rerun = "0.15"
+glam = "0.24"
 
 [dev-dependencies]
 approx = "0.5"

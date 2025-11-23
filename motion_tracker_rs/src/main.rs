@@ -74,11 +74,14 @@ mod types;
 mod smoothing;
 mod dashboard;
 mod physics;
+mod rerun_logger;
 
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
+use filters::ekf_13d::Ekf13d;
 use types::{AccelData, GpsData, GyroData};
 use smoothing::AccelSmoother;
+use rerun_logger::RerunLogger;
 
 /// Log to file for debugging (bypasses stdout which may be corrupted)
 fn debug_log(msg: &str) {
@@ -141,6 +144,7 @@ struct SensorReading {
     roughness: Option<f64>,
     specific_power_w_per_kg: f64,
     power_coefficient: f64,
+    experimental_13d: Option<filters::ekf_13d::Ekf13dState>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -362,17 +366,22 @@ fn calculate_biases(
 /// Combined sensor reader task: Read BOTH accel and gyro from single termux-sensor stream
 /// Accel and gyro come from same LSM6DSO IMU, must be in same command
 /// Handles multi-line pretty-printed JSON by accumulating until complete object
-async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>) {
-    eprintln!("[imu-reader] Initializing IMU reader (accel + gyro together)");
+async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>, enable_gyro: bool) {
+    let sensor_list = if enable_gyro {
+        "Accelerometer,Gyroscope"
+    } else {
+        "Accelerometer"
+    };
+    eprintln!("[imu-reader] Initializing IMU reader (sensors: {})", sensor_list);
 
     // Cleanup sensor
     let _ = Command::new("termux-sensor").arg("-c").output().await;
     sleep(Duration::from_millis(500)).await;
 
-    // Single termux-sensor command for BOTH accel and gyro (no jq - handle JSON in Rust)
+    // Single termux-sensor command for accel and optionally gyro (no jq - handle JSON in Rust)
     let mut child = match Command::new("termux-sensor")
         .arg("-s")
-        .arg("Accelerometer,Gyroscope")
+        .arg(sensor_list)
         .arg("-d")
         .arg("20")
         .stdout(Stdio::piped())
@@ -674,6 +683,7 @@ async fn main() -> Result<()> {
     let imu_state = sensor_state.clone();
     let imu_hm = health_monitor.clone();
     let imu_rm = restart_manager.clone();
+    let enable_gyro_clone = args.enable_gyro;
     let imu_reader_handle = tokio::spawn(async move {
         // Supervisor loop
         loop {
@@ -688,7 +698,7 @@ async fn main() -> Result<()> {
             if can_run {
                 eprintln!("[SUPERVISOR] Starting IMU task...");
                 // Run the task - if it returns, it failed or finished
-                imu_reader_task(imu_state.clone(), imu_hm.clone()).await;
+                imu_reader_task(imu_state.clone(), imu_hm.clone(), enable_gyro_clone).await;
                 
                 // If task exits, report failure
                 eprintln!("[SUPERVISOR] IMU task exited unexpectedly.");
@@ -739,6 +749,7 @@ async fn main() -> Result<()> {
     // Initialize filters
     let mut ekf = EsEkf::new(0.05, 8.0, 0.5, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
+    let mut ekf_13d = Ekf13d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
     let mut readings: Vec<SensorReading> = Vec::new();
@@ -835,6 +846,19 @@ async fn main() -> Result<()> {
 
     println!("[{}] Starting data collection...", ts_now());
 
+    // Initialize Rerun logger for 3D visualization (v0.15 API compatible)
+    let rerun_output_path = format!("motion_tracker_sessions/rerun_{}.rrd", start.format("%Y%m%d_%H%M%S"));
+    let rerun_logger = match RerunLogger::new(&rerun_output_path) {
+        Ok(logger) => {
+            eprintln!("[RERUN] Logging enabled → {}", rerun_output_path);
+            Some(logger)
+        }
+        Err(e) => {
+            eprintln!("[RERUN] WARNING: Failed to initialize Rerun logger: {}", e);
+            None
+        }
+    };
+
     // Virtual kick simulation (keyboard 'k')
     let mut kick_frames_remaining = 0u32;
 
@@ -907,7 +931,11 @@ async fn main() -> Result<()> {
                 let corrected_mag = (corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z).sqrt();
                 let smoothed_mag = accel_smoother.apply(corrected_mag);
 
-                let reading = SensorReading {
+                // Feed accel to 13D filter (prediction phase with zero gyro)
+                ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
+
+                // We'll update this reading with 13D data later if gyro arrives
+                readings.push(SensorReading {
                     timestamp: accel.timestamp,
                     accel: Some(accel.clone()),
                     gyro: None,
@@ -915,9 +943,8 @@ async fn main() -> Result<()> {
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: 0.0,
                     power_coefficient: 0.0,
-                };
-
-                readings.push(reading);
+                    experimental_13d: Some(ekf_13d.get_state()),
+                });
 
                 // ===== INCIDENT DETECTION =====
                 // Sustained maneuvers (filtered, gravity-removed) gated by EKF speed
@@ -979,6 +1006,14 @@ async fn main() -> Result<()> {
                         let _ = comp_filter.update(corrected_x, corrected_y, corrected_z, 0.0, 0.0, 0.0);
                     }
                 }
+
+                // ===== RERUN LOGGING: Log accelerometer data =====
+                if let Some(ref logger) = rerun_logger {
+                    logger.set_time(accel.timestamp);
+                    logger.log_accel_raw(accel.x, accel.y, accel.z);
+                    logger.log_accel_filtered(corrected_x, corrected_y, corrected_z);
+                }
+
             }
         }
 
@@ -997,6 +1032,10 @@ async fn main() -> Result<()> {
 
                 if let Some(last) = readings.last_mut() {
                     last.gyro = Some(gyro.clone());
+
+                    // Feed gyro to 13D filter and populate experimental state
+                    ekf_13d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+                    last.experimental_13d = Some(ekf_13d.get_state());
                 }
 
                 // Only update gyro filter if NOT still
@@ -1006,6 +1045,13 @@ async fn main() -> Result<()> {
                         let _ = ekf.update_gyroscope(corrected_gx, corrected_gy, corrected_gz);
                     }
                 }
+
+                // ===== RERUN LOGGING: Log gyroscope data =====
+                if let Some(ref logger) = rerun_logger {
+                    logger.set_time(gyro.timestamp);
+                    logger.log_gyro_raw(gyro.x, gyro.y, gyro.z);
+                }
+
             }
         }
 
@@ -1063,6 +1109,10 @@ async fn main() -> Result<()> {
                         ekf.update_gps(gps.latitude, gps.longitude, Some(gps.speed), Some(gps.accuracy));
                     }
 
+                    // Update 13D filter with GPS
+                    // Use current GPS as origin on first fix; subsequent updates use that origin
+                    ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
+
                     // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
                     if gps.speed > gps_speed_threshold && !is_heading_initialized {
                         // Manually set heading from GPS bearing
@@ -1091,6 +1141,7 @@ async fn main() -> Result<()> {
                         roughness: None,
                         specific_power_w_per_kg: 0.0,
                         power_coefficient: 0.0,
+                        experimental_13d: Some(ekf_13d.get_state()),
                     };
                     readings.push(gps_reading);
                 }
@@ -1100,6 +1151,33 @@ async fn main() -> Result<()> {
         // Run EKF prediction
         if args.filter == "ekf" || args.filter == "both" {
             let _ = ekf.predict();
+        }
+
+        // ===== RERUN LOGGING: Log filter states =====
+        if let Some(ref logger) = rerun_logger {
+            let elapsed = Utc::now().signed_duration_since(start).num_milliseconds() as f64 / 1000.0;
+            logger.set_time(elapsed);
+
+            // Log EKF state (2D filter: position + velocity_vector)
+            if let Some(ekf_state) = ekf.get_state() {
+                // EsEkf is 2D: velocity_vector is (vx, vy), log with z=0
+                logger.log_ekf_velocity(ekf_state.velocity_vector.0, ekf_state.velocity_vector.1, 0.0);
+            }
+
+            // Log 13D filter state (orientation + position + velocity)
+            let ekf_13d_state = ekf_13d.get_state();
+            logger.log_13d_state(
+                ekf_13d_state.position.0,
+                ekf_13d_state.position.1,
+                ekf_13d_state.position.2,
+                ekf_13d_state.velocity.0,
+                ekf_13d_state.velocity.1,
+                ekf_13d_state.velocity.2,
+                ekf_13d_state.quaternion.0,
+                ekf_13d_state.quaternion.1,
+                ekf_13d_state.quaternion.2,
+                ekf_13d_state.quaternion.3,
+            );
         }
 
         // Status update every 2 seconds
@@ -1284,6 +1362,7 @@ async fn main() -> Result<()> {
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: 0.0,
                     power_coefficient: 0.0,
+                    experimental_13d: None,
                 };
 
                 readings.push(reading);
