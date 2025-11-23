@@ -29,6 +29,15 @@ pub struct LiveStatus {
     pub accel_silence_duration_secs: f64,
     pub gyro_silence_duration_secs: f64,
     pub gps_silence_duration_secs: f64,
+    // Restart tracking
+    pub accel_restart_count: u32,
+    pub gyro_restart_count: u32,
+    pub gps_restart_count: u32,
+    pub accel_can_restart: bool,
+    pub gps_can_restart: bool,
+    // Circuit breaker status
+    pub circuit_breaker_tripped: bool,
+    pub circuit_breaker_since_secs: f64,
     // Virtual dyno (specific power - vehicle-agnostic)
     pub specific_power_w_per_kg: f64,  // Power-to-weight ratio
     pub power_coefficient: f64,         // Normalized power metric
@@ -60,6 +69,13 @@ impl LiveStatus {
             accel_silence_duration_secs: 0.0,
             gyro_silence_duration_secs: 0.0,
             gps_silence_duration_secs: 0.0,
+            accel_restart_count: 0,
+            gyro_restart_count: 0,
+            gps_restart_count: 0,
+            accel_can_restart: true,
+            gps_can_restart: true,
+            circuit_breaker_tripped: false,
+            circuit_breaker_since_secs: 0.0,
             specific_power_w_per_kg: 0.0,
             power_coefficient: 0.0,
         }

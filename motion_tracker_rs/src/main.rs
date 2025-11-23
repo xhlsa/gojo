@@ -1235,6 +1235,40 @@ async fn main() -> Result<()> {
             live_status.incidents_detected = incidents.len() as u64;
             live_status.calibration_complete = calibration_complete;
 
+            // Populate health monitoring status from health monitor
+            let health_report = health_monitor.check_health();
+            live_status.accel_healthy = health_report.accel_healthy;
+            live_status.gyro_healthy = health_report.gyro_healthy;
+            live_status.gps_healthy = health_report.gps_healthy;
+            live_status.accel_silence_duration_secs = health_report
+                .accel_silence_duration
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            live_status.gyro_silence_duration_secs = health_report
+                .gyro_silence_duration
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            live_status.gps_silence_duration_secs = health_report
+                .gps_silence_duration
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+
+            // Populate restart tracking from restart manager
+            live_status.accel_restart_count = health_report.accel_restart_count;
+            live_status.gyro_restart_count = health_report.gyro_restart_count;
+            live_status.gps_restart_count = health_report.gps_restart_count;
+            live_status.accel_can_restart = health_report.accel_can_restart;
+            live_status.gps_can_restart = health_report.gps_can_restart;
+
+            // Populate circuit breaker status
+            live_status.circuit_breaker_tripped = restart_manager.any_circuit_tripped();
+            // Circuit breaker time is tracked implicitly in restart state timestamps
+            live_status.circuit_breaker_since_secs = if live_status.circuit_breaker_tripped {
+                uptime as f64
+            } else {
+                0.0
+            };
+
             // Populate GPS data from latest fix
             if let Some(gps) = sensor_state.latest_gps.read().await.as_ref() {
                 live_status.gps_speed = gps.speed;
