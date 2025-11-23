@@ -28,8 +28,8 @@ struct DashboardMetrics {
     accel_x: f64,
     accel_y: f64,
     accel_z: f64,
-    horsepower: f64,
-    torque_nm: f64,
+    specific_power_w_per_kg: f64,
+    power_coefficient: f64,
 }
 
 pub async fn start_dashboard(sensor_state: SensorState, port: u16) {
@@ -81,12 +81,14 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 (0.0, 0.0, 0.0)
             };
 
-            // Calculate horsepower
-            let (hp, torque) = if speed > 5.0 && ax != 0.0 {
+            // Calculate specific power (vehicle-agnostic metric)
+            // Note: We use EKF velocity for consistency with main.rs live_status
+            // For dashboard: fallback to GPS speed if no EKF available
+            let calc_velocity = if speed > 2.0 { speed } else { 0.0 };
+            let (sp_w_kg, pc) = if calc_velocity > 0.0 && (ax != 0.0 || ay != 0.0 || az != 0.0) {
                 use crate::physics;
-                let vehicle_params = physics::VehicleParams::default();
-                let power = physics::calculate_horsepower(speed, ax, vehicle_params);
-                ((power.horsepower * 100.0).round() / 100.0, (power.torque_nm * 100.0).round() / 100.0)
+                let power = physics::calculate_specific_power(ax, ay, az, calc_velocity);
+                ((power.specific_power_w_per_kg * 100.0).round() / 100.0, (power.power_coefficient * 100.0).round() / 100.0)
             } else {
                 (0.0, 0.0)
             };
@@ -103,8 +105,8 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 accel_x: ax,
                 accel_y: ay,
                 accel_z: az,
-                horsepower: hp,
-                torque_nm: torque,
+                specific_power_w_per_kg: sp_w_kg,
+                power_coefficient: pc,
             }
         };
 

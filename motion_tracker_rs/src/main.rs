@@ -139,8 +139,8 @@ struct SensorReading {
     gyro: Option<GyroData>,
     gps: Option<GpsData>,
     roughness: Option<f64>,
-    horsepower: f64,
-    torque_nm: f64,
+    specific_power_w_per_kg: f64,
+    power_coefficient: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -913,8 +913,8 @@ async fn main() -> Result<()> {
                     gyro: None,
                     gps: None,
                     roughness: Some(avg_roughness),
-                    horsepower: 0.0,
-                    torque_nm: 0.0,
+                    specific_power_w_per_kg: 0.0,
+                    power_coefficient: 0.0,
                 };
 
                 readings.push(reading);
@@ -1089,8 +1089,8 @@ async fn main() -> Result<()> {
                             bearing: gps.bearing,
                         }),
                         roughness: None,
-                        horsepower: 0.0,
-                        torque_nm: 0.0,
+                        specific_power_w_per_kg: 0.0,
+                        power_coefficient: 0.0,
                     };
                     readings.push(gps_reading);
                 }
@@ -1130,16 +1130,18 @@ async fn main() -> Result<()> {
                 live_status.gps_lon = gps.longitude;
                 live_status.gps_healthy = true;
 
-                // Calculate virtual dyno horsepower
+                // Calculate virtual dyno specific power
                 if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
-                    let vehicle_params = physics::VehicleParams::default();
-                    let power = physics::calculate_horsepower(
-                        gps.speed,
-                        accel.x,  // Longitudinal acceleration (already includes gravity component)
-                        vehicle_params,
+                    // Note: accel is already corrected (gravity_bias subtracted)
+                    let ekf_velocity = ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0);
+                    let power = physics::calculate_specific_power(
+                        accel.x,
+                        accel.y,
+                        accel.z,
+                        ekf_velocity,
                     );
-                    live_status.horsepower = (power.horsepower * 100.0).round() / 100.0;  // 2 decimal places
-                    live_status.torque_nm = (power.torque_nm * 100.0).round() / 100.0;
+                    live_status.specific_power_w_per_kg = (power.specific_power_w_per_kg * 100.0).round() / 100.0;
+                    live_status.power_coefficient = (power.power_coefficient * 100.0).round() / 100.0;
                 }
             }
             // Calculate magnitude of calibrated gravity vector
@@ -1280,8 +1282,8 @@ async fn main() -> Result<()> {
                     gyro: None,
                     gps: None,
                     roughness: Some(avg_roughness),
-                    horsepower: 0.0,
-                    torque_nm: 0.0,
+                    specific_power_w_per_kg: 0.0,
+                    power_coefficient: 0.0,
                 };
 
                 readings.push(reading);
