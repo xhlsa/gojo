@@ -238,6 +238,47 @@
             background-color: #1a1a1a;
             font-style: italic;
         }
+        .metric-controls {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 15px;
+            align-items: center;
+            flex-wrap: wrap;
+        }
+        .metric-controls label {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            color: #e0e0e0;
+            font-size: 0.95em;
+            cursor: pointer;
+        }
+        .metric-controls input[type="radio"] {
+            cursor: pointer;
+            width: 18px;
+            height: 18px;
+        }
+        .legend {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            margin-top: 8px;
+            padding: 8px;
+            background-color: #2d2d2d;
+            border-radius: 6px;
+            font-size: 0.85em;
+        }
+        .legend-item {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+        .legend-color {
+            display: inline-block;
+            width: 20px;
+            height: 4px;
+            border-radius: 2px;
+        }
         .stats-grid {
             display: grid;
             grid-template-columns: repeat(3, 1fr);
@@ -258,6 +299,21 @@
             color: #4caf50;
             font-size: 1.2em;
             font-weight: bold;
+        }
+        .incident-legend {
+            display: flex;
+            gap: 20px;
+            margin-top: 8px;
+            padding: 8px;
+            background-color: #2d2d2d;
+            border-radius: 6px;
+            font-size: 0.85em;
+        }
+        .incident-marker-preview {
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            display: inline-block;
         }
     </style>
 </head>
@@ -365,10 +421,22 @@
         <div id="detail-view" class="view">
             <button id="back-btn" style="margin-bottom: 15px; padding: 8px 16px; background-color: #4caf50; color: white; border: none; border-radius: 6px; cursor: pointer;">Back to Drives</button>
             <div class="drive-detail">
+                <div class="metric-controls">
+                    <label>
+                        <input type="radio" name="metric" value="roughness" checked>
+                        Road Roughness (Heatmap)
+                    </label>
+                    <label>
+                        <input type="radio" name="metric" value="power">
+                        Specific Power (Dyno)
+                    </label>
+                    <div class="legend" id="legend-container"></div>
+                </div>
                 <div class="map-container">
                     <div id="map"></div>
                     <div id="map-stats" class="map-stats" style="display:none;"></div>
                 </div>
+                <div class="incident-legend" id="incident-legend" style="display:none;"></div>
                 <div class="stats-grid">
                     <div class="stat-card">
                         <div class="stat-label">Date/Time</div>
@@ -607,10 +675,14 @@
                 return;
             }
 
-            renderTrackOnMap(gpsPoints);
+            // Pass full readings array and incidents for visualization
+            const incidents = result.incidents || [];
+            renderTrackOnMap(gpsPoints, result.readings, incidents);
         }
 
         let map = null;
+        let currentMetricData = null;
+        let currentIncidents = null;
 
         function renderNoGPSMessage() {
             const mapDiv = document.getElementById('map');
@@ -631,7 +703,231 @@
             container.appendChild(msg);
         }
 
-        function renderTrackOnMap(gpsPoints) {
+        function transformReadingsToSegments(readings) {
+            // Transform readings array into GeoJSON FeatureCollection of segments
+            const features = [];
+
+            for (let i = 0; i < readings.length - 1; i++) {
+                const current = readings[i];
+                const next = readings[i + 1];
+
+                // Only create segment if both points have GPS data
+                if (!current.gps || !next.gps ||
+                    current.gps.latitude === null || current.gps.longitude === null ||
+                    next.gps.latitude === null || next.gps.longitude === null) {
+                    continue;
+                }
+
+                const feature = {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [current.gps.longitude, current.gps.latitude],
+                            [next.gps.longitude, next.gps.latitude]
+                        ]
+                    },
+                    properties: {
+                        roughness: current.roughness || 0,
+                        power: current.specific_power || 0,
+                        index: i
+                    }
+                };
+
+                features.push(feature);
+            }
+
+            return {
+                type: 'FeatureCollection',
+                features: features
+            };
+        }
+
+        function getRoughnessColor(roughness) {
+            if (roughness < 0.5) return '#4caf50';      // Green - smooth
+            if (roughness < 1.5) return '#ffeb3b';      // Yellow - bumpy
+            return '#f44336';                            // Red - rough/potholes
+        }
+
+        function getPowerColor(power) {
+            // Blue to Purple/Pink gradient for power
+            // Low: Blue (0 W/kg), High: Bright Pink (100+ W/kg)
+            if (power < 10) return '#2196f3';           // Deep Blue
+            if (power < 25) return '#03a9f4';           // Light Blue
+            if (power < 50) return '#9c27b0';           // Purple
+            if (power < 75) return '#c2185b';           // Deep Pink
+            return '#ff1493';                            // Bright Pink
+        }
+
+        function buildRoughnessExpression() {
+            // Data-driven expression for roughness property
+            return [
+                'interpolate',
+                ['linear'],
+                ['get', 'roughness'],
+                0, getRoughnessColor(0),
+                0.5, getRoughnessColor(0.5),
+                1.5, getRoughnessColor(1.5),
+                2.0, getRoughnessColor(2.0)
+            ];
+        }
+
+        function buildPowerExpression() {
+            // Data-driven expression for power property
+            return [
+                'step',
+                ['get', 'power'],
+                getPowerColor(0),
+                10, getPowerColor(10),
+                25, getPowerColor(25),
+                50, getPowerColor(50),
+                75, getPowerColor(75)
+            ];
+        }
+
+        function updateLegend(metric) {
+            const container = document.getElementById('legend-container');
+            let html = '';
+
+            if (metric === 'roughness') {
+                html = `
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #4caf50;"></span>
+                        <span>Smooth (&lt;0.5)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #ffeb3b;"></span>
+                        <span>Bumpy (0.5-1.5)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #f44336;"></span>
+                        <span>Rough (&gt;1.5)</span>
+                    </div>
+                `;
+            } else {
+                html = `
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #2196f3;"></span>
+                        <span>Low (&lt;10 W/kg)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #03a9f4;"></span>
+                        <span>Light (10-25)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #9c27b0;"></span>
+                        <span>Moderate (25-50)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #c2185b;"></span>
+                        <span>High (50-75)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #ff1493;"></span>
+                        <span>Aggressive (&gt;75)</span>
+                    </div>
+                `;
+            }
+
+            container.innerHTML = html;
+        }
+
+        function updateMetricVisualization(metric) {
+            if (!map || !currentMetricData) return;
+
+            updateLegend(metric);
+
+            if (map.getSource('segments')) {
+                // Update the line color based on selected metric
+                const colorExpression = metric === 'roughness'
+                    ? buildRoughnessExpression()
+                    : buildPowerExpression();
+
+                map.setPaintProperty('segments-layer', 'line-color', colorExpression);
+            }
+        }
+
+        function addIncidentMarkers(incidents) {
+            if (!incidents || incidents.length === 0 || !map) return;
+
+            const incidentSource = {
+                type: 'geojson',
+                data: {
+                    type: 'FeatureCollection',
+                    features: incidents
+                        .filter(inc => inc.gps && inc.gps.latitude && inc.gps.longitude)
+                        .map(inc => ({
+                            type: 'Feature',
+                            geometry: {
+                                type: 'Point',
+                                coordinates: [inc.gps.longitude, inc.gps.latitude]
+                            },
+                            properties: {
+                                type: inc.type || 'Unknown',
+                                magnitude: inc.magnitude || 0
+                            }
+                        }))
+                }
+            };
+
+            // Only add source/layer if they don't exist
+            if (!map.getSource('incidents')) {
+                map.addSource('incidents', incidentSource);
+
+                map.addLayer({
+                    id: 'incidents-layer',
+                    type: 'circle',
+                    source: 'incidents',
+                    paint: {
+                        'circle-radius': 8,
+                        'circle-color': [
+                            'match',
+                            ['get', 'type'],
+                            'HardBrake', '#ff9800',    // Orange
+                            'Swerve', '#2196f3',       // Blue
+                            'Impact', '#f44336',       // Red
+                            '#999'                      // Default gray
+                        ],
+                        'circle-stroke-width': 2,
+                        'circle-stroke-color': '#fff',
+                        'circle-opacity': 0.8
+                    }
+                });
+
+                // Add popups on click
+                map.on('click', 'incidents-layer', (e) => {
+                    const props = e.features[0].properties;
+                    new maplibregl.Popup()
+                        .setLngLat(e.lngLat)
+                        .setHTML(`<strong>${props.type}</strong><br>Magnitude: ${props.magnitude.toFixed(2)}g`)
+                        .addTo(map);
+                });
+
+                map.on('mouseenter', 'incidents-layer', () => {
+                    map.getCanvas().style.cursor = 'pointer';
+                });
+
+                map.on('mouseleave', 'incidents-layer', () => {
+                    map.getCanvas().style.cursor = '';
+                });
+            }
+
+            // Show incident legend
+            const incidentLegend = document.getElementById('incident-legend');
+            if (incidents.length > 0) {
+                incidentLegend.style.display = 'flex';
+                incidentLegend.innerHTML = `
+                    <strong>Incidents (${incidents.length}):</strong>
+                    <div style="display: flex; gap: 20px;">
+                        <span><span class="incident-marker-preview" style="background-color: #f44336;"></span>Impact</span>
+                        <span><span class="incident-marker-preview" style="background-color: #ff9800;"></span>Hard Brake</span>
+                        <span><span class="incident-marker-preview" style="background-color: #2196f3;"></span>Swerve</span>
+                    </div>
+                `;
+            }
+        }
+
+        function renderTrackOnMap(gpsPoints, allReadings, incidents) {
             // Clean up any previous message
             const oldMsg = document.getElementById('no-gps-msg');
             if (oldMsg) oldMsg.remove();
@@ -687,28 +983,27 @@
             });
 
             map.on('load', () => {
-                // Add GPS track line
-                map.addSource('route', {
+                // Transform readings into color-coded segments
+                currentMetricData = transformReadingsToSegments(allReadings);
+                currentIncidents = incidents;
+
+                // Add segmented route as GeoJSON source
+                map.addSource('segments', {
                     type: 'geojson',
-                    data: {
-                        type: 'Feature',
-                        geometry: {
-                            type: 'LineString',
-                            coordinates: gpsPoints.map(p => [p.lon, p.lat])
-                        }
-                    }
+                    data: currentMetricData
                 });
 
+                // Add colored line layer (default: roughness)
                 map.addLayer({
-                    id: 'route',
+                    id: 'segments-layer',
                     type: 'line',
-                    source: 'route',
+                    source: 'segments',
                     layout: {
                         'line-join': 'round',
                         'line-cap': 'round'
                     },
                     paint: {
-                        'line-color': '#4caf50',
+                        'line-color': buildRoughnessExpression(),
                         'line-width': 4
                     }
                 });
@@ -724,6 +1019,12 @@
                     .setLngLat([gpsPoints[gpsPoints.length - 1].lon, gpsPoints[gpsPoints.length - 1].lat])
                     .setPopup(new maplibregl.Popup().setHTML('<strong>END</strong>'))
                     .addTo(map);
+
+                // Add incident markers
+                addIncidentMarkers(incidents);
+
+                // Initialize legend
+                updateLegend('roughness');
 
                 // Force resize BEFORE fitBounds
                 map.resize();
@@ -776,6 +1077,13 @@
         function downloadGPX(driveId) {
             window.location.href = `/api/drive/${driveId}/gpx`;
         }
+
+        // Metric selector functionality
+        document.querySelectorAll('input[name="metric"]').forEach(radio => {
+            radio.addEventListener('change', (e) => {
+                updateMetricVisualization(e.target.value);
+            });
+        });
 
         document.getElementById('back-btn').addEventListener('click', () => switchView('drives'));
 
