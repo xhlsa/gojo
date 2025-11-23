@@ -1,0 +1,9 @@
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/re_sdk_comms-63c38e34e008b181.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/tcp_client.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/buffered_client.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libre_sdk_comms-63c38e34e008b181.rlib: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/tcp_client.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/buffered_client.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libre_sdk_comms-63c38e34e008b181.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/tcp_client.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/buffered_client.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/tcp_client.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/re_sdk_comms-0.15.1/src/buffered_client.rs:

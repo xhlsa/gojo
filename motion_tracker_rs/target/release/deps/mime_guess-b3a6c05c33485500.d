@@ -1,0 +1,12 @@
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/mime_guess-b3a6c05c33485500.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/build/mime_guess-5cc8c0c5729249ce/out/mime_types_generated.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libmime_guess-b3a6c05c33485500.rlib: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/build/mime_guess-5cc8c0c5729249ce/out/mime_types_generated.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libmime_guess-b3a6c05c33485500.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs /data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/build/mime_guess-5cc8c0c5729249ce/out/mime_types_generated.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/impl_bin_search.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/mime_guess-2.0.5/src/mime_types.rs:
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/build/mime_guess-5cc8c0c5729249ce/out/mime_types_generated.rs:
+
+# env-dep:MIME_TYPES_GENERATED_PATH=/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/build/mime_guess-5cc8c0c5729249ce/out/mime_types_generated.rs

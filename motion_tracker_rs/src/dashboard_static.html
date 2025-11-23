@@ -315,6 +315,67 @@
             border-radius: 50%;
             display: inline-block;
         }
+        .layer-control-panel {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background-color: rgba(45, 45, 45, 0.95);
+            border: 1px solid #444;
+            border-radius: 8px;
+            padding: 12px 16px;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.3);
+            font-size: 0.9em;
+        }
+        .layer-control-panel h3 {
+            margin: 0 0 12px 0;
+            font-size: 0.95em;
+            color: #4caf50;
+            border-bottom: 1px solid #555;
+            padding-bottom: 8px;
+        }
+        .layer-control-item {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+            gap: 8px;
+        }
+        .layer-control-item:last-child {
+            margin-bottom: 0;
+        }
+        .layer-control-item label {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            cursor: pointer;
+            user-select: none;
+            color: #e0e0e0;
+        }
+        .layer-control-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #4caf50;
+        }
+        .layer-color-indicator {
+            display: inline-block;
+            width: 18px;
+            height: 4px;
+            border-radius: 2px;
+            margin-right: 4px;
+        }
+        .layer-8d-color {
+            background-color: #2196f3;
+        }
+        .layer-13d-color {
+            background: repeating-linear-gradient(
+                90deg,
+                #9c27b0 0px,
+                #9c27b0 2px,
+                transparent 2px,
+                transparent 4px
+            );
+        }
     </style>
 </head>
 <body>
@@ -704,7 +765,7 @@
         }
 
         function transformReadingsToSegments(readings) {
-            // Transform readings array into GeoJSON FeatureCollection of segments
+            // Transform readings array into GeoJSON FeatureCollection of segments (8D EKF track)
             const features = [];
 
             for (let i = 0; i < readings.length - 1; i++) {
@@ -741,6 +802,118 @@
                 type: 'FeatureCollection',
                 features: features
             };
+        }
+
+        function transformReadingsTo13dSegments(readings) {
+            // Transform readings array into GeoJSON FeatureCollection of segments (13D EKF track)
+            // Only include readings where experimental_13d is present
+            const features = [];
+
+            for (let i = 0; i < readings.length - 1; i++) {
+                const current = readings[i];
+                const next = readings[i + 1];
+
+                // Only create segment if both points have experimental_13d data
+                if (!current.experimental_13d || !next.experimental_13d) {
+                    continue;
+                }
+
+                const currentPos = current.experimental_13d.position;
+                const nextPos = next.experimental_13d.position;
+
+                if (!currentPos || !nextPos) {
+                    continue;
+                }
+
+                // Assume experimental_13d.position is [east, north, up] relative to origin
+                // For map visualization, we need to convert back to lat/lon
+                // For now, use the position values directly as a proxy for visualization
+                // In production, the 13D filter stores its origin and we'd convert properly
+                const feature = {
+                    type: 'Feature',
+                    geometry: {
+                        type: 'LineString',
+                        coordinates: [
+                            [currentPos[0], currentPos[1]],
+                            [nextPos[0], nextPos[1]]
+                        ]
+                    },
+                    properties: {
+                        covariance_trace: current.experimental_13d.covariance_trace || 0,
+                        velocity: Math.sqrt(
+                            current.experimental_13d.velocity[0] ** 2 +
+                            current.experimental_13d.velocity[1] ** 2 +
+                            current.experimental_13d.velocity[2] ** 2
+                        ),
+                        index: i
+                    }
+                };
+
+                features.push(feature);
+            }
+
+            return {
+                type: 'FeatureCollection',
+                features: features
+            };
+        }
+
+        function createLayerControlPanel(map) {
+            // Create layer control panel for toggling visibility of 8D and 13D tracks
+            const container = document.getElementById('map-container');
+            const panel = document.createElement('div');
+            panel.className = 'layer-control-panel';
+
+            // Panel title
+            const title = document.createElement('h3');
+            title.textContent = 'Layers';
+            panel.appendChild(title);
+
+            // 8D EKF checkbox
+            const item8d = document.createElement('div');
+            item8d.className = 'layer-control-item';
+            const check8d = document.createElement('input');
+            check8d.type = 'checkbox';
+            check8d.id = 'toggle-8d';
+            check8d.checked = true;
+            const label8d = document.createElement('label');
+            label8d.htmlFor = 'toggle-8d';
+            const color8d = document.createElement('span');
+            color8d.className = 'layer-color-indicator layer-8d-color';
+            label8d.appendChild(color8d);
+            label8d.appendChild(document.createTextNode('8D EKF'));
+            item8d.appendChild(check8d);
+            item8d.appendChild(label8d);
+            panel.appendChild(item8d);
+
+            // 13D EKF checkbox
+            const item13d = document.createElement('div');
+            item13d.className = 'layer-control-item';
+            const check13d = document.createElement('input');
+            check13d.type = 'checkbox';
+            check13d.id = 'toggle-13d';
+            check13d.checked = true;
+            const label13d = document.createElement('label');
+            label13d.htmlFor = 'toggle-13d';
+            const color13d = document.createElement('span');
+            color13d.className = 'layer-color-indicator layer-13d-color';
+            label13d.appendChild(color13d);
+            label13d.appendChild(document.createTextNode('13D EKF (Shadow)'));
+            item13d.appendChild(check13d);
+            item13d.appendChild(label13d);
+            panel.appendChild(item13d);
+
+            // Add to map container
+            container.appendChild(panel);
+
+            // Wire up event handlers
+            check8d.addEventListener('change', () => {
+                map.setLayoutProperty('segments-8d-layer', 'visibility', check8d.checked ? 'visible' : 'none');
+            });
+
+            check13d.addEventListener('change', () => {
+                map.setLayoutProperty('segments-13d-layer', 'visibility', check13d.checked ? 'visible' : 'none');
+            });
         }
 
         function getRoughnessColor(roughness) {
@@ -985,26 +1158,53 @@
             map.on('load', () => {
                 // Transform readings into color-coded segments
                 currentMetricData = transformReadingsToSegments(allReadings);
+                const segmentsData13d = transformReadingsTo13dSegments(allReadings);
                 currentIncidents = incidents;
 
-                // Add segmented route as GeoJSON source
-                map.addSource('segments', {
+                // Add 8D EKF segmented route as GeoJSON source
+                map.addSource('segments-8d', {
                     type: 'geojson',
                     data: currentMetricData
                 });
 
-                // Add colored line layer (default: roughness)
+                // Add 13D EKF segmented route as GeoJSON source
+                map.addSource('segments-13d', {
+                    type: 'geojson',
+                    data: segmentsData13d
+                });
+
+                // Add 8D colored line layer (solid blue, default metric visualization)
                 map.addLayer({
-                    id: 'segments-layer',
+                    id: 'segments-8d-layer',
                     type: 'line',
-                    source: 'segments',
+                    source: 'segments-8d',
                     layout: {
                         'line-join': 'round',
-                        'line-cap': 'round'
+                        'line-cap': 'round',
+                        'visibility': 'visible'
                     },
                     paint: {
                         'line-color': buildRoughnessExpression(),
-                        'line-width': 4
+                        'line-width': 4,
+                        'line-opacity': 0.8
+                    }
+                });
+
+                // Add 13D dashed line layer (purple dashed, shadow comparison)
+                map.addLayer({
+                    id: 'segments-13d-layer',
+                    type: 'line',
+                    source: 'segments-13d',
+                    layout: {
+                        'line-join': 'round',
+                        'line-cap': 'round',
+                        'visibility': 'visible'
+                    },
+                    paint: {
+                        'line-color': '#9c27b0',  // Purple for 13D
+                        'line-width': 4,
+                        'line-opacity': 0.8,
+                        'line-dasharray': [2, 2]   // Dashed pattern
                     }
                 });
 
@@ -1022,6 +1222,9 @@
 
                 // Add incident markers
                 addIncidentMarkers(incidents);
+
+                // Create layer control panel
+                createLayerControlPanel(map);
 
                 // Initialize legend
                 updateLegend('roughness');

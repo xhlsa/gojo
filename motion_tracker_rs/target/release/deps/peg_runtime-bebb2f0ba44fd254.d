@@ -1,0 +1,10 @@
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/peg_runtime-bebb2f0ba44fd254.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/error.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/slice.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/str.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libpeg_runtime-bebb2f0ba44fd254.rlib: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/error.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/slice.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/str.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libpeg_runtime-bebb2f0ba44fd254.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/error.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/slice.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/str.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/error.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/slice.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/peg-runtime-0.6.3/str.rs:

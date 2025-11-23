@@ -1,0 +1,10 @@
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/time_core-af0894c9b09e4a36.d: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/convert.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/hint.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/util.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libtime_core-af0894c9b09e4a36.rlib: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/convert.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/hint.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/util.rs
+
+/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/deps/libtime_core-af0894c9b09e4a36.rmeta: /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/lib.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/convert.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/hint.rs /data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/util.rs
+
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/lib.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/convert.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/hint.rs:
+/data/data/com.termux/files/home/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/time-core-0.1.6/src/util.rs:

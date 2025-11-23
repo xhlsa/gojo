@@ -79,6 +79,7 @@ mod rerun_logger;
 use filters::complementary::ComplementaryFilter;
 use filters::es_ekf::EsEkf;
 use filters::ekf_13d::Ekf13d;
+use filters::ekf_15d::Ekf15d;
 use types::{AccelData, GpsData, GyroData};
 use smoothing::AccelSmoother;
 use rerun_logger::RerunLogger;
@@ -145,6 +146,7 @@ struct SensorReading {
     specific_power_w_per_kg: f64,
     power_coefficient: f64,
     experimental_13d: Option<filters::ekf_13d::Ekf13dState>,
+    experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -750,6 +752,7 @@ async fn main() -> Result<()> {
     let mut ekf = EsEkf::new(0.05, 8.0, 0.5, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
     let mut ekf_13d = Ekf13d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise
+    let mut ekf_15d = Ekf15d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise (with accel bias)
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
     let mut readings: Vec<SensorReading> = Vec::new();
@@ -934,7 +937,11 @@ async fn main() -> Result<()> {
                 // Feed accel to 13D filter (prediction phase with zero gyro)
                 ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
 
-                // We'll update this reading with 13D data later if gyro arrives
+                // Feed raw accel to 15D filter (EKF handles gravity via quaternion)
+                // Use filtered_vec (low-pass but NOT gravity-corrected) - 15D subtracts its own bias estimate
+                ekf_15d.predict((filtered_vec.x, filtered_vec.y, filtered_vec.z), (0.0, 0.0, 0.0));
+
+                // We'll update this reading with 13D/15D data later if gyro arrives
                 readings.push(SensorReading {
                     timestamp: accel.timestamp,
                     accel: Some(accel.clone()),
@@ -944,6 +951,7 @@ async fn main() -> Result<()> {
                     specific_power_w_per_kg: 0.0,
                     power_coefficient: 0.0,
                     experimental_13d: Some(ekf_13d.get_state()),
+                    experimental_15d: Some(ekf_15d.get_state()),
                 });
 
                 // ===== INCIDENT DETECTION =====
@@ -1036,6 +1044,10 @@ async fn main() -> Result<()> {
                     // Feed gyro to 13D filter and populate experimental state
                     ekf_13d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
                     last.experimental_13d = Some(ekf_13d.get_state());
+
+                    // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
+                    ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+                    last.experimental_15d = Some(ekf_15d.get_state());
                 }
 
                 // Only update gyro filter if NOT still
@@ -1113,6 +1125,9 @@ async fn main() -> Result<()> {
                     // Use current GPS as origin on first fix; subsequent updates use that origin
                     ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
 
+                    // Update 15D filter with GPS (uses lat/lon directly for position correction)
+                    ekf_15d.update_gps((gps.latitude, gps.longitude, 0.0));
+
                     // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
                     if gps.speed > gps_speed_threshold && !is_heading_initialized {
                         // Manually set heading from GPS bearing
@@ -1142,6 +1157,7 @@ async fn main() -> Result<()> {
                         specific_power_w_per_kg: 0.0,
                         power_coefficient: 0.0,
                         experimental_13d: Some(ekf_13d.get_state()),
+                        experimental_15d: Some(ekf_15d.get_state()),
                     };
                     readings.push(gps_reading);
                 }
@@ -1363,6 +1379,7 @@ async fn main() -> Result<()> {
                     specific_power_w_per_kg: 0.0,
                     power_coefficient: 0.0,
                     experimental_13d: None,
+                    experimental_15d: None,
                 };
 
                 readings.push(reading);
