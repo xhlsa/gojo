@@ -1,16 +1,17 @@
 use axum::{
     extract::{
         ws::{Message, WebSocket, WebSocketUpgrade},
-        State,
+        Path, Query, State,
     },
-    response::{Html, IntoResponse},
+    http::StatusCode,
+    response::{Html, IntoResponse, Response},
     routing::get,
-    Router,
+    Json, Router,
 };
 use clap::Parser;
-use futures::{sink::SinkExt, stream::StreamExt};
 use serde::{Deserialize, Serialize};
-use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use serde_json::Value;
+use std::{net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 
@@ -34,7 +35,7 @@ struct AppState {
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    
+
     if !args.data_dir.exists() {
         eprintln!("Warning: Data directory {:?} does not exist", args.data_dir);
     }
@@ -46,6 +47,9 @@ async fn main() {
     let app = Router::new()
         .route("/", get(index_handler))
         .route("/ws", get(ws_handler))
+        .route("/api/drives", get(list_drives_handler))
+        .route("/api/drive/:drive_id", get(drive_details_handler))
+        .route("/api/drive/:drive_id/gpx", get(drive_gpx_handler))
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
@@ -57,8 +61,416 @@ async fn main() {
 }
 
 async fn index_handler() -> Html<&'static str> {
-    // Reuse the same HTML template, we might want to inject a "Standalone" badge later
     Html(include_str!("../dashboard_static.html"))
+}
+
+#[derive(Deserialize)]
+struct PaginationParams {
+    limit: Option<u32>,
+    offset: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DriveMetadata {
+    id: String,
+    timestamp: String,
+    datetime: String,
+    duration_seconds: u64,
+    accel_samples: u64,
+    gps_fixes: u64,
+    distance_meters: f64,
+    has_gps: bool,
+    file_size_mb: f64,
+}
+
+#[derive(Serialize)]
+struct DrivesResponse {
+    drives: Vec<DriveMetadata>,
+    total: usize,
+    offset: u32,
+    limit: u32,
+    #[serde(rename = "hasMore")]
+    has_more: bool,
+}
+
+#[derive(Serialize)]
+struct DriveDetailsResponse {
+    id: String,
+    timestamp: String,
+    datetime: String,
+    has_gps: bool,
+    stats: DriveStats,
+    readings: Vec<Value>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+struct DriveStats {
+    gps_samples: u64,
+    accel_samples: u64,
+    gyro_samples: u64,
+    distance_km: f64,
+    peak_memory_mb: f64,
+}
+
+fn parse_timestamp_from_filename(filename: &str) -> Option<chrono::DateTime<chrono::Utc>> {
+    // Remove extensions
+    let base = filename
+        .replace(".json.gz", "")
+        .replace(".json", "")
+        .replace(".gpx", "");
+
+    // Extract YYYYMMDD_HHMMSS pattern
+    let parts: Vec<&str> = base.split('_').collect();
+    if parts.len() < 2 {
+        return None;
+    }
+
+    // Find date and time parts
+    for i in 0..parts.len().saturating_sub(1) {
+        if parts[i].len() == 8 && parts[i].chars().all(|c| c.is_numeric()) {
+            if parts[i + 1].len() >= 6 && parts[i + 1][0..6].chars().all(|c| c.is_numeric()) {
+                let timestamp_str = format!("{}_{}", parts[i], &parts[i + 1][0..6]);
+                if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y%m%d_%H%M%S") {
+                    return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn extract_drive_stats(data: &Value) -> DriveStats {
+    let mut stats = DriveStats {
+        gps_samples: 0,
+        accel_samples: 0,
+        gyro_samples: 0,
+        distance_km: 0.0,
+        peak_memory_mb: 0.0,
+    };
+
+    // Try to extract from metrics (Rust format)
+    if let Some(metrics) = data.get("metrics").and_then(|m| m.as_object()) {
+        stats.gps_samples = metrics.get("gps_samples")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        stats.accel_samples = metrics.get("accel_samples")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        stats.gyro_samples = metrics.get("gyro_samples")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        stats.peak_memory_mb = metrics.get("peak_memory_mb")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+
+        if let Some(dist) = metrics.get("ekf_distance").and_then(|v| v.as_f64()) {
+            if dist > 0.0 && dist < 1_000_000.0 {
+                stats.distance_km = dist / 1000.0;
+            }
+        }
+    }
+
+    // Fallback: check stats object (Python/Rust format)
+    if stats.distance_km == 0.0 {
+        if let Some(stats_obj) = data.get("stats").and_then(|s| s.as_object()) {
+            if let Some(dist) = stats_obj.get("ekf_distance").and_then(|v| v.as_f64()) {
+                if dist > 0.0 && dist < 1_000_000.0 {
+                    stats.distance_km = dist;
+                }
+            }
+        }
+    }
+
+    // Fallback: count readings array
+    if stats.accel_samples == 0 {
+        if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+            stats.accel_samples = readings.len() as u64;
+        }
+    }
+
+    // Count GPS fixes in readings
+    if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+        let gps_fix_count = readings
+            .iter()
+            .filter(|r| {
+                r.get("gps")
+                    .and_then(|g| g.get("latitude"))
+                    .is_some()
+            })
+            .count() as u64;
+        if stats.gps_samples == 0 {
+            stats.gps_samples = gps_fix_count;
+        }
+    }
+
+    stats
+}
+
+fn has_gps_data(data: &Value) -> bool {
+    // Quick check in metrics
+    if let Some(gps_samples) = data.get("metrics")
+        .and_then(|m| m.get("gps_samples"))
+        .and_then(|v| v.as_u64()) {
+        if gps_samples > 0 {
+            return true;
+        }
+    }
+
+    // Check readings array (first 1000 entries)
+    if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+        for reading in readings.iter().take(1000) {
+            if reading.get("gps")
+                .and_then(|g| g.get("latitude"))
+                .is_some() {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+async fn list_drives_handler(
+    State(state): State<AppState>,
+    Query(params): Query<PaginationParams>,
+) -> Result<Json<DrivesResponse>, (StatusCode, String)> {
+    let limit = params.limit.unwrap_or(20).min(100) as usize;
+    let offset = params.offset.unwrap_or(0) as usize;
+
+    // Scan directory for JSON files
+    let mut filepaths = Vec::new();
+
+    match std::fs::read_dir(&state.data_dir) {
+        Ok(entries) => {
+            for entry in entries {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                        if (name.starts_with("comparison_") || name.starts_with("motion_track_v2_"))
+                            && name.ends_with(".json") {
+                            filepaths.push(path);
+                        }
+                    }
+                }
+            }
+        }
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+    }
+
+    // Sort by modification time descending (newest first)
+    filepaths.sort_by(|a, b| {
+        let mtime_a = std::fs::metadata(a)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        let mtime_b = std::fs::metadata(b)
+            .ok()
+            .and_then(|m| m.modified().ok())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+        mtime_b.cmp(&mtime_a)
+    });
+
+    let total = filepaths.len();
+    let paginated: Vec<_> = filepaths
+        .into_iter()
+        .skip(offset)
+        .take(limit)
+        .collect();
+
+    let mut drives = Vec::new();
+
+    for filepath in paginated {
+        if let Ok(content) = std::fs::read_to_string(&filepath) {
+            if let Ok(data) = serde_json::from_str::<Value>(&content) {
+                if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
+                    let drive_id = filename.replace(".json", "");
+
+                    let timestamp = parse_timestamp_from_filename(filename)
+                        .map(|dt| dt.to_rfc3339())
+                        .unwrap_or_default();
+                    let datetime = parse_timestamp_from_filename(filename)
+                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                        .unwrap_or_default();
+
+                    let stats = extract_drive_stats(&data);
+                    let has_gps = has_gps_data(&data);
+
+                    let file_size = std::fs::metadata(&filepath)
+                        .ok()
+                        .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                        .unwrap_or(0.0);
+
+                    // Calculate duration from first and last reading timestamps
+                    let duration_seconds = if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+                        if readings.len() > 1 {
+                            let first_ts = readings[0]
+                                .get("timestamp")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                            let last_ts = readings[readings.len() - 1]
+                                .get("timestamp")
+                                .and_then(|v| v.as_f64())
+                                .unwrap_or(0.0);
+                            (last_ts - first_ts).max(0.0) as u64
+                        } else {
+                            0
+                        }
+                    } else {
+                        0
+                    };
+
+                    drives.push(DriveMetadata {
+                        id: drive_id,
+                        timestamp,
+                        datetime,
+                        duration_seconds,
+                        accel_samples: stats.accel_samples,
+                        gps_fixes: stats.gps_samples,
+                        distance_meters: stats.distance_km * 1000.0,
+                        has_gps,
+                        file_size_mb: file_size,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(Json(DrivesResponse {
+        drives,
+        total,
+        offset: offset as u32,
+        limit: limit as u32,
+        has_more: (offset + limit) < total,
+    }))
+}
+
+async fn drive_details_handler(
+    State(state): State<AppState>,
+    Path(drive_id): Path<String>,
+) -> Result<Json<DriveDetailsResponse>, (StatusCode, String)> {
+    // Find the file
+    let json_path = state.data_dir.join(format!("{}.json", drive_id));
+
+    if !json_path.exists() {
+        return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+    }
+
+    let content = std::fs::read_to_string(&json_path)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let data: Value = serde_json::from_str(&content)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let timestamp = parse_timestamp_from_filename(&drive_id)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
+    let datetime = parse_timestamp_from_filename(&drive_id)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default();
+
+    let stats = extract_drive_stats(&data);
+    let has_gps = has_gps_data(&data);
+
+    // Extract readings array
+    let readings = data.get("readings")
+        .and_then(|r| r.as_array())
+        .map(|arr| arr.clone())
+        .unwrap_or_default();
+
+    Ok(Json(DriveDetailsResponse {
+        id: drive_id,
+        timestamp,
+        datetime,
+        has_gps,
+        stats,
+        readings,
+    }))
+}
+
+async fn drive_gpx_handler(
+    State(state): State<AppState>,
+    Path(drive_id): Path<String>,
+) -> Result<Response, (StatusCode, String)> {
+    let json_path = state.data_dir.join(format!("{}.json", drive_id));
+
+    if !json_path.exists() {
+        return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+    }
+
+    let content = std::fs::read_to_string(&json_path)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let data: Value = serde_json::from_str(&content)
+        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let gpx = generate_gpx_from_json(&data)?;
+
+    Ok((
+        [(
+            axum::http::header::CONTENT_TYPE,
+            "application/gpx+xml",
+        )],
+        gpx,
+    ).into_response())
+}
+
+fn generate_gpx_from_json(data: &Value) -> Result<String, (StatusCode, String)> {
+    let mut gps_points = Vec::new();
+
+    // Extract GPS points from readings array
+    if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+        for reading in readings {
+            if let Some(gps) = reading.get("gps").and_then(|g| g.as_object()) {
+                if let (Some(lat), Some(lon)) = (
+                    gps.get("latitude").and_then(|v| v.as_f64()),
+                    gps.get("longitude").and_then(|v| v.as_f64()),
+                ) {
+                    let ele = gps.get("altitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let ts = reading.get("timestamp")
+                        .and_then(|v| v.as_f64())
+                        .map(|t| t.to_string())
+                        .unwrap_or_default();
+                    gps_points.push((lat, lon, ele, ts));
+                }
+            }
+        }
+    }
+
+    if gps_points.is_empty() {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            "No GPS data found in drive".to_string(),
+        ));
+    }
+
+    let now = chrono::Utc::now().to_rfc3339();
+    let mut gpx_lines = vec![
+        r#"<?xml version="1.0" encoding="UTF-8"?>"#.to_string(),
+        r#"<gpx version="1.1" creator="Motion Tracker Rust Dashboard">"#.to_string(),
+        "  <metadata>".to_string(),
+        format!("    <time>{}</time>", now),
+        "    <desc>GPS trajectory</desc>".to_string(),
+        "  </metadata>".to_string(),
+        "  <trk>".to_string(),
+        "    <name>GPS Track</name>".to_string(),
+        "    <trkseg>".to_string(),
+    ];
+
+    for (lat, lon, ele, _ts) in gps_points {
+        gpx_lines.push(format!(r#"      <trkpt lat="{}" lon="{}">"#, lat, lon));
+        if ele != 0.0 {
+            gpx_lines.push(format!("        <ele>{}</ele>", ele));
+        }
+        gpx_lines.push("      </trkpt>".to_string());
+    }
+
+    gpx_lines.extend(vec![
+        "    </trkseg>".to_string(),
+        "  </trk>".to_string(),
+        "</gpx>".to_string(),
+    ]);
+
+    Ok(gpx_lines.join("\n"))
 }
 
 async fn ws_handler(
@@ -78,7 +490,6 @@ struct LiveStatus {
     gps_bearing: Option<f64>,
     gravity_magnitude: Option<f64>,
     uptime_seconds: u64,
-    // Add specific fields mapped to dashboard expectations
     #[serde(default)]
     accel_x: f64,
     #[serde(default)]
@@ -92,21 +503,13 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
     let mut last_mtime = std::time::SystemTime::UNIX_EPOCH;
 
     loop {
-        // Poll file for changes
         if let Ok(metadata) = std::fs::metadata(&status_file) {
             if let Ok(mtime) = metadata.modified() {
                 if mtime > last_mtime {
                     last_mtime = mtime;
-                    
+
                     if let Ok(content) = tokio::fs::read_to_string(&status_file).await {
-                        // Forward the JSON directly, or parse/enrich it
-                        // For now, let's verify it parses, then send
-                        if let Ok(mut status) = serde_json::from_str::<LiveStatus>(&content) {
-                            // Fill in gaps if needed, but the Rust tracker writes full objects
-                            // The embedded dashboard expects specific fields:
-                            // uptime, accel_samples, gps_speed, etc.
-                            // Our LiveStatus struct matches the file format.
-                            
+                        if let Ok(status) = serde_json::from_str::<LiveStatus>(&content) {
                             let json = serde_json::to_string(&status).unwrap();
                             if socket.send(Message::Text(json)).await.is_err() {
                                 break;
@@ -117,7 +520,6 @@ async fn handle_socket(mut socket: WebSocket, state: AppState) {
             }
         }
 
-        // 2Hz polling (matches tracker write rate)
         sleep(Duration::from_millis(500)).await;
     }
 }
