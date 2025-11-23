@@ -990,6 +990,15 @@ async fn main() -> Result<()> {
                          lon
                      ) {
                          eprintln!("[INCIDENT] {} Detected: {:.1} (Unit)", incident.incident_type, incident.magnitude);
+
+                         // Log to Rerun 3D visualization
+                         if let Some(ref logger) = rerun_logger {
+                             if let (Some(lat), Some(lon)) = (incident.latitude, incident.longitude) {
+                                 logger.set_time(incident.timestamp);
+                                 logger.log_incident(&incident.incident_type, incident.magnitude, lat, lon);
+                             }
+                         }
+
                          incidents.push(incident);
                      }
                 }
@@ -1194,6 +1203,17 @@ async fn main() -> Result<()> {
                 ekf_13d_state.quaternion.2,
                 ekf_13d_state.quaternion.3,
             );
+
+            // Log filter comparison: EKF (8D) vs 13D
+            let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
+            let ekf_13d_speed = (ekf_13d_state.velocity.0 * ekf_13d_state.velocity.0
+                + ekf_13d_state.velocity.1 * ekf_13d_state.velocity.1
+                + ekf_13d_state.velocity.2 * ekf_13d_state.velocity.2).sqrt();
+            logger.log_filter_comparison("velocity", ekf_speed, ekf_13d_speed);
+
+            // Compare position accuracy
+            logger.log_filter_comparison("position_x", 0.0, ekf_13d_state.position.0);
+            logger.log_filter_comparison("position_y", 0.0, ekf_13d_state.position.1);
         }
 
         // Status update every 2 seconds
