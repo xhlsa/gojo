@@ -1,19 +1,5 @@
-#![allow(dead_code)]
-
-use nalgebra::{Matrix3, MatrixMN, Vector3, U15, U3};
-use ndarray::s;
-/// 15-Dimensional Extended Kalman Filter (Full IMU Bias Estimation)
-///
-/// State Vector (15D):
-/// [0-2]:   Position (X, Y, Z) in local frame (meters)
-/// [3-5]:   Velocity (Vx, Vy, Vz) in world frame (m/s)
-/// [6-9]:   Quaternion (qw, qx, qy, qz) for attitude
-/// [10-12]: Gyro Bias (bx, by, bz) in body frame (rad/s)
-/// [13-14]: Accel Bias (bx, by, bz) in body frame (m/s²) -- NEW
-///
-/// Extends 13D EKF with accelerometer bias estimation for better long-term accuracy.
-/// Runs in shadow mode alongside main filter.
-use ndarray::{arr1, Array1, Array2};
+use nalgebra::{Matrix3, SMatrix, Vector3};
+use ndarray::{arr1, s, Array1, Array2};
 use serde::{Deserialize, Serialize};
 
 const G: f64 = 9.81; // Earth gravity (m/s²)
@@ -58,7 +44,7 @@ pub struct Ekf15d {
     process_noise: Array2<f64>,
 
     /// GPS measurement noise (position) [m²]
-    r_gps: f64,
+    _r_gps: f64,
 
     /// Accelerometer measurement noise [m²/s⁴]
     r_accel: f64,
@@ -67,7 +53,7 @@ pub struct Ekf15d {
     r_gyro: f64,
 
     /// Accel bias process noise (random walk) [m²/s⁴]
-    q_accel_bias: f64,
+    _q_accel_bias: f64,
 
     /// Origin for local frame (lat, lon)
     origin: Option<(f64, f64)>,
@@ -110,7 +96,8 @@ impl Ekf15d {
         }
 
         // Velocity: driven by accel noise
-        let q_vel = dt.powi(2) * accel_var;
+        // Velocity process noise (tuned for responsiveness after ZUPT)
+        let q_vel = 0.5;
         for i in 3..6 {
             process_noise[[i, i]] = q_vel;
         }
@@ -121,13 +108,13 @@ impl Ekf15d {
         }
 
         // Gyro bias: random walk (LOCKED DOWN - prevent error dumping)
-        let q_gyro_bias = 1e-10;  // was 1e-8, tightened 100x
+        let q_gyro_bias = 1e-10; // was 1e-8, tightened 100x
         for i in 10..13 {
             process_noise[[i, i]] = q_gyro_bias;
         }
 
         // Accel bias: random walk (LOCKED DOWN - prevent error dumping)
-        let q_accel_bias = 1e-9;  // was 1e-7, tightened 100x
+        let q_accel_bias = 1e-9; // was 1e-7, tightened 100x
         for i in 13..15 {
             process_noise[[i, i]] = q_accel_bias;
         }
@@ -137,10 +124,10 @@ impl Ekf15d {
             state,
             covariance,
             process_noise,
-            r_gps: gps_noise_std * gps_noise_std,
+            _r_gps: gps_noise_std * gps_noise_std,
             r_accel: accel_noise_std * accel_noise_std,
             r_gyro: gyro_noise_std * gyro_noise_std,
-            q_accel_bias,
+            _q_accel_bias: q_accel_bias,
             origin: None,
             gps_updates: 0,
             accel_updates: 0,
@@ -250,42 +237,49 @@ impl Ekf15d {
         self.state[9] = quat[3];
         // Biases held constant (updated by measurement corrections)
 
-        // STRATEGIC RETREAT: Kinematic-Only Jacobian (Safe Mode)
-        // Removed attitude-velocity coupling - causes exponential instability
-        // Filter relies on GPS updates for velocity correction, not prediction
+        // ===== ERROR-STATE JACOBIAN (Restored) =====
         let dim = self.state.len();
         let mut f = Array2::<f64>::eye(dim);
+        let r_mat = quat_to_rotation_matrix(&quat);
 
-        // BLOCK 1: Position depends on velocity (kinematic, always safe)
-        // P_k+1 = P_k + V_k * dt
+        // 1. Position depends on Velocity
         f[[0, 3]] = self.dt;
         f[[1, 4]] = self.dt;
         f[[2, 5]] = self.dt;
 
-        // BLOCK 2: Velocity-Attitude coupling REMOVED
-        // Previous implementation caused positive feedback loop:
-        // Small P errors → large cross-product amplification → billions
-        // Let GPS observation model handle velocity correction instead
+        // 2. Velocity depends on Attitude Error
+        // dV/dTheta = -R * [a_body]x * dt
+        let a_skew = skew_symmetric(&[accel_corr[0], accel_corr[1], accel_corr[2]]);
+        let dv_dtheta = r_mat.dot(&a_skew) * -self.dt;
 
-        // BLOCK 3: Velocity depends on accel bias (simplified)
-        // V = V + (a - b_a) * dt → dV/db_a = -dt (identity frame)
-        // Safe mode: assume small misalignment, avoid rotation matrix
-        f[[3, 13]] = -self.dt;  // X velocity vs X accel bias
-        f[[4, 14]] = -self.dt;  // Y velocity vs Y accel bias
-        // Z accel bias is placeholder (index 15 doesn't exist)
+        // Map 3D rotation error to indices 6,7,8
+        for r in 0..3 {
+            for c in 0..3 {
+                f[[3 + r, 6 + c]] = dv_dtheta[[r, c]];
+            }
+        }
 
-        // BLOCK 4: Attitude depends on gyro bias
-        // θ_k+1 = θ_k - b_g * dt → dθ/db_g = -dt
-        f[[6, 10]] = -self.dt;   // qx vs gyro_x bias
-        f[[7, 11]] = -self.dt;   // qy vs gyro_y bias
-        f[[8, 12]] = -self.dt;   // qz vs gyro_z bias
+        // 3. Velocity depends on Accel Bias
+        // dV/db_a = -R * dt
+        let dv_dba = &r_mat * -self.dt;
+        // Map to bias states 13 (bx), 14 (by).
+        for r in 0..3 {
+            f[[3 + r, 13]] = dv_dba[[r, 0]];
+            f[[3 + r, 14]] = dv_dba[[r, 1]];
+        }
+
+        // 4. Attitude depends on Gyro Bias
+        // dTheta/db_g = -I * dt
+        f[[6, 10]] = -self.dt;
+        f[[7, 11]] = -self.dt;
+        f[[8, 12]] = -self.dt;
 
         // Propagate covariance: P = F * P * F^T + Q
         let fp = f.dot(&self.covariance);
         let fpf_t = fp.dot(&f.t());
         self.covariance = fpf_t + &self.process_noise;
 
-        // Force symmetry (floating point correction)
+        // Force symmetry
         let p_t = self.covariance.t();
         self.covariance = (&self.covariance + &p_t) * 0.5;
     }
@@ -295,7 +289,7 @@ impl Ekf15d {
         // STEP 3: Enforce GPS accuracy floor (minimum 5m)
         let gps_noise = (accuracy * accuracy).max(5.0 * 5.0);
 
-        let (mut pos_x, mut pos_y, mut pos_z) = gps_pos;
+        let (mut pos_x, mut pos_y, pos_z) = gps_pos;
         if let Some((origin_lat, origin_lon)) = self.origin {
             let (x, y) = latlon_to_meters(pos_x, pos_y, origin_lat, origin_lon);
             pos_x = x;
@@ -326,12 +320,12 @@ impl Ekf15d {
             }
         }
 
-        // STEP 1: Tikhonov regularization - Add damping to prevent singularity
+        // STEP 1: Tikhonov regularization
         for i in 0..3 {
             s[[i, i]] += 1e-6;
         }
 
-        // Kalman gain: K = P*H^T*S^-1 (simplified for diagonal case)
+        // Kalman gain: K = P*H^T*S^-1 (simplified for diagonal S)
         for i in 0..3 {
             if s[[i, i]].abs() > 1e-6 {
                 let gain = self.covariance[[i, i]] / s[[i, i]];
@@ -345,6 +339,73 @@ impl Ekf15d {
         self.gps_updates += 1;
     }
 
+    /// GPS velocity update: use speed + bearing to correct vx/vy
+    pub fn update_gps_velocity(&mut self, speed: f64, bearing_rad: f64, speed_std: f64) {
+        // Convert speed/bearing to ENU components (bearing: 0 = North, clockwise)
+        let vx_meas = speed * bearing_rad.sin(); // East
+        let vy_meas = speed * bearing_rad.cos(); // North
+        let vz_meas = 0.0;
+
+        let innovation = arr1(&[
+            vx_meas - self.state[3],
+            vy_meas - self.state[4],
+            vz_meas - self.state[5],
+        ]);
+
+        // Measurement matrix maps velocity states [3,4,5]
+        let mut h = Array2::<f64>::zeros((3, 15));
+        h[[0, 3]] = 1.0;
+        h[[1, 4]] = 1.0;
+        h[[2, 5]] = 1.0;
+
+        let mut r = Array2::<f64>::zeros((3, 3));
+        let var = (speed_std * speed_std).max(0.0001); // trust GPS velocity more
+        r[[0, 0]] = var;
+        r[[1, 1]] = var;
+        r[[2, 2]] = var * 2.0; // slight damp on vertical
+
+        let p = &self.covariance;
+        let h_t = h.t();
+        let s = h.dot(p).dot(&h_t) + r.clone();
+
+        // Invert S (3x3)
+        use nalgebra::Matrix3;
+        let s_mat = Matrix3::new(
+            s[[0, 0]],
+            s[[0, 1]],
+            s[[0, 2]],
+            s[[1, 0]],
+            s[[1, 1]],
+            s[[1, 2]],
+            s[[2, 0]],
+            s[[2, 1]],
+            s[[2, 2]],
+        );
+        if let Some(inv) = s_mat.try_inverse() {
+            let mut s_inv = Array2::<f64>::zeros((3, 3));
+            for r in 0..3 {
+                for c in 0..3 {
+                    s_inv[[r, c]] = inv[(r, c)];
+                }
+            }
+            let k = p.dot(&h_t).dot(&s_inv);
+            let dx = k.dot(&innovation);
+            for i in 0..15 {
+                self.state[i] += dx[i];
+            }
+
+            // Joseph form
+            let i_mat = Array2::<f64>::eye(15);
+            let kh = k.dot(&h);
+            let term1 = (&i_mat - &kh).dot(p).dot(&(&i_mat - &kh).t());
+            let term2 = k.dot(&r).dot(&k.t());
+            self.covariance = term1 + term2;
+
+            let p_t = self.covariance.t().to_owned();
+            self.covariance = (&self.covariance + &p_t) / 2.0;
+        }
+    }
+
     /// Set local origin for GPS conversion and reset position
     pub fn set_origin(&mut self, lat: f64, lon: f64, _alt: f64) {
         self.origin = Some((lat, lon));
@@ -353,30 +414,175 @@ impl Ekf15d {
         self.state[2] = 0.0;
     }
 
-    /// Accelerometer update: correct velocity and accel bias
-    pub fn update_accel(&mut self, accel_meas: (f64, f64, f64)) {
-        // Rotate accel measurement to world frame
+    /// Accelerometer update: correct bias assuming STATIONARY (ZUPT)
+    pub fn update_stationary_accel(&mut self, accel_meas: (f64, f64, f64)) {
+        // Prediction: Accel = R^T * [0,0,G] + Bias
         let quat = [self.state[6], self.state[7], self.state[8], self.state[9]];
-        let accel_world = rotate_accel_to_world(&quat, &[accel_meas.0, accel_meas.1, accel_meas.2]);
+        let r_mat = quat_to_rotation_matrix(&quat); // Body to World (R)
+        let r_t = r_mat.t(); // World to Body
 
-        // Expected accel from model: a_expected = a_measured - g (vertical)
-        let mut innovation = [accel_world[0], accel_world[1], accel_world[2] - G];
+        let g_vec = arr1(&[0.0, 0.0, G]);
+        let expected_gravity_body = r_t.dot(&g_vec); // R^T * g
 
-        // Accel bias affects measurement (reduce innovation)
-        innovation[0] -= self.state[13];
-        innovation[1] -= self.state[14];
+        let bias_x = self.state[13];
+        let bias_y = self.state[14];
+        let bias_z = 0.0; // Not estimating Z bias
 
-        // Update accel bias (simple proportional gain)
-        let gain = 0.001; // Learning rate for bias
-        self.state[13] -= gain * innovation[0];
-        self.state[14] -= gain * innovation[1];
+        let pred_x = expected_gravity_body[0] + bias_x;
+        let pred_y = expected_gravity_body[1] + bias_y;
+        let pred_z = expected_gravity_body[2] + bias_z;
+
+        let innovation = arr1(&[
+            accel_meas.0 - pred_x,
+            accel_meas.1 - pred_y,
+            accel_meas.2 - pred_z,
+        ]);
+
+        // Jacobian H:
+        // d(accel)/d(bias) = I
+        // d(accel)/d(att_err) = Skew(R^T * g)
+        let mut h = Array2::<f64>::zeros((3, 15));
+        h[[0, 13]] = 1.0;
+        h[[1, 14]] = 1.0;
+
+        let g_body_skew = skew_symmetric(&[
+            expected_gravity_body[0],
+            expected_gravity_body[1],
+            expected_gravity_body[2],
+        ]);
+
+        for r in 0..3 {
+            for c in 0..3 {
+                h[[r, 6 + c]] = g_body_skew[[r, c]];
+            }
+        }
+
+        // Measurement Noise
+        let mut r = Array2::<f64>::eye(3);
+        r[[0, 0]] = self.r_accel;
+        r[[1, 1]] = self.r_accel;
+        r[[2, 2]] = self.r_accel;
+
+        // Kalman Update
+        let p = &self.covariance;
+        let h_t = h.t();
+        let s = h.dot(p).dot(&h_t) + r;
+
+        // Invert S (3x3)
+        let s_inv = match s.shape() {
+            _ => {
+                // Simple naive inversion for 3x3 diagonal-ish
+                // For robustness, use nalgebra if available or just simplify
+                // Since we are in ndarray land, let's do a quick trick or use simplified diagonal update if H was diagonal
+                // But H is not diagonal (skew symmetric part).
+                // We'll assume small off-diagonals for now or use a simplified update for just Bias?
+                // No, user wants "proper KF update".
+                // Let's use the Matrix3 inverse from nalgebra since we used it before in update_body_velocity
+                use nalgebra::Matrix3;
+                let s_mat = Matrix3::new(
+                    s[[0, 0]],
+                    s[[0, 1]],
+                    s[[0, 2]],
+                    s[[1, 0]],
+                    s[[1, 1]],
+                    s[[1, 2]],
+                    s[[2, 0]],
+                    s[[2, 1]],
+                    s[[2, 2]],
+                );
+                if let Some(inv) = s_mat.try_inverse() {
+                    let mut inv_arr = Array2::<f64>::zeros((3, 3));
+                    for r in 0..3 {
+                        for c in 0..3 {
+                            inv_arr[[r, c]] = inv[(r, c)];
+                        }
+                    }
+                    inv_arr
+                } else {
+                    return; // Singularity
+                }
+            }
+        };
+
+        let k = p.dot(&h_t).dot(&s_inv);
+        let dx = k.dot(&innovation);
+
+        for i in 0..15 {
+            self.state[i] += dx[i];
+        }
+
+        let i_mat = Array2::<f64>::eye(15);
+        let kh = k.dot(&h);
+        self.covariance = (&i_mat - &kh).dot(p);
 
         self.accel_updates += 1;
     }
 
-    /// Gyro update: used for quaternion validation
-    pub fn update_gyro(&mut self, _gyro_meas: (f64, f64, f64)) {
-        // Gyro is already used in predict, no additional measurement update needed
+    /// Gyro update: correct bias assuming STATIONARY (ZUPT)
+    pub fn update_stationary_gyro(&mut self, gyro_meas: (f64, f64, f64)) {
+        // Prediction: Gyro = Bias
+        // Innovation = Measured - Bias
+        let innovation = arr1(&[
+            gyro_meas.0 - self.state[10],
+            gyro_meas.1 - self.state[11],
+            gyro_meas.2 - self.state[12],
+        ]);
+
+        // H = Identity for bias states (10, 11, 12)
+        let mut h = Array2::<f64>::zeros((3, 15));
+        h[[0, 10]] = 1.0;
+        h[[1, 11]] = 1.0;
+        h[[2, 12]] = 1.0;
+
+        let mut r = Array2::<f64>::eye(3);
+        r[[0, 0]] = self.r_gyro;
+        r[[1, 1]] = self.r_gyro;
+        r[[2, 2]] = self.r_gyro;
+
+        // Kalman Update (Simple diagonal)
+        // S = P_bias + R
+        // K = P_bias * S^-1
+        // Avoid full matrix math for independent bias?
+        // Actually, bias might be correlated. Use full update.
+
+        let p = &self.covariance;
+        let h_t = h.t();
+        let s = h.dot(p).dot(&h_t) + r;
+
+        // Invert 3x3 S
+        use nalgebra::Matrix3;
+        let s_mat = Matrix3::new(
+            s[[0, 0]],
+            s[[0, 1]],
+            s[[0, 2]],
+            s[[1, 0]],
+            s[[1, 1]],
+            s[[1, 2]],
+            s[[2, 0]],
+            s[[2, 1]],
+            s[[2, 2]],
+        );
+
+        if let Some(inv) = s_mat.try_inverse() {
+            let mut s_inv = Array2::<f64>::zeros((3, 3));
+            for r in 0..3 {
+                for c in 0..3 {
+                    s_inv[[r, c]] = inv[(r, c)];
+                }
+            }
+
+            let k = p.dot(&h_t).dot(&s_inv);
+            let dx = k.dot(&innovation);
+
+            for i in 0..15 {
+                self.state[i] += dx[i];
+            }
+
+            let i_mat = Array2::<f64>::eye(15);
+            let kh = k.dot(&h);
+            self.covariance = (&i_mat - &kh).dot(p);
+        }
+
         self.gyro_updates += 1;
     }
 
@@ -387,15 +593,20 @@ impl Ekf15d {
         self.state[5] = 0.0;
     }
 
-    /// Zero-velocity update: clamp velocity and shrink covariance when stationary.
-    pub fn apply_zupt(&mut self) {
+    /// Zero-velocity update: clamp velocity and scrub covariance when stationary.
+    pub fn apply_zupt(&mut self, current_accel: &nalgebra::Vector3<f64>) {
         self.force_zero_velocity();
-        // STEP 3: Relax velocity covariance clamping from 1e-9 to 1e-3
-        // This prevents S-matrix singularity during ZUPT
-        let vel_indices = [3, 4, 5];
-        for &idx in &vel_indices {
-            self.covariance[[idx, idx]] = self.covariance[[idx, idx]].min(1e-3);
-        }
+        // Scrub velocity rows/cols to keep P consistent/PSD
+        self.covariance.slice_mut(s![3..6, ..]).fill(0.0);
+        self.covariance.slice_mut(s![.., 3..6]).fill(0.0);
+        self.covariance[[3, 3]] = 1e-9;
+        self.covariance[[4, 4]] = 1e-9;
+        self.covariance[[5, 5]] = 1e-9;
+        // Align gravity (roll/pitch) while keeping yaw
+        self.align_orientation_to_gravity(current_accel);
+        // Symmetrize after manual edits
+        let p_t = self.covariance.t().to_owned();
+        self.covariance = (&self.covariance + &p_t) / 2.0;
     }
 
     /// Velocity update with small noise to shrink covariance when GPS reports stationary.
@@ -510,29 +721,29 @@ impl Ekf15d {
             }
 
             // Build nalgebra representations
-            let k_na = MatrixMN::<f64, U15, U3>::from_row_slice(
+            let k_na = SMatrix::<f64, 15, 3>::from_row_slice(
                 k.as_slice().expect("Kalman gain slice should exist"),
             );
-            let h_na = MatrixMN::<f64, U3, U15>::from_row_slice(
+            let h_na = SMatrix::<f64, 3, 15>::from_row_slice(
                 h_full.as_slice().expect("H slice should exist"),
             );
             let r_na = r;
-            let p_na = MatrixMN::<f64, U15, U15>::from_row_slice(
+            let p_na = SMatrix::<f64, 15, 15>::from_row_slice(
                 self.covariance
                     .as_slice()
                     .expect("Covariance slice should exist"),
             );
-            let identity = MatrixMN::<f64, U15, U15>::identity();
+            let identity = SMatrix::<f64, 15, 15>::identity();
             let i_minus_kh = identity - k_na.clone() * h_na.clone();
 
             // FIXED: Joseph form P = (I-KH)*P*(I-KH)^T + K*R*K^T
             // Explicit parentheses to ensure correct order
             let i_minus_kh_t = i_minus_kh.transpose();
-            let term1_a = &i_minus_kh * p_na;           // (I-KH) * P
-            let term1 = term1_a * i_minus_kh_t;         // ((I-KH)*P) * (I-KH)^T
+            let term1_a = &i_minus_kh * p_na; // (I-KH) * P
+            let term1 = term1_a * i_minus_kh_t; // ((I-KH)*P) * (I-KH)^T
 
-            let term2_a = k_na.clone() * r_na;          // K * R
-            let term2 = term2_a * k_na.transpose();     // (K*R) * K^T
+            let term2_a = k_na.clone() * r_na; // K * R
+            let term2 = term2_a * k_na.transpose(); // (K*R) * K^T
 
             let joseph = term1 + term2;
 
@@ -570,8 +781,46 @@ impl Ekf15d {
         let vz = self.state[5];
         (vx * vx + vy * vy + vz * vz).sqrt()
     }
+    /// Align orientation to gravity while preserving yaw (ENU frame)
+    pub fn align_orientation_to_gravity(&mut self, current_accel: &nalgebra::Vector3<f64>) {
+        let accel_norm = current_accel.norm();
+        if accel_norm < 0.1 || accel_norm.is_nan() {
+            return; // Garbage data, skip alignment
+        }
+
+        let ax = current_accel.x;
+        let ay = current_accel.y;
+        let az = current_accel.z;
+
+        // Roll/Pitch from accel (assuming ENU, gravity ~ -Z when level)
+        let roll_acc = ay.atan2(az);
+        let pitch_acc = (-ax).atan2((ay * ay + az * az).sqrt());
+
+        // Extract current yaw from quaternion
+        let q = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.state[6],
+            self.state[7],
+            self.state[8],
+            self.state[9],
+        ));
+        let (_, _, yaw) = q.euler_angles(); // roll, pitch, yaw
+
+        // Rebuild quaternion with preserved yaw, new roll/pitch
+        let new_q = nalgebra::UnitQuaternion::from_euler_angles(roll_acc, pitch_acc, yaw);
+        self.state[6] = new_q.w;
+        self.state[7] = new_q.i;
+        self.state[8] = new_q.j;
+        self.state[9] = new_q.k;
+
+        // Reset roll/pitch covariance (keep yaw covariance as-is)
+        self.covariance.slice_mut(s![6..8, ..]).fill(0.0);
+        self.covariance.slice_mut(s![.., 6..8]).fill(0.0);
+        self.covariance[[6, 6]] = 1e-6;
+        self.covariance[[7, 7]] = 1e-6;
+    }
 }
 
+/// Convert lat/lon coordinates to local meters relative to origin
 fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
     const R: f64 = 6_371_000.0;
     let d_lat = (lat - origin_lat).to_radians();
@@ -611,11 +860,11 @@ fn rotate_accel_to_world(quat: &[f64; 4], accel_body: &[f64; 3]) -> [f64; 3] {
 
 /// Compute skew-symmetric matrix for cross product (used in Jacobian)
 fn skew_symmetric(v: &[f64; 3]) -> Array2<f64> {
-    Array2::from_shape_vec((3, 3), vec![
-        0.0, -v[2], v[1],
-        v[2], 0.0, -v[0],
-        -v[1], v[0], 0.0,
-    ]).unwrap()
+    Array2::from_shape_vec(
+        (3, 3),
+        vec![0.0, -v[2], v[1], v[2], 0.0, -v[0], -v[1], v[0], 0.0],
+    )
+    .unwrap()
 }
 
 /// Compute rotation matrix from quaternion
@@ -637,9 +886,5 @@ fn quat_to_rotation_matrix(quat: &[f64; 4]) -> Array2<f64> {
     let r21 = 2.0 * (qy * qz + qw * qx);
     let r22 = 1.0 - 2.0 * (qx * qx + qy * qy);
 
-    Array2::from_shape_vec((3, 3), vec![
-        r00, r01, r02,
-        r10, r11, r12,
-        r20, r21, r22,
-    ]).unwrap()
+    Array2::from_shape_vec((3, 3), vec![r00, r01, r02, r10, r11, r12, r20, r21, r22]).unwrap()
 }

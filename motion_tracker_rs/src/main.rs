@@ -1,6 +1,3 @@
-#![allow(unused_imports)]
-#![allow(unused_mut)]
-
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
@@ -1005,7 +1002,6 @@ async fn main() -> Result<()> {
 
     // GPS tracking
     let mut last_gps_timestamp = 0.0f64;
-    let mut last_gps_fix: Option<GpsData> = None;
     let mut is_heading_initialized = false;
     let gps_speed_threshold = 3.0; // m/s - minimum speed to use for heading alignment
     let mut last_accel_ts: Option<f64> = None;
@@ -1055,7 +1051,7 @@ async fn main() -> Result<()> {
                 // Apply calibration: subtract gravity bias to get true linear acceleration
                 let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
                 let corrected_vec = filtered_vec - gravity_vec;
-                let mut corrected_x = corrected_vec.x;
+                let corrected_x = corrected_vec.x;
                 let mut corrected_y = corrected_vec.y;
                 let corrected_z = corrected_vec.z;
 
@@ -1080,6 +1076,21 @@ async fn main() -> Result<()> {
                     .sqrt();
                 let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
+                // Simple specific power estimate using scalar accel and available speed (GPS preferred)
+                let speed_for_power = gps_snapshot
+                    .as_ref()
+                    .map(|g| g.speed)
+                    .or_else(|| comp_filter.get_state().map(|c| c.velocity))
+                    .or_else(|| ekf.get_state().map(|s| s.velocity))
+                    .unwrap_or(0.0);
+                let accel_mag = (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
+                let forward_accel_approx = (accel_mag - 9.81).abs();
+                let specific_power_est = if speed_for_power > 1.0 {
+                    forward_accel_approx * speed_for_power
+                } else {
+                    0.0
+                };
+
                 // Feed accel to 13D filter (prediction phase with zero gyro)
                 ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
 
@@ -1089,9 +1100,6 @@ async fn main() -> Result<()> {
                     (filtered_vec.x, filtered_vec.y, filtered_vec.z),
                     (0.0, 0.0, 0.0),
                 );
-
-                // Activate measurement update for accel bias estimation
-                ekf_15d.update_accel((filtered_vec.x, filtered_vec.y, filtered_vec.z));
 
                 // Non-holonomic constraint: clamp lateral/vertical body velocity to zero each accel frame
                 ekf_15d.update_body_velocity(Vector3::zeros());
@@ -1109,7 +1117,7 @@ async fn main() -> Result<()> {
                     gyro: None,
                     gps: None,
                     roughness: Some(avg_roughness),
-                    specific_power_w_per_kg: 0.0,
+                    specific_power_w_per_kg: specific_power_est,
                     power_coefficient: 0.0,
                     experimental_13d: Some(ekf_13d.get_state()),
                     experimental_15d: Some(ekf_15d.get_state()),
@@ -1191,6 +1199,13 @@ async fn main() -> Result<()> {
                 if is_still && surface_smooth && ekf_speed < 0.1 {
                     // Accumulate filtered accel reading (before gravity subtraction) for gravity refinement
                     dyn_calib.accumulate(filtered_vec.x, filtered_vec.y, filtered_vec.z);
+
+                    // 15D Bias/Attitude Update (Gravity Alignment)
+                    ekf_15d.update_stationary_accel((
+                        filtered_vec.x,
+                        filtered_vec.y,
+                        filtered_vec.z,
+                    ));
                 }
 
                 // Only update filters if NOT still (to prevent noise integration)
@@ -1262,8 +1277,12 @@ async fn main() -> Result<()> {
                     // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
                     ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
 
-                    // Activate measurement update for gyro bias estimation
-                    ekf_15d.update_gyro((corrected_gx, corrected_gy, corrected_gz));
+                    // Conditional Bias Update (ZUPT)
+                    if last_accel_mag_raw > 9.5 && last_accel_mag_raw < 10.1 && gyro_mag < 0.1 {
+                        // Use raw gyro for bias estimation
+                        ekf_15d.update_stationary_gyro((gyro.x, gyro.y, gyro.z));
+                    }
+
                     last.experimental_15d = Some(ekf_15d.get_state());
 
                     // Feed FGO preintegrator with gyro data (fast loop)
@@ -1309,7 +1328,13 @@ async fn main() -> Result<()> {
                 comp_filter.apply_zupt();
             }
             // Apply ZUPT to experimental 15D as well
-            ekf_15d.apply_zupt();
+            if let Some(last) = readings.last() {
+                if let Some(accel_last) = last.accel.as_ref() {
+                    let accel_vec =
+                        nalgebra::Vector3::new(accel_last.x, accel_last.y, accel_last.z);
+                    ekf_15d.apply_zupt(&accel_vec);
+                }
+            }
             // Clamp experimental 15D state while stationary
             ekf_15d.force_zero_velocity();
 
@@ -1358,8 +1383,6 @@ async fn main() -> Result<()> {
                     }
 
                     last_gps_timestamp = gps.timestamp;
-                    last_gps_fix = Some(gps.clone());
-
                     // Compute measurement latency and project position forward
                     let system_now = std::time::SystemTime::now()
                         .duration_since(std::time::UNIX_EPOCH)
@@ -1370,20 +1393,29 @@ async fn main() -> Result<()> {
                         eprintln!("[GPS] High latency: {:.2}s", latency);
                     }
 
-                    // Rough forward projection using current 15D velocity (ENU)
+                    // Rough forward projection using current 15D velocity (ENU), guarded
                     let ekf_state = ekf_15d.get_state();
                     let vx = ekf_state.velocity.0;
                     let vy = ekf_state.velocity.1;
-                    let vz = ekf_state.velocity.2;
-                    // meters to degrees approximation
-                    let lat_proj =
-                        gps.latitude + (vy * latency) / 6371000.0 * 180.0 / std::f64::consts::PI;
-                    let lon_proj = gps.longitude
-                        + (vx * latency) / (6371000.0 * (gps.latitude.to_radians().cos() + 1e-9))
-                            * 180.0
-                            / std::f64::consts::PI;
-                    let gps_proj_lat = lat_proj;
-                    let gps_proj_lon = lon_proj;
+                    let speed = (vx * vx + vy * vy).sqrt();
+                    let (gps_proj_lat, gps_proj_lon) = if latency < 1.0 && speed < 50.0 {
+                        let lat_proj = gps.latitude
+                            + (vy * latency) / 6371000.0 * 180.0 / std::f64::consts::PI;
+                        let lon_proj = gps.longitude
+                            + (vx * latency)
+                                / (6371000.0 * (gps.latitude.to_radians().cos() + 1e-9))
+                                * 180.0
+                                / std::f64::consts::PI;
+                        (lat_proj, lon_proj)
+                    } else {
+                        if speed >= 50.0 {
+                            eprintln!(
+                                "[GPS] Skipping projection: high speed {:.1} m/s (latency {:.2}s)",
+                                speed, latency
+                            );
+                        }
+                        (gps.latitude, gps.longitude)
+                    };
 
                     // Update filters with GPS position
                     if args.filter == "ekf" || args.filter == "both" {
@@ -1405,7 +1437,7 @@ async fn main() -> Result<()> {
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
 
                         // Initialize velocity from GPS (prevents 0 → speed causing acceleration spike)
-                        ekf_15d.force_zero_velocity();  // Start from rest
+                        ekf_15d.force_zero_velocity(); // Start from rest
 
                         println!("[COLD START] GPS Locked. Origin: ({:.6}, {:.6}). EKF initialized at REST.",
                                  gps.latitude, gps.longitude);
@@ -1416,12 +1448,20 @@ async fn main() -> Result<()> {
 
                         // Update 15D filter with GPS (uses lat/lon directly for position correction)
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
+                        // Update 15D velocity using GPS speed/bearing when available
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.5);
                     }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
-                    // STEP 3: Relax noise floor from 1e-9 to 1e-3 to prevent singularity
                     if gps.speed < 0.5 {
                         ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-3);
+                    } else {
+                        // GPS Velocity Update (Corrects drift using Speed + Bearing)
+                        let rad = gps.bearing.to_radians();
+                        let vx = gps.speed * rad.sin(); // East
+                        let vy = gps.speed * rad.cos(); // North
+                                                        // Z velocity damped to 0.0
+                        ekf_15d.update_velocity((vx, vy, 0.0), 0.25);
                     }
 
                     // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)
@@ -1610,25 +1650,23 @@ async fn main() -> Result<()> {
                     logger.log_gps(gps.latitude, gps.longitude, 0.0, gps.speed);
                 }
 
-                // Calculate virtual dyno specific power
+                // Calculate virtual dyno specific power (scalar: |a|-g times speed)
                 if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
-                    // Note: accel is already corrected (gravity_bias subtracted)
-                    // Use complementary filter velocity if available; fallback to EKF, then GPS
-                    let comp_vel = comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0);
-                    let ekf_velocity = ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0);
-                    let calc_velocity = if comp_vel > 0.1 {
-                        comp_vel
-                    } else if ekf_velocity > 0.1 {
-                        ekf_velocity
-                    } else {
+                    let calc_velocity = if gps.speed > 0.1 {
                         gps.speed
+                    } else {
+                        comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0)
                     };
-                    let power =
-                        physics::calculate_specific_power(accel.x, accel.y, accel.z, calc_velocity);
-                    live_status.specific_power_w_per_kg =
-                        (power.specific_power_w_per_kg * 100.0).round() / 100.0;
-                    live_status.power_coefficient =
-                        (power.power_coefficient * 100.0).round() / 100.0;
+                    let accel_mag =
+                        (accel.x * accel.x + accel.y * accel.y + accel.z * accel.z).sqrt();
+                    let forward_accel_approx = (accel_mag - 9.81).abs();
+                    let specific_power = if calc_velocity > 1.0 {
+                        forward_accel_approx * calc_velocity
+                    } else {
+                        0.0
+                    };
+                    live_status.specific_power_w_per_kg = (specific_power * 100.0).round() / 100.0;
+                    live_status.power_coefficient = 0.0;
                 }
             }
             // Calculate magnitude of calibrated gravity vector
