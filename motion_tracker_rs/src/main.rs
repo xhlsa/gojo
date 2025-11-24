@@ -1239,8 +1239,8 @@ async fn main() -> Result<()> {
                 let mut corrected_gz = gyro.z - gyro_bias.2;
 
                 // Straight-road clamp: freeze yaw drift when wheel is effectively straight
-                let ekf_speed_for_clamp = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
-                if corrected_gz.abs() < 0.02 && ekf_speed_for_clamp > 5.0 {
+                let ekf15_speed = ekf_15d.get_speed();
+                if corrected_gz.abs() < 0.02 && ekf15_speed > 5.0 {
                     corrected_gz = 0.0;
                 }
 

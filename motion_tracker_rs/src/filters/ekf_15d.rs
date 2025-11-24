@@ -1,6 +1,6 @@
 #![allow(dead_code)]
 
-use nalgebra::{Matrix3, Vector3};
+use nalgebra::{Matrix3, MatrixMN, Vector3, U15, U3};
 use ndarray::s;
 /// 15-Dimensional Extended Kalman Filter (Full IMU Bias Estimation)
 ///
@@ -361,10 +361,24 @@ impl Ekf15d {
     /// Non-holonomic body-frame velocity constraint (constrains lateral/vertical drift)
     pub fn update_body_velocity(&mut self, measurement: Vector3<f64>) {
         // Rotation matrix from body to world (transpose used to project world velocity into body frame)
-        let qw = self.state[6];
-        let qx = self.state[7];
-        let qy = self.state[8];
-        let qz = self.state[9];
+        let mut qw = self.state[6];
+        let mut qx = self.state[7];
+        let mut qy = self.state[8];
+        let mut qz = self.state[9];
+
+        // Normalize quaternion to avoid scaling artifacts
+        let q_norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
+        if q_norm > 1e-9 {
+            qw /= q_norm;
+            qx /= q_norm;
+            qy /= q_norm;
+            qz /= q_norm;
+        } else {
+            qw = 1.0;
+            qx = 0.0;
+            qy = 0.0;
+            qz = 0.0;
+        }
 
         let r00 = 1.0 - 2.0 * (qy * qy + qz * qz);
         let r01 = 2.0 * (qx * qy - qw * qz);
@@ -417,9 +431,9 @@ impl Ekf15d {
                 }
             }
             let mut s_inv_arr = Array2::<f64>::zeros((3, 3));
-            for i in 0..3 {
-                for j in 0..3 {
-                    s_inv_arr[[i, j]] = s_inv[(i, j)];
+            for r in 0..3 {
+                for c in 0..3 {
+                    s_inv_arr[[r, c]] = s_inv[(r, c)];
                 }
             }
             let k_mat = p_vel.dot(&h_t_arr);
@@ -431,7 +445,7 @@ impl Ekf15d {
                 self.state[i] += dx[i];
             }
 
-            // Covariance update: P = (I - K*H_full) * P
+            // Covariance update (Joseph form)
             let mut h_full = Array2::<f64>::zeros((3, self.state.len()));
             // place H in velocity columns
             for row in 0..3 {
@@ -439,14 +453,49 @@ impl Ekf15d {
                     h_full[[row, 3 + col]] = h_vel[[row, col]];
                 }
             }
-            let kh = k.dot(&h_full);
-            let mut i_kh = Array2::<f64>::zeros((self.state.len(), self.state.len()));
-            for i in 0..self.state.len() {
-                i_kh[[i, i]] = 1.0;
+
+            // Build nalgebra representations
+            let k_na = MatrixMN::<f64, U15, U3>::from_row_slice(
+                k.as_slice().expect("Kalman gain slice should exist"),
+            );
+            let h_na = MatrixMN::<f64, U3, U15>::from_row_slice(
+                h_full.as_slice().expect("H slice should exist"),
+            );
+            let r_na = Matrix3::from_row_slice(r.as_slice());
+            let p_na = MatrixMN::<f64, U15, U15>::from_row_slice(
+                self.covariance
+                    .as_slice()
+                    .expect("Covariance slice should exist"),
+            );
+            let identity = MatrixMN::<f64, U15, U15>::identity();
+            let i_minus_kh = identity - k_na.clone() * h_na.clone();
+            let joseph =
+                &i_minus_kh * p_na * i_minus_kh.transpose() + k_na * r_na * k_na.transpose();
+
+            // copy back to ndarray and symmetrize
+            let mut new_p = Array2::<f64>::zeros((self.state.len(), self.state.len()));
+            for r in 0..self.state.len() {
+                for c in 0..self.state.len() {
+                    new_p[[r, c]] = joseph[(r, c)];
+                }
             }
-            let i_minus_kh = i_kh - kh;
-            self.covariance = i_minus_kh.dot(&self.covariance);
+            // Symmetrize
+            let mut sym_p = new_p.clone();
+            for r in 0..self.state.len() {
+                for c in 0..self.state.len() {
+                    sym_p[[r, c]] = 0.5 * (new_p[[r, c]] + new_p[[c, r]]);
+                }
+            }
+            self.covariance = sym_p;
         }
+    }
+
+    /// Get the current speed (velocity magnitude) from the 15D state
+    pub fn get_speed(&self) -> f64 {
+        let vx = self.state[3];
+        let vy = self.state[4];
+        let vz = self.state[5];
+        (vx * vx + vy * vy + vz * vz).sqrt()
     }
 }
 
