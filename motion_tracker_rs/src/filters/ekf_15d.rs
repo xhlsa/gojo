@@ -120,14 +120,14 @@ impl Ekf15d {
             process_noise[[i, i]] = gyro_var * dt * dt;
         }
 
-        // Gyro bias: random walk (extremely stable)
-        let q_gyro_bias = 1e-8;
+        // Gyro bias: random walk (LOCKED DOWN - prevent error dumping)
+        let q_gyro_bias = 1e-10;  // was 1e-8, tightened 100x
         for i in 10..13 {
             process_noise[[i, i]] = q_gyro_bias;
         }
 
-        // Accel bias: random walk (extremely stable)
-        let q_accel_bias = 1e-7;
+        // Accel bias: random walk (LOCKED DOWN - prevent error dumping)
+        let q_accel_bias = 1e-9;  // was 1e-7, tightened 100x
         for i in 13..15 {
             process_noise[[i, i]] = q_accel_bias;
         }
@@ -250,44 +250,35 @@ impl Ekf15d {
         self.state[9] = quat[3];
         // Biases held constant (updated by measurement corrections)
 
-        // STEP 2: Proper 15D Jacobian with attitude-velocity coupling
+        // STRATEGIC RETREAT: Kinematic-Only Jacobian (Safe Mode)
+        // Removed attitude-velocity coupling - causes exponential instability
+        // Filter relies on GPS updates for velocity correction, not prediction
         let dim = self.state.len();
         let mut f = Array2::<f64>::eye(dim);
 
-        // Position depends on velocity: dp/dt = v
+        // BLOCK 1: Position depends on velocity (kinematic, always safe)
+        // P_k+1 = P_k + V_k * dt
         f[[0, 3]] = self.dt;
         f[[1, 4]] = self.dt;
         f[[2, 5]] = self.dt;
 
-        // Velocity depends on attitude and accel bias
-        // dv/dθ = -R * [accel]_× * dt (attitude errors affect velocity)
-        let quat = [self.state[6], self.state[7], self.state[8], self.state[9]];
-        let r_mat = quat_to_rotation_matrix(&quat);
-        let accel_skew = skew_symmetric(&accel_corr);
+        // BLOCK 2: Velocity-Attitude coupling REMOVED
+        // Previous implementation caused positive feedback loop:
+        // Small P errors → large cross-product amplification → billions
+        // Let GPS observation model handle velocity correction instead
 
-        // Compute -R * [accel]_× * dt
-        let vel_wrt_att = -(&r_mat.dot(&accel_skew)) * self.dt;
+        // BLOCK 3: Velocity depends on accel bias (simplified)
+        // V = V + (a - b_a) * dt → dV/db_a = -dt (identity frame)
+        // Safe mode: assume small misalignment, avoid rotation matrix
+        f[[3, 13]] = -self.dt;  // X velocity vs X accel bias
+        f[[4, 14]] = -self.dt;  // Y velocity vs Y accel bias
+        // Z accel bias is placeholder (index 15 doesn't exist)
 
-        // Fill velocity-attitude coupling (3x3 block at [3:6, 6:9])
-        // Note: quaternion has 4 elements but we use first 3 for error-state
-        for i in 0..3 {
-            for j in 0..3 {
-                f[[3 + i, 6 + j]] = vel_wrt_att[[i, j]];
-            }
-        }
-
-        // Velocity depends on accel bias: dv/d(b_a) = -R * dt
-        let vel_wrt_ab = -(&r_mat) * self.dt;
-        for i in 0..3 {
-            for j in 0..2 {  // Only X, Y accel bias (Z is placeholder)
-                f[[3 + i, 13 + j]] = vel_wrt_ab[[i, j]];
-            }
-        }
-
-        // Attitude depends on gyro bias: dθ/d(b_g) = -I * dt
-        f[[6, 10]] = -self.dt;
-        f[[7, 11]] = -self.dt;
-        f[[8, 12]] = -self.dt;
+        // BLOCK 4: Attitude depends on gyro bias
+        // θ_k+1 = θ_k - b_g * dt → dθ/db_g = -dt
+        f[[6, 10]] = -self.dt;   // qx vs gyro_x bias
+        f[[7, 11]] = -self.dt;   // qy vs gyro_y bias
+        f[[8, 12]] = -self.dt;   // qz vs gyro_z bias
 
         // Propagate covariance: P = F * P * F^T + Q
         let fp = f.dot(&self.covariance);
