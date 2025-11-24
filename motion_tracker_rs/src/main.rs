@@ -1201,7 +1201,10 @@ async fn main() -> Result<()> {
                     }
 
                     // Update 13D filter with GPS
-                    // Use current GPS as origin on first fix; subsequent updates use that origin
+                    // Initialize origin on first fix for proper coordinate transformation
+                    if !ekf_13d.is_origin_set() {
+                        ekf_13d.set_origin(gps.latitude, gps.longitude);
+                    }
                     ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
 
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)
