@@ -1154,7 +1154,7 @@ async fn main() -> Result<()> {
                     if let Some(incident) = incident_detector.detect(
                         detection_val,
                         gyro_z,
-                        Some(ekf_speed), // Use EKF speed as it's smoother/more reliable than raw GPS for gating
+                        None, // Decoupled from filter speed; rely on raw dynamics
                         accel.timestamp,
                         lat,
                         lon,
@@ -1308,6 +1308,8 @@ async fn main() -> Result<()> {
             if args.filter == "complementary" || args.filter == "both" {
                 comp_filter.apply_zupt();
             }
+            // Apply ZUPT to experimental 15D as well
+            ekf_15d.apply_zupt();
             // Clamp experimental 15D state while stationary
             ekf_15d.force_zero_velocity();
 
@@ -1346,21 +1348,8 @@ async fn main() -> Result<()> {
             let latest_gps = sensor_state.latest_gps.read().await;
             if let Some(gps) = latest_gps.as_ref() {
                 if gps.timestamp > last_gps_timestamp {
-                    // Basic GPS gating: reject low-accuracy or physically implausible spikes
-                    let mut reject_gps = false;
-                    if gps.accuracy > 20.0 {
-                        reject_gps = true;
-                    }
-                    if let Some(prev_fix) = last_gps_fix.as_ref() {
-                        let dt = gps.timestamp - prev_fix.timestamp;
-                        if dt > 0.0 {
-                            let accel_est = (gps.speed - prev_fix.speed).abs() / dt;
-                            if accel_est > 19.62 {
-                                reject_gps = true;
-                            }
-                        }
-                    }
-                    if reject_gps {
+                    // Basic GPS gating: relaxed accuracy, no implied-accel rejection
+                    if gps.accuracy > 50.0 {
                         eprintln!(
                             "[GPS] Rejected fix (acc={:.1}m, speed={:.2}m/s) as outlier",
                             gps.accuracy, gps.speed
@@ -1371,11 +1360,36 @@ async fn main() -> Result<()> {
                     last_gps_timestamp = gps.timestamp;
                     last_gps_fix = Some(gps.clone());
 
+                    // Compute measurement latency and project position forward
+                    let system_now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs_f64();
+                    let latency = (system_now - gps.timestamp).max(0.0);
+                    if latency > 1.0 {
+                        eprintln!("[GPS] High latency: {:.2}s", latency);
+                    }
+
+                    // Rough forward projection using current 15D velocity (ENU)
+                    let ekf_state = ekf_15d.get_state();
+                    let vx = ekf_state.velocity.0;
+                    let vy = ekf_state.velocity.1;
+                    let vz = ekf_state.velocity.2;
+                    // meters to degrees approximation
+                    let lat_proj =
+                        gps.latitude + (vy * latency) / 6371000.0 * 180.0 / std::f64::consts::PI;
+                    let lon_proj = gps.longitude
+                        + (vx * latency) / (6371000.0 * (gps.latitude.to_radians().cos() + 1e-9))
+                            * 180.0
+                            / std::f64::consts::PI;
+                    let gps_proj_lat = lat_proj;
+                    let gps_proj_lon = lon_proj;
+
                     // Update filters with GPS position
                     if args.filter == "ekf" || args.filter == "both" {
                         ekf.update_gps(
-                            gps.latitude,
-                            gps.longitude,
+                            gps_proj_lat,
+                            gps_proj_lon,
                             Some(gps.speed),
                             Some(gps.accuracy),
                         );
@@ -1388,10 +1402,10 @@ async fn main() -> Result<()> {
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
                         println!("[EKF] Origin set to GPS start.");
                     }
-                    ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
+                    ekf_13d.update_gps(gps_proj_lat, gps_proj_lon, gps_proj_lat, gps_proj_lon);
 
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)
-                    ekf_15d.update_gps((gps.latitude, gps.longitude, 0.0));
+                    ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0));
 
                     // If GPS indicates near-zero speed, strongly clamp 15D velocity to zero
                     if gps.speed < 0.5 {
@@ -1434,8 +1448,8 @@ async fn main() -> Result<()> {
                         gyro: None,
                         gps: Some(GpsData {
                             timestamp: gps.timestamp,
-                            latitude: gps.latitude,
-                            longitude: gps.longitude,
+                            latitude: gps_proj_lat,
+                            longitude: gps_proj_lon,
                             accuracy: gps.accuracy,
                             speed: gps.speed,
                             bearing: gps.bearing,
@@ -1587,9 +1601,18 @@ async fn main() -> Result<()> {
                 // Calculate virtual dyno specific power
                 if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
                     // Note: accel is already corrected (gravity_bias subtracted)
+                    // Use complementary filter velocity if available; fallback to EKF, then GPS
+                    let comp_vel = comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0);
                     let ekf_velocity = ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0);
+                    let calc_velocity = if comp_vel > 0.1 {
+                        comp_vel
+                    } else if ekf_velocity > 0.1 {
+                        ekf_velocity
+                    } else {
+                        gps.speed
+                    };
                     let power =
-                        physics::calculate_specific_power(accel.x, accel.y, accel.z, ekf_velocity);
+                        physics::calculate_specific_power(accel.x, accel.y, accel.z, calc_velocity);
                     live_status.specific_power_w_per_kg =
                         (power.specific_power_w_per_kg * 100.0).round() / 100.0;
                     live_status.power_coefficient =

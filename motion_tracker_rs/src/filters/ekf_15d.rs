@@ -250,8 +250,25 @@ impl Ekf15d {
         self.state[9] = quat[3];
         // Biases held constant (updated by measurement corrections)
 
-        // Update covariance: P = F*P*F^T + Q (simplified)
-        self.covariance = self.covariance.clone() + self.process_noise.clone();
+        // FIXED: Update covariance P = F*P*F^T + Q
+        // Build linearized Jacobian F (first-order approx: I + dt*A)
+        let dim = self.state.len();
+        let mut f = Array2::<f64>::eye(dim);
+
+        // Position depends on velocity: dp/dt = v
+        // F[0:3, 3:6] = I * dt
+        f[[0, 3]] = self.dt;
+        f[[1, 4]] = self.dt;
+        f[[2, 5]] = self.dt;
+
+        // Propagate covariance: P = F * P * F^T + Q
+        let fp = f.dot(&self.covariance);       // F * P
+        let fpf_t = fp.dot(&f.t());             // (F * P) * F^T
+        self.covariance = fpf_t + &self.process_noise;
+
+        // Force symmetry (floating point correction)
+        let p_t = self.covariance.t();
+        self.covariance = (&self.covariance + &p_t) * 0.5;
     }
 
     /// GPS update: correct position
@@ -341,6 +358,16 @@ impl Ekf15d {
         self.state[3] = 0.0;
         self.state[4] = 0.0;
         self.state[5] = 0.0;
+    }
+
+    /// Zero-velocity update: clamp velocity and shrink covariance when stationary.
+    pub fn apply_zupt(&mut self) {
+        self.force_zero_velocity();
+        // Tighten velocity covariance to keep it from exploding after stillness
+        let vel_indices = [3, 4, 5];
+        for &idx in &vel_indices {
+            self.covariance[[idx, idx]] = self.covariance[[idx, idx]].min(0.01);
+        }
     }
 
     /// Velocity update with small noise to shrink covariance when GPS reports stationary.
@@ -469,8 +496,17 @@ impl Ekf15d {
             );
             let identity = MatrixMN::<f64, U15, U15>::identity();
             let i_minus_kh = identity - k_na.clone() * h_na.clone();
-            let joseph =
-                &i_minus_kh * p_na * i_minus_kh.transpose() + k_na * r_na * k_na.transpose();
+
+            // FIXED: Joseph form P = (I-KH)*P*(I-KH)^T + K*R*K^T
+            // Explicit parentheses to ensure correct order
+            let i_minus_kh_t = i_minus_kh.transpose();
+            let term1_a = &i_minus_kh * p_na;           // (I-KH) * P
+            let term1 = term1_a * i_minus_kh_t;         // ((I-KH)*P) * (I-KH)^T
+
+            let term2_a = k_na.clone() * r_na;          // K * R
+            let term2 = term2_a * k_na.transpose();     // (K*R) * K^T
+
+            let joseph = term1 + term2;
 
             // copy back to ndarray and symmetrize
             let mut new_p = Array2::<f64>::zeros((self.state.len(), self.state.len()));
@@ -486,6 +522,15 @@ impl Ekf15d {
                     sym_p[[r, c]] = 0.5 * (new_p[[r, c]] + new_p[[c, r]]);
                 }
             }
+
+            // Ensure positive definite (circuit breaker)
+            for i in 0..self.state.len() {
+                if sym_p[[i, i]] < 0.0 {
+                    eprintln!("[EKF-15D] WARNING: Negative variance at index {}: {:.2e}, clamping to 1e-6", i, sym_p[[i, i]]);
+                    sym_p[[i, i]] = 1e-6;
+                }
+            }
+
             self.covariance = sym_p;
         }
     }

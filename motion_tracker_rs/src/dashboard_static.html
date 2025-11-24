@@ -738,7 +738,7 @@
 
             // Pass full readings array and incidents for visualization
             const incidents = result.incidents || [];
-            renderTrackOnMap(gpsPoints, result.readings, incidents);
+            renderTrackOnMap(gpsPoints, result.readings, incidents, result.track_path || []);
         }
 
         let map = null;
@@ -764,156 +764,96 @@
             container.appendChild(msg);
         }
 
-        function transformReadingsToSegments(readings) {
-            // Transform readings array into GeoJSON FeatureCollection of segments (8D EKF track)
+        function transformReadingsToSegments(readings, trackPath) {
+            // Build segments from GPS-bearing readings, using their coordinates and metrics.
+            // If trackPath is present, we prefer it for geometry but match by index length.
             const features = [];
 
-            for (let i = 0; i < readings.length - 1; i++) {
-                const current = readings[i];
-                const next = readings[i + 1];
+            // Collect GPS-bearing readings with their coords and metrics
+            const gpsSamples = readings
+                .map(r => {
+                    if (!r.gps || r.gps.latitude === null || r.gps.longitude === null) return null;
+                    return {
+                        lon: r.gps.longitude,
+                        lat: r.gps.latitude,
+                        roughness: r.roughness ?? 0,
+                        power: r.specific_power ?? r.specific_power_w_per_kg ?? 0,
+                        timestamp: r.timestamp
+                    };
+                })
+                .filter(Boolean);
 
-                // Only create segment if both points have GPS data
-                if (!current.gps || !next.gps ||
-                    current.gps.latitude === null || current.gps.longitude === null ||
-                    next.gps.latitude === null || next.gps.longitude === null) {
-                    continue;
-                }
+            const coords = trackPath && trackPath.length > 1
+                ? trackPath.map(([lat, lon]) => ({ lat, lon }))
+                : gpsSamples.map(s => ({ lat: s.lat, lon: s.lon }));
 
+            const len = Math.min(coords.length, gpsSamples.length);
+            for (let i = 0; i < len - 1; i++) {
+                const a = coords[i];
+                const b = coords[i + 1];
+                const props = gpsSamples[i] || {};
                 const feature = {
                     type: 'Feature',
                     geometry: {
                         type: 'LineString',
                         coordinates: [
-                            [current.gps.longitude, current.gps.latitude],
-                            [next.gps.longitude, next.gps.latitude]
+                            [a.lon, a.lat],
+                            [b.lon, b.lat]
                         ]
                     },
                     properties: {
-                        roughness: current.roughness || 0,
-                        power: current.specific_power || 0,
+                        roughness: props.roughness ?? 0,
+                        power: props.power ?? 0,
                         index: i
                     }
                 };
-
                 features.push(feature);
             }
 
             return {
                 type: 'FeatureCollection',
-                features: features
+                features
             };
         }
 
-        function transformReadingsTo13dSegments(readings) {
-            // Transform readings array into GeoJSON FeatureCollection of segments (13D EKF track)
-            // Only include readings where experimental_13d is present
-            const features = [];
-
-            for (let i = 0; i < readings.length - 1; i++) {
-                const current = readings[i];
-                const next = readings[i + 1];
-
-                // Only create segment if both points have experimental_13d data
-                if (!current.experimental_13d || !next.experimental_13d) {
-                    continue;
-                }
-
-                const currentPos = current.experimental_13d.position;
-                const nextPos = next.experimental_13d.position;
-
-                if (!currentPos || !nextPos) {
-                    continue;
-                }
-
-                // Assume experimental_13d.position is [east, north, up] relative to origin
-                // For map visualization, we need to convert back to lat/lon
-                // For now, use the position values directly as a proxy for visualization
-                // In production, the 13D filter stores its origin and we'd convert properly
-                const feature = {
-                    type: 'Feature',
-                    geometry: {
-                        type: 'LineString',
-                        coordinates: [
-                            [currentPos[0], currentPos[1]],
-                            [nextPos[0], nextPos[1]]
-                        ]
-                    },
-                    properties: {
-                        covariance_trace: current.experimental_13d.covariance_trace || 0,
-                        velocity: Math.sqrt(
-                            current.experimental_13d.velocity[0] ** 2 +
-                            current.experimental_13d.velocity[1] ** 2 +
-                            current.experimental_13d.velocity[2] ** 2
-                        ),
-                        index: i
-                    }
-                };
-
-                features.push(feature);
-            }
-
-            return {
-                type: 'FeatureCollection',
-                features: features
-            };
-        }
+        // 13D shadow visual removed; using track_path + readings instead
 
         function createLayerControlPanel(map) {
-            // Create layer control panel for toggling visibility of 8D and 13D tracks
+            // Toggle between Road Quality (roughness) and Dyno (power) layers
             const container = document.getElementById('map-container');
             const panel = document.createElement('div');
             panel.className = 'layer-control-panel';
 
-            // Panel title
             const title = document.createElement('h3');
             title.textContent = 'Layers';
             panel.appendChild(title);
 
-            // 8D EKF checkbox
-            const item8d = document.createElement('div');
-            item8d.className = 'layer-control-item';
-            const check8d = document.createElement('input');
-            check8d.type = 'checkbox';
-            check8d.id = 'toggle-8d';
-            check8d.checked = true;
-            const label8d = document.createElement('label');
-            label8d.htmlFor = 'toggle-8d';
-            const color8d = document.createElement('span');
-            color8d.className = 'layer-color-indicator layer-8d-color';
-            label8d.appendChild(color8d);
-            label8d.appendChild(document.createTextNode('8D EKF'));
-            item8d.appendChild(check8d);
-            item8d.appendChild(label8d);
-            panel.appendChild(item8d);
+            const makeToggle = (id, labelText, colorClass, defaultOn = true, layerId) => {
+                const item = document.createElement('div');
+                item.className = 'layer-control-item';
+                const check = document.createElement('input');
+                check.type = 'checkbox';
+                check.id = id;
+                check.checked = defaultOn;
+                const label = document.createElement('label');
+                label.htmlFor = id;
+                const color = document.createElement('span');
+                color.className = `layer-color-indicator ${colorClass}`;
+                label.appendChild(color);
+                label.appendChild(document.createTextNode(labelText));
+                item.appendChild(check);
+                item.appendChild(label);
+                panel.appendChild(item);
 
-            // 13D EKF checkbox
-            const item13d = document.createElement('div');
-            item13d.className = 'layer-control-item';
-            const check13d = document.createElement('input');
-            check13d.type = 'checkbox';
-            check13d.id = 'toggle-13d';
-            check13d.checked = true;
-            const label13d = document.createElement('label');
-            label13d.htmlFor = 'toggle-13d';
-            const color13d = document.createElement('span');
-            color13d.className = 'layer-color-indicator layer-13d-color';
-            label13d.appendChild(color13d);
-            label13d.appendChild(document.createTextNode('13D EKF (Shadow)'));
-            item13d.appendChild(check13d);
-            item13d.appendChild(label13d);
-            panel.appendChild(item13d);
+                check.addEventListener('change', () => {
+                    map.setLayoutProperty(layerId, 'visibility', check.checked ? 'visible' : 'none');
+                });
+            };
 
-            // Add to map container
+            makeToggle('toggle-roughness', 'Road Quality', 'layer-8d-color', true, 'segments-roughness');
+            makeToggle('toggle-power', 'Dyno', 'layer-13d-color', false, 'segments-power');
+
             container.appendChild(panel);
-
-            // Wire up event handlers
-            check8d.addEventListener('change', () => {
-                map.setLayoutProperty('segments-8d-layer', 'visibility', check8d.checked ? 'visible' : 'none');
-            });
-
-            check13d.addEventListener('change', () => {
-                map.setLayoutProperty('segments-13d-layer', 'visibility', check13d.checked ? 'visible' : 'none');
-            });
         }
 
         function getRoughnessColor(roughness) {
@@ -1010,13 +950,12 @@
 
             updateLegend(metric);
 
-            if (map.getSource('segments')) {
-                // Update the line color based on selected metric
-                const colorExpression = metric === 'roughness'
-                    ? buildRoughnessExpression()
-                    : buildPowerExpression();
-
-                map.setPaintProperty('segments-layer', 'line-color', colorExpression);
+            // Toggle layer visibility
+            if (map.getLayer('segments-roughness')) {
+                map.setLayoutProperty('segments-roughness', 'visibility', metric === 'roughness' ? 'visible' : 'none');
+            }
+            if (map.getLayer('segments-power')) {
+                map.setLayoutProperty('segments-power', 'visibility', metric === 'power' ? 'visible' : 'none');
             }
         }
 
@@ -1028,18 +967,23 @@
                 data: {
                     type: 'FeatureCollection',
                     features: incidents
-                        .filter(inc => inc.gps && inc.gps.latitude && inc.gps.longitude)
-                        .map(inc => ({
-                            type: 'Feature',
-                            geometry: {
-                                type: 'Point',
-                                coordinates: [inc.gps.longitude, inc.gps.latitude]
-                            },
-                            properties: {
-                                type: inc.type || 'Unknown',
-                                magnitude: inc.magnitude || 0
-                            }
-                        }))
+                        .map(inc => {
+                            const lon = inc.longitude ?? (inc.gps && inc.gps.longitude);
+                            const lat = inc.latitude ?? (inc.gps && inc.gps.latitude);
+                            if (lat == null || lon == null) return null;
+                            return {
+                                type: 'Feature',
+                                geometry: {
+                                    type: 'Point',
+                                    coordinates: [lon, lat]
+                                },
+                                properties: {
+                                    type: inc.incident_type || inc.type || 'Unknown',
+                                    magnitude: inc.magnitude || 0
+                                }
+                            };
+                        })
+                        .filter(Boolean)
                 }
             };
 
@@ -1100,7 +1044,7 @@
             }
         }
 
-        function renderTrackOnMap(gpsPoints, allReadings, incidents) {
+        function renderTrackOnMap(gpsPoints, allReadings, incidents, trackPath = []) {
             // Clean up any previous message
             const oldMsg = document.getElementById('no-gps-msg');
             if (oldMsg) oldMsg.remove();
@@ -1157,27 +1101,18 @@
 
             map.on('load', () => {
                 // Transform readings into color-coded segments
-                currentMetricData = transformReadingsToSegments(allReadings);
-                const segmentsData13d = transformReadingsTo13dSegments(allReadings);
+                currentMetricData = transformReadingsToSegments(allReadings, trackPath);
                 currentIncidents = incidents;
 
-                // Add 8D EKF segmented route as GeoJSON source
-                map.addSource('segments-8d', {
+                // Add Road Quality layer (roughness) and Dyno layer (power)
+                map.addSource('segments-metric', {
                     type: 'geojson',
                     data: currentMetricData
                 });
-
-                // Add 13D EKF segmented route as GeoJSON source
-                map.addSource('segments-13d', {
-                    type: 'geojson',
-                    data: segmentsData13d
-                });
-
-                // Add 8D colored line layer (solid blue, default metric visualization)
                 map.addLayer({
-                    id: 'segments-8d-layer',
+                    id: 'segments-roughness',
                     type: 'line',
-                    source: 'segments-8d',
+                    source: 'segments-metric',
                     layout: {
                         'line-join': 'round',
                         'line-cap': 'round',
@@ -1186,25 +1121,22 @@
                     paint: {
                         'line-color': buildRoughnessExpression(),
                         'line-width': 4,
-                        'line-opacity': 0.8
+                        'line-opacity': 0.9
                     }
                 });
-
-                // Add 13D dashed line layer (purple dashed, shadow comparison)
                 map.addLayer({
-                    id: 'segments-13d-layer',
+                    id: 'segments-power',
                     type: 'line',
-                    source: 'segments-13d',
+                    source: 'segments-metric',
                     layout: {
                         'line-join': 'round',
                         'line-cap': 'round',
-                        'visibility': 'visible'
+                        'visibility': 'none'
                     },
                     paint: {
-                        'line-color': '#9c27b0',  // Purple for 13D
+                        'line-color': buildPowerExpression(),
                         'line-width': 4,
-                        'line-opacity': 0.8,
-                        'line-dasharray': [2, 2]   // Dashed pattern
+                        'line-opacity': 0.9
                     }
                 });
 

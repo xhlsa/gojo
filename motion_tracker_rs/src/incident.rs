@@ -49,41 +49,31 @@ impl IncidentDetector {
             });
         }
 
-        // Hard Maneuver (Braking/Turn): > 4.0 m/s^2
-        // Only if moving > 2 m/s to avoid handling noise
+        // Hard Maneuver (Braking/Turn): > 4.0 m/s^2 (use raw dynamics, no speed gate)
         if accel_mag > hard_maneuver_threshold {
-            if let Some(speed) = gps_speed {
-                if speed > 2.0 {
-                    return Some(Incident {
-                        timestamp,
-                        incident_type: "hard_maneuver".to_string(),
-                        magnitude: accel_mag,
-                        gps_speed: Some(speed),
-                        latitude: lat,
-                        longitude: lon,
-                    });
-                }
-            }
+            return Some(Incident {
+                timestamp,
+                incident_type: "hard_maneuver".to_string(),
+                magnitude: accel_mag,
+                gps_speed,
+                latitude: lat,
+                longitude: lon,
+            });
         }
 
-        // Swerving: gyro_z > 45°/sec with GPS speed > 2 m/s
+        // Swerving: gyro_z > 45°/sec (no speed gate, still apply cooldown)
         let gyro_thresh_rad = swerve_threshold_deg * std::f64::consts::PI / 180.0;
         if gyro_z.abs() > gyro_thresh_rad {
-            if let Some(speed) = gps_speed {
-                if speed > 2.0 {
-                    // Apply cooldown
-                    if (timestamp - self.last_swerve_time) >= self.swerve_cooldown {
-                        self.last_swerve_time = timestamp;
-                        return Some(Incident {
-                            timestamp,
-                            incident_type: "swerving".to_string(),
-                            magnitude: gyro_z.to_degrees(),
-                            gps_speed: Some(speed),
-                            latitude: lat,
-                            longitude: lon,
-                        });
-                    }
-                }
+            if (timestamp - self.last_swerve_time) >= self.swerve_cooldown {
+                self.last_swerve_time = timestamp;
+                return Some(Incident {
+                    timestamp,
+                    incident_type: "swerving".to_string(),
+                    magnitude: gyro_z.to_degrees(),
+                    gps_speed,
+                    latitude: lat,
+                    longitude: lon,
+                });
             }
         }
 

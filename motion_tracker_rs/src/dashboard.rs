@@ -78,10 +78,8 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
                 (0.0, 0.0, 0.0)
             };
 
-            // Calculate specific power (vehicle-agnostic metric)
-            // Note: We use EKF velocity for consistency with main.rs live_status
-            // For dashboard: fallback to GPS speed if no EKF available
-            let calc_velocity = if speed > 2.0 { speed } else { 0.0 };
+            // Calculate specific power (vehicle-agnostic metric) using available speed
+            let calc_velocity = if speed > 0.1 { speed } else { 0.0 };
             let (sp_w_kg, pc) = if calc_velocity > 0.0 && (ax != 0.0 || ay != 0.0 || az != 0.0) {
                 use crate::physics;
                 let power = physics::calculate_specific_power(ax, ay, az, calc_velocity);
