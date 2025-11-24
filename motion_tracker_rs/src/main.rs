@@ -1395,17 +1395,28 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    // Update 13D filter with GPS
-                    // Initialize origin on first fix for proper coordinate transformation
-                    if !ekf_13d.is_origin_set() {
+                    // COLD START PROTOCOL: Initialize on first GPS fix, update on subsequent
+                    let is_first_gps_fix = !ekf_13d.is_origin_set();
+
+                    if is_first_gps_fix {
+                        // FIRST FIX: Initialize origin and EKF state, DO NOT update
+                        // This prevents "Null Island" teleport (0,0,0) → (lat,lon) causing massive innovation
                         ekf_13d.set_origin(gps.latitude, gps.longitude);
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
-                        println!("[EKF] Origin set to GPS start.");
-                    }
-                    ekf_13d.update_gps(gps_proj_lat, gps_proj_lon, gps_proj_lat, gps_proj_lon);
 
-                    // Update 15D filter with GPS (uses lat/lon directly for position correction)
-                    ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
+                        // Initialize velocity from GPS (prevents 0 → speed causing acceleration spike)
+                        ekf_15d.force_zero_velocity();  // Start from rest
+
+                        println!("[COLD START] GPS Locked. Origin: ({:.6}, {:.6}). EKF initialized at REST.",
+                                 gps.latitude, gps.longitude);
+                        println!("[COLD START] Skipping first GPS update to prevent initialization shock.");
+                    } else {
+                        // SUBSEQUENT FIXES: Normal updates
+                        ekf_13d.update_gps(gps_proj_lat, gps_proj_lon, gps_proj_lat, gps_proj_lon);
+
+                        // Update 15D filter with GPS (uses lat/lon directly for position correction)
+                        ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
+                    }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
                     // STEP 3: Relax noise floor from 1e-9 to 1e-3 to prevent singularity
