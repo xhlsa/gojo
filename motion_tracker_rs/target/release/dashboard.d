@@ -1,1 +1,0 @@
-/data/data/com.termux/files/home/gojo/motion_tracker_rs/target/release/dashboard: /data/data/com.termux/files/home/gojo/motion_tracker_rs/src/bin/dashboard.rs /data/data/com.termux/files/home/gojo/motion_tracker_rs/src/dashboard_static.html /data/data/com.termux/files/home/gojo/motion_tracker_rs/src/lib.rs
