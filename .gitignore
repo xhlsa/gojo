@@ -7,6 +7,8 @@ motion_tracker_sessions/
 *.o
 *.c
 build/
+target/
+Cargo.lock
 
 # Python
 __pycache__/
@@ -37,3 +39,4 @@ crash_logs/
 *.json
 *.json.gz
 *.gpx
+target_exp/
