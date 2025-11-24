@@ -108,36 +108,7 @@ gojo/
 
 ## 🧪 Rust Build (Zero Warnings, Nov 23, 2025)
 
-Rust codebase now compiles with **ZERO compiler warnings** (`Finished release profile [optimized]`). Comprehensive linter pass standardized warning suppression across infrastructure code, fixed unused variables with `_` prefix convention, and eliminated false positives. See `.claude/CLAUDE.md` → "Rust Build Quality" for full details on strategy and changes.
-
-### Rust Porting Progress
-
-We're beginning to peel performance-critical math out of Python into Rust for determinism and future native apps. Early steps are intentionally small and parity-tested so the live filter stays stable:
-
-- **`motion_tracker_rs/` crate** – Houses Rust versions of `predict_position`, `propagate_covariance`, `kalman_update`, and the new `es_ekf_predict` helper plus the full `PyEsEkf` filter (`ErrorStateEKF` now delegates entirely to this class whenever the wheel is installed). Built with `maturin` so we can keep swapping modules incrementally.
-- **Parity harness** – `python3 tools/compare_filter_math.py` runs randomized trials to verify the Rust math matches NumPy exactly. Run this whenever the crate changes.
-- **ES-EKF integration** – `motion_tracker_v2/filters/es_ekf.py` automatically instantiates the Rust `PyEsEkf` class when the wheel is present (`ErrorStateEKF(..., force_python=False)` is the default). Set `force_python=True` when running parity tests or debugging the legacy path; otherwise Python just delegates each method call to the Rust implementation. Pure Python fallbacks remain in place for environments without the wheel.
-- **Live swap** – The Python ES‑EKF now calls Rust for predict, covariance, and GPS updates. Python is left to orchestrate threads/IO while the math runs in Rust under parity tests.
-- **Test harness** – `./test_ekf.sh <minutes>` is the on-device validation loop; we run a short 10-minute session after each major Rust change to ensure sensor daemons and GPX export stay stable.
-- **Foreground scheduling** – `./schedule_test_ekf.sh <minutes>` registers `test_ekf.sh` as a Termux job-scheduler foreground task (requires Termux:API). Android treats that job like a sticky service, so the tracker survives when Termux is backgrounded or the screen is off. Use `./schedule_test_ekf.sh --cancel` to stop the queued foreground job.
-
-**How to rebuild/install:**
-```bash
-cd motion_tracker_rs
-~/.local/bin/maturin build
-pip install --user target/wheels/motion_tracker_rs-*.whl
-python3 tools/compare_filter_math.py
-```
-
-**Known considerations:**
-- Numeric ecosystem gaps (no NumPy broadcasting) mean we lean on `ndarray` and explicit math. As we port more, we may swap to `nalgebra` or bind to BLAS for heavy ops.
-- Termux builds can be slow; if `maturin develop` complains about missing virtualenvs, use `maturin build` + `pip install` as above.
-- Long term, the plan is “Python orchestrates, Rust computes”: keep wiring more filter pieces behind parity tests until the whole EKF can be swapped out.
-- Recommended pipeline:
- 1. Prototype/iterate in Python (`motion_tracker_v2/...`).
- 2. Port the math into `motion_tracker_rs` with PyO3 wrappers.
- 3. Add parity tests (`tools/compare_filter_math.py`, `tools/test_es_ekf_predict.py`) plus a short `./test_ekf.sh` run.
- 4. Swap the Python code to call the Rust helper; keep a fallback until we're confident.
+Rust codebase compiles with **ZERO compiler warnings** (`Finished release profile [optimized]`). Complete linter pass achieved through systematic warning suppression for infrastructure code, fixed unused variables with `_` prefix convention, and handled compiler false positives. See `.claude/CLAUDE.md` → "Rust Build Quality" for full strategy details.
 
 ### Keeping GPS alive on Android
 
