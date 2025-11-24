@@ -108,6 +108,9 @@ pub struct GraphEstimator {
     current_gyro_bias: Vector3<f64>,
     current_timestamp: f64,
 
+    // Local Tangent Plane origin (first GPS fix in lat/lon/alt)
+    origin: Option<(f64, f64, f64)>,  // (lat, lon, alt)
+
     // Preintegration buffer (fast loop)
     preintegrator: PreintegratedImu,
     imu_queue: VecDeque<(Vector3<f64>, Vector3<f64>, f64)>,  // (accel, gyro, timestamp)
@@ -124,6 +127,10 @@ pub struct GraphEstimator {
     // State
     last_optimization_time: f64,
     optimization_count: usize,
+
+    // ZUPT state
+    stationary_samples: usize,
+    last_accel_magnitude: f64,
 }
 
 impl GraphEstimator {
@@ -146,6 +153,7 @@ impl GraphEstimator {
             current_accel_bias: Vector3::new(start_bias.0, start_bias.1, start_bias.2),
             current_gyro_bias: Vector3::zeros(),
             current_timestamp: 0.0,
+            origin: None,  // Will be set by first GPS fix
             preintegrator: PreintegratedImu::new(),
             imu_queue: VecDeque::new(),
             nodes,
@@ -155,6 +163,8 @@ impl GraphEstimator {
             imu_noise_std: 0.05,  // m/s²
             last_optimization_time: 0.0,
             optimization_count: 0,
+            stationary_samples: 0,
+            last_accel_magnitude: 0.0,
         }
     }
 
@@ -171,6 +181,29 @@ impl GraphEstimator {
             let accel_corrected = accel - self.current_accel_bias;
             let gyro_corrected = gyro - self.current_gyro_bias;
 
+            // ZUPT detection: Check if stationary
+            let accel_magnitude = accel.norm();
+            let accel_deviation = (accel_magnitude - GRAVITY).abs();
+            let gyro_magnitude = gyro.norm();
+
+            // Stationary if: accel ≈ 9.81 m/s² (±0.1) and gyro < 0.05 rad/s
+            let is_stationary = accel_deviation < 0.1 && gyro_magnitude < 0.05;
+
+            if is_stationary {
+                self.stationary_samples += 1;
+                // After 50 samples (~1 second at 50Hz), apply ZUPT
+                if self.stationary_samples >= 50 {
+                    self.current_velocity = Vector3::zeros();  // Clamp velocity to zero
+                    if let Some(latest_node) = self.nodes.back_mut() {
+                        latest_node.velocity = Vector3::zeros();
+                    }
+                }
+            } else {
+                self.stationary_samples = 0;
+            }
+
+            self.last_accel_magnitude = accel_magnitude;
+
             // Preintegrate immediately
             self.preintegrator.integrate(accel_corrected, gyro_corrected, dt);
 
@@ -186,8 +219,28 @@ impl GraphEstimator {
 
     /// Slow loop: Add GPS measurement and trigger optimization
     pub fn add_gps_measurement(&mut self, lat: f64, lon: f64, alt: f64, timestamp: f64) {
-        // Convert GPS to local ENU coordinates (simplified - assumes flat Earth)
-        let position = Vector3::new(lat * 111320.0, lon * 111320.0 * lat.to_radians().cos(), alt);
+        // Set origin on first GPS fix
+        if self.origin.is_none() {
+            self.origin = Some((lat, lon, alt));
+            eprintln!("[FGO] ENU origin set: lat={:.6}, lon={:.6}, alt={:.2}m", lat, lon, alt);
+        }
+
+        // Convert GPS to local ENU coordinates relative to origin
+        let origin = self.origin.unwrap();
+        let (origin_lat, origin_lon, origin_alt) = origin;
+
+        // ENU conversion (flat-Earth approximation)
+        let dlat = lat - origin_lat;
+        let dlon = lon - origin_lon;
+        let dalt = alt - origin_alt;
+
+        // Convert to meters
+        let lat_rad = origin_lat.to_radians();
+        let east = dlon * 111320.0 * lat_rad.cos();   // meters East
+        let north = dlat * 111320.0;                  // meters North
+        let up = dalt;                                // meters Up
+
+        let position = Vector3::new(east, north, up);
 
         let gps_factor = GpsFactor {
             position,

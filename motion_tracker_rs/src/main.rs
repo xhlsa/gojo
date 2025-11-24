@@ -133,7 +133,7 @@ struct Args {
     filter: String,
 
     /// Output directory
-    #[arg(long, default_value = "motion_tracker_sessions")]
+    #[arg(long, default_value = "/data/data/com.termux/files/home/gojo/motion_tracker_sessions")]
     output_dir: String,
 
     /// Dashboard port (default: 8080)
@@ -948,7 +948,8 @@ async fn main() -> Result<()> {
     // Initialize Factor Graph Optimization (FGO) in shadow mode
     let start_pos = (0.0, 0.0, 0.0);  // Will be updated by first GPS fix
     let start_vel = (0.0, 0.0, 0.0);
-    let mut fgo = filters::fgo::GraphEstimator::new(start_pos, start_vel, gravity_bias);
+    let start_bias = (0.0, 0.0, 0.0);  // FGO handles gravity internally, not as bias
+    let mut fgo = filters::fgo::GraphEstimator::new(start_pos, start_vel, start_bias);
     eprintln!("[FGO] Factor Graph Optimizer initialized (shadow mode)");
 
     // Duration timeout
