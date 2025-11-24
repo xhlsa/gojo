@@ -1,5 +1,7 @@
 #![allow(dead_code)]
 
+use nalgebra::{Matrix3, Vector3};
+use ndarray::s;
 /// 15-Dimensional Extended Kalman Filter (Full IMU Bias Estimation)
 ///
 /// State Vector (15D):
@@ -332,6 +334,119 @@ impl Ekf15d {
     pub fn update_gyro(&mut self, _gyro_meas: (f64, f64, f64)) {
         // Gyro is already used in predict, no additional measurement update needed
         self.gyro_updates += 1;
+    }
+
+    /// Force velocity state to zero (used for ZUPT / stationary clamping)
+    pub fn force_zero_velocity(&mut self) {
+        self.state[3] = 0.0;
+        self.state[4] = 0.0;
+        self.state[5] = 0.0;
+    }
+
+    /// Velocity update with small noise to shrink covariance when GPS reports stationary.
+    pub fn update_velocity(&mut self, velocity: (f64, f64, f64), noise_var: f64) {
+        let measurement = [velocity.0, velocity.1, velocity.2];
+        for i in 0..3 {
+            let idx = 3 + i;
+            let innovation = measurement[i] - self.state[idx];
+            let s = self.covariance[[idx, idx]] + noise_var;
+            if s.abs() > 1e-12 {
+                let gain = self.covariance[[idx, idx]] / s;
+                self.state[idx] += gain * innovation;
+                self.covariance[[idx, idx]] *= 1.0 - gain;
+            }
+        }
+    }
+
+    /// Non-holonomic body-frame velocity constraint (constrains lateral/vertical drift)
+    pub fn update_body_velocity(&mut self, measurement: Vector3<f64>) {
+        // Rotation matrix from body to world (transpose used to project world velocity into body frame)
+        let qw = self.state[6];
+        let qx = self.state[7];
+        let qy = self.state[8];
+        let qz = self.state[9];
+
+        let r00 = 1.0 - 2.0 * (qy * qy + qz * qz);
+        let r01 = 2.0 * (qx * qy - qw * qz);
+        let r02 = 2.0 * (qx * qz + qw * qy);
+
+        let r10 = 2.0 * (qx * qy + qw * qz);
+        let r11 = 1.0 - 2.0 * (qx * qx + qz * qz);
+        let r12 = 2.0 * (qy * qz - qw * qx);
+
+        let r20 = 2.0 * (qx * qz - qw * qy);
+        let r21 = 2.0 * (qy * qz + qw * qx);
+        let r22 = 1.0 - 2.0 * (qx * qx + qy * qy);
+
+        // R_body_from_world = R^T
+        let h_vel =
+            Array2::from_shape_vec((3, 3), vec![r00, r10, r20, r01, r11, r21, r02, r12, r22])
+                .unwrap();
+
+        // Predicted body-frame velocity
+        let v_world = arr1(&[self.state[3], self.state[4], self.state[5]]);
+        let v_body_pred = h_vel.dot(&v_world);
+
+        // Innovation y = z - H * x
+        let meas = arr1(&[measurement.x, measurement.y, measurement.z]);
+        let innovation = &meas - &v_body_pred;
+
+        // Measurement noise (ignore X, constrain Y/Z)
+        let mut r = Matrix3::zeros();
+        r[(0, 0)] = 999.0;
+        r[(1, 1)] = 0.1;
+        r[(2, 2)] = 0.1;
+
+        // Extract velocity covariance block P_vv (3x3)
+        let p_vv = self.covariance.slice(s![3..6, 3..6]).to_owned();
+        let p_vv_mat = Matrix3::from_row_slice(p_vv.as_slice().unwrap());
+
+        // Compute S = H * P_vv * H^T + R
+        let h_mat = Matrix3::from_row_slice(h_vel.as_slice().unwrap());
+        let s_mat = h_mat * p_vv_mat * h_mat.transpose() + r;
+
+        if let Some(s_inv) = s_mat.try_inverse() {
+            // P[:, vel] (15 x 3)
+            let p_vel = self.covariance.slice(s![.., 3..6]).to_owned();
+            // K = P * H^T * S^-1
+            let h_t = h_mat.transpose();
+            let mut h_t_arr = Array2::<f64>::zeros((3, 3));
+            for i in 0..3 {
+                for j in 0..3 {
+                    h_t_arr[[i, j]] = h_t[(i, j)];
+                }
+            }
+            let mut s_inv_arr = Array2::<f64>::zeros((3, 3));
+            for i in 0..3 {
+                for j in 0..3 {
+                    s_inv_arr[[i, j]] = s_inv[(i, j)];
+                }
+            }
+            let k_mat = p_vel.dot(&h_t_arr);
+            let k = k_mat.dot(&s_inv_arr); // (15 x 3)
+
+            // State update: x = x + K * innovation
+            let dx = k.dot(&innovation);
+            for i in 0..self.state.len() {
+                self.state[i] += dx[i];
+            }
+
+            // Covariance update: P = (I - K*H_full) * P
+            let mut h_full = Array2::<f64>::zeros((3, self.state.len()));
+            // place H in velocity columns
+            for row in 0..3 {
+                for col in 0..3 {
+                    h_full[[row, 3 + col]] = h_vel[[row, col]];
+                }
+            }
+            let kh = k.dot(&h_full);
+            let mut i_kh = Array2::<f64>::zeros((self.state.len(), self.state.len()));
+            for i in 0..self.state.len() {
+                i_kh[[i, i]] = 1.0;
+            }
+            let i_minus_kh = i_kh - kh;
+            self.covariance = i_minus_kh.dot(&self.covariance);
+        }
     }
 }
 

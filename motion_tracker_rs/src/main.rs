@@ -133,7 +133,10 @@ struct Args {
     filter: String,
 
     /// Output directory
-    #[arg(long, default_value = "/data/data/com.termux/files/home/gojo/motion_tracker_sessions")]
+    #[arg(
+        long,
+        default_value = "/data/data/com.termux/files/home/gojo/motion_tracker_sessions"
+    )]
     output_dir: String,
 
     /// Dashboard port (default: 8080)
@@ -152,7 +155,7 @@ struct SensorReading {
     power_coefficient: f64,
     experimental_13d: Option<filters::ekf_13d::Ekf13dState>,
     experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
-    fgo: Option<filters::fgo::FgoState>,  // Factor Graph Optimization (shadow mode)
+    fgo: Option<filters::fgo::FgoState>, // Factor Graph Optimization (shadow mode)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -946,9 +949,9 @@ async fn main() -> Result<()> {
     eprintln!("[CALIB-DYN] Dynamic calibration initialized, will refine gravity during stillness");
 
     // Initialize Factor Graph Optimization (FGO) in shadow mode
-    let start_pos = (0.0, 0.0, 0.0);  // Will be updated by first GPS fix
+    let start_pos = (0.0, 0.0, 0.0); // Will be updated by first GPS fix
     let start_vel = (0.0, 0.0, 0.0);
-    let start_bias = (0.0, 0.0, 0.0);  // FGO handles gravity internally, not as bias
+    let start_bias = (0.0, 0.0, 0.0); // FGO handles gravity internally, not as bias
     let mut fgo = filters::fgo::GraphEstimator::new(start_pos, start_vel, start_bias);
     eprintln!("[FGO] Factor Graph Optimizer initialized (shadow mode)");
 
@@ -1089,10 +1092,13 @@ async fn main() -> Result<()> {
                 // Activate measurement update for accel bias estimation
                 ekf_15d.update_accel((filtered_vec.x, filtered_vec.y, filtered_vec.z));
 
+                // Non-holonomic constraint: clamp lateral/vertical body velocity to zero each accel frame
+                ekf_15d.update_body_velocity(Vector3::zeros());
+
                 // Feed FGO preintegrator (fast loop - non-blocking)
                 // Use corrected acceleration (gravity removed) and zero gyro for now
                 let accel_vec_fgo = Vector3::new(corrected_x, corrected_y, corrected_z);
-                let gyro_vec_fgo = Vector3::zeros();  // Will be updated when gyro arrives
+                let gyro_vec_fgo = Vector3::zeros(); // Will be updated when gyro arrives
                 fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, accel.timestamp);
 
                 // We'll update this reading with 13D/15D data later if gyro arrives
@@ -1106,7 +1112,7 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_13d: Some(ekf_13d.get_state()),
                     experimental_15d: Some(ekf_15d.get_state()),
-                    fgo: None,  // Will be updated on GPS fix
+                    fgo: None, // Will be updated on GPS fix
                 });
 
                 // ===== INCIDENT DETECTION =====
@@ -1230,7 +1236,13 @@ async fn main() -> Result<()> {
                 // Apply gyro bias calibration
                 let corrected_gx = gyro.x - gyro_bias.0;
                 let corrected_gy = gyro.y - gyro_bias.1;
-                let corrected_gz = gyro.z - gyro_bias.2;
+                let mut corrected_gz = gyro.z - gyro_bias.2;
+
+                // Straight-road clamp: freeze yaw drift when wheel is effectively straight
+                let ekf_speed_for_clamp = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
+                if corrected_gz.abs() < 0.02 && ekf_speed_for_clamp > 5.0 {
+                    corrected_gz = 0.0;
+                }
 
                 // Track gyro magnitude for ZUPT detection
                 let gyro_mag = (corrected_gx * corrected_gx
@@ -1260,7 +1272,7 @@ async fn main() -> Result<()> {
                         let accel_vec_fgo = Vector3::new(
                             accel_data.x - gravity_bias.0,
                             accel_data.y - gravity_bias.1,
-                            accel_data.z - gravity_bias.2
+                            accel_data.z - gravity_bias.2,
                         );
                         fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, gyro.timestamp);
                     }
@@ -1295,6 +1307,8 @@ async fn main() -> Result<()> {
             if args.filter == "complementary" || args.filter == "both" {
                 comp_filter.apply_zupt();
             }
+            // Clamp experimental 15D state while stationary
+            ekf_15d.force_zero_velocity();
 
             // ===== DYNAMIC GRAVITY REFINEMENT: Apply EMA update if enough samples accumulated =====
             if let Some(new_gravity) = dyn_calib.calculate_estimate() {
@@ -1355,12 +1369,26 @@ async fn main() -> Result<()> {
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)
                     ekf_15d.update_gps((gps.latitude, gps.longitude, 0.0));
 
+                    // If GPS indicates near-zero speed, strongly clamp 15D velocity to zero
+                    if gps.speed < 0.5 {
+                        ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-9);
+                    }
+
                     // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)
-                    fgo.add_gps_measurement(gps.latitude, gps.longitude, 0.0, gps.timestamp);
+                    fgo.add_gps_measurement(
+                        gps.latitude,
+                        gps.longitude,
+                        0.0,
+                        gps.timestamp,
+                        gps.speed,
+                    );
                     let fgo_stats = fgo.get_stats();
-                    if fgo_stats.2 % 10 == 0 && fgo_stats.2 > 0 {  // Log every 10 optimizations
-                        eprintln!("[FGO] Optimization #{}: {} nodes, {} GPS factors",
-                            fgo_stats.2, fgo_stats.0, fgo_stats.1);
+                    if fgo_stats.2 % 10 == 0 && fgo_stats.2 > 0 {
+                        // Log every 10 optimizations
+                        eprintln!(
+                            "[FGO] Optimization #{}: {} nodes, {} GPS factors",
+                            fgo_stats.2, fgo_stats.0, fgo_stats.1
+                        );
                     }
 
                     // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
@@ -1393,7 +1421,7 @@ async fn main() -> Result<()> {
                         power_coefficient: 0.0,
                         experimental_13d: Some(ekf_13d.get_state()),
                         experimental_15d: Some(ekf_15d.get_state()),
-                        fgo: Some(fgo.get_current_state()),  // FGO shadow mode output
+                        fgo: Some(fgo.get_current_state()), // FGO shadow mode output
                     };
                     readings.push(gps_reading);
                 }

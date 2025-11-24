@@ -159,6 +159,7 @@ impl GraphEstimator {
         lon: f64,
         _alt: f64,
         timestamp: f64,
+        gps_speed: f64,
         current_bias: Vector6<f64>,
     ) -> StateKeys {
         // Initialize origin on first GPS fix
@@ -194,6 +195,15 @@ impl GraphEstimator {
             pose_key: pose_k1,
             factor: gps_factor,
         });
+
+        // If GPS reports stationary, enforce zero-velocity prior to prevent drift
+        if gps_speed < 0.2 {
+            self.factors.push(GraphFactor::Prior {
+                var_key: vel_k1,
+                measurement: Vector3::zeros(),
+                noise: 1e-9, // effectively clamps velocity to zero
+            });
+        }
 
         // Add bias random walk factor (zero-mean drift from k to k+1)
         self.factors.push(GraphFactor::BiasRandomWalk {
@@ -340,7 +350,7 @@ mod tests {
 
         // Add GPS fix (triggers keyframe)
         let bias = Vector6::zeros();
-        let new_keys = estimator.add_gps_measurement(40.0, -74.0, 0.0, 1.0, bias);
+        let new_keys = estimator.add_gps_measurement(40.0, -74.0, 0.0, 1.0, 0.0, bias);
 
         // Graph should have factors
         assert!(estimator.num_factors() >= 2); // At least IMU + GPS factors

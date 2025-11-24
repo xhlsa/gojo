@@ -18,10 +18,10 @@ const GRAVITY: f64 = 9.81;
 /// FGO state estimate (position, velocity, biases)
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FgoState {
-    pub position: [f64; 3],     // [x, y, z] in meters
-    pub velocity: [f64; 3],     // [vx, vy, vz] in m/s
-    pub accel_bias: [f64; 3],   // Accelerometer bias
-    pub gyro_bias: [f64; 3],    // Gyroscope bias
+    pub position: [f64; 3],   // [x, y, z] in meters
+    pub velocity: [f64; 3],   // [vx, vy, vz] in m/s
+    pub accel_bias: [f64; 3], // Accelerometer bias
+    pub gyro_bias: [f64; 3],  // Gyroscope bias
     pub timestamp: f64,
 }
 
@@ -61,12 +61,10 @@ impl PreintegratedImu {
             let angle = gyro_norm * dt;
             let axis = gyro / gyro_norm;
             let skew = Matrix3::new(
-                0.0, -axis[2], axis[1],
-                axis[2], 0.0, -axis[0],
-                -axis[1], axis[0], 0.0,
+                0.0, -axis[2], axis[1], axis[2], 0.0, -axis[0], -axis[1], axis[0], 0.0,
             );
-            let rot_delta = Matrix3::identity() + skew * angle.sin()
-                + skew * skew * (1.0 - angle.cos());
+            let rot_delta =
+                Matrix3::identity() + skew * angle.sin() + skew * skew * (1.0 - angle.cos());
             self.delta_rotation = self.delta_rotation * rot_delta;
         }
 
@@ -109,11 +107,11 @@ pub struct GraphEstimator {
     current_timestamp: f64,
 
     // Local Tangent Plane origin (first GPS fix in lat/lon/alt)
-    origin: Option<(f64, f64, f64)>,  // (lat, lon, alt)
+    origin: Option<(f64, f64, f64)>, // (lat, lon, alt)
 
     // Preintegration buffer (fast loop)
     preintegrator: PreintegratedImu,
-    imu_queue: VecDeque<(Vector3<f64>, Vector3<f64>, f64)>,  // (accel, gyro, timestamp)
+    imu_queue: VecDeque<(Vector3<f64>, Vector3<f64>, f64)>, // (accel, gyro, timestamp)
 
     // Graph structure
     nodes: VecDeque<GraphNode>,
@@ -135,7 +133,11 @@ pub struct GraphEstimator {
 
 impl GraphEstimator {
     /// Create new FGO estimator
-    pub fn new(start_pos: (f64, f64, f64), start_vel: (f64, f64, f64), start_bias: (f64, f64, f64)) -> Self {
+    pub fn new(
+        start_pos: (f64, f64, f64),
+        start_vel: (f64, f64, f64),
+        start_bias: (f64, f64, f64),
+    ) -> Self {
         let initial_node = GraphNode {
             position: Vector3::new(start_pos.0, start_pos.1, start_pos.2),
             velocity: Vector3::new(start_vel.0, start_vel.1, start_vel.2),
@@ -153,14 +155,14 @@ impl GraphEstimator {
             current_accel_bias: Vector3::new(start_bias.0, start_bias.1, start_bias.2),
             current_gyro_bias: Vector3::zeros(),
             current_timestamp: 0.0,
-            origin: None,  // Will be set by first GPS fix
+            origin: None, // Will be set by first GPS fix
             preintegrator: PreintegratedImu::new(),
             imu_queue: VecDeque::new(),
             nodes,
             gps_factors: Vec::new(),
-            max_nodes: 100,  // Sliding window size
+            max_nodes: 100,      // Sliding window size
             gps_noise_std: 8.0,  // meters
-            imu_noise_std: 0.05,  // m/s²
+            imu_noise_std: 0.05, // m/s²
             last_optimization_time: 0.0,
             optimization_count: 0,
             stationary_samples: 0,
@@ -173,10 +175,11 @@ impl GraphEstimator {
         let dt = if self.current_timestamp > 0.0 {
             timestamp - self.current_timestamp
         } else {
-            0.02  // 50Hz default
+            0.02 // 50Hz default
         };
 
-        if dt > 0.0 && dt < 0.1 {  // Sanity check
+        if dt > 0.0 && dt < 0.1 {
+            // Sanity check
             // Bias-corrected measurements
             let accel_corrected = accel - self.current_accel_bias;
             let gyro_corrected = gyro - self.current_gyro_bias;
@@ -193,7 +196,7 @@ impl GraphEstimator {
                 self.stationary_samples += 1;
                 // After 50 samples (~1 second at 50Hz), apply ZUPT
                 if self.stationary_samples >= 50 {
-                    self.current_velocity = Vector3::zeros();  // Clamp velocity to zero
+                    self.current_velocity = Vector3::zeros(); // Clamp velocity to zero
                     if let Some(latest_node) = self.nodes.back_mut() {
                         latest_node.velocity = Vector3::zeros();
                     }
@@ -205,7 +208,8 @@ impl GraphEstimator {
             self.last_accel_magnitude = accel_magnitude;
 
             // Preintegrate immediately
-            self.preintegrator.integrate(accel_corrected, gyro_corrected, dt);
+            self.preintegrator
+                .integrate(accel_corrected, gyro_corrected, dt);
 
             // Store for potential reoptimization
             self.imu_queue.push_back((accel, gyro, timestamp));
@@ -218,11 +222,21 @@ impl GraphEstimator {
     }
 
     /// Slow loop: Add GPS measurement and trigger optimization
-    pub fn add_gps_measurement(&mut self, lat: f64, lon: f64, alt: f64, timestamp: f64) {
+    pub fn add_gps_measurement(
+        &mut self,
+        lat: f64,
+        lon: f64,
+        alt: f64,
+        timestamp: f64,
+        gps_speed: f64,
+    ) {
         // Set origin on first GPS fix
         if self.origin.is_none() {
             self.origin = Some((lat, lon, alt));
-            eprintln!("[FGO] ENU origin set: lat={:.6}, lon={:.6}, alt={:.2}m", lat, lon, alt);
+            eprintln!(
+                "[FGO] ENU origin set: lat={:.6}, lon={:.6}, alt={:.2}m",
+                lat, lon, alt
+            );
         }
 
         // Convert GPS to local ENU coordinates relative to origin
@@ -236,9 +250,9 @@ impl GraphEstimator {
 
         // Convert to meters
         let lat_rad = origin_lat.to_radians();
-        let east = dlon * 111320.0 * lat_rad.cos();   // meters East
-        let north = dlat * 111320.0;                  // meters North
-        let up = dalt;                                // meters Up
+        let east = dlon * 111320.0 * lat_rad.cos(); // meters East
+        let north = dlat * 111320.0; // meters North
+        let up = dalt; // meters Up
 
         let position = Vector3::new(east, north, up);
 
@@ -250,26 +264,33 @@ impl GraphEstimator {
 
         self.gps_factors.push(gps_factor);
 
-        // Create new keyframe node
-        self.add_keyframe(timestamp);
+        // Create new keyframe node (with zero-velocity prior if stationary)
+        let stationary = gps_speed < 0.2;
+        self.add_keyframe(timestamp, stationary);
 
         // Trigger optimization
         self.optimize();
     }
 
     /// Create new keyframe using preintegrated IMU
-    fn add_keyframe(&mut self, timestamp: f64) {
+    fn add_keyframe(&mut self, timestamp: f64, stationary: bool) {
         // Predict state using preintegration
         let dt = self.preintegrator.dt_sum;
         if dt < 0.001 {
-            return;  // No motion
+            return; // No motion
         }
 
         let last_node = self.nodes.back().unwrap();
 
         // Apply preintegrated deltas
-        let new_position = last_node.position + self.preintegrator.delta_position;
-        let new_velocity = last_node.velocity + self.preintegrator.delta_velocity;
+        let mut new_position = last_node.position + self.preintegrator.delta_position;
+        let mut new_velocity = last_node.velocity + self.preintegrator.delta_velocity;
+
+        if stationary {
+            // Apply zero-velocity prior when GPS reports stop
+            new_velocity = Vector3::zeros();
+            new_position = last_node.position;
+        }
 
         let new_node = GraphNode {
             position: new_position,
@@ -302,9 +323,9 @@ impl GraphEstimator {
         if let Some(latest_gps) = self.gps_factors.last() {
             if let Some(latest_node) = self.nodes.back_mut() {
                 // Weight GPS vs IMU prediction
-                let gps_weight = 0.8;  // Trust GPS more
-                latest_node.position = latest_node.position * (1.0 - gps_weight)
-                    + latest_gps.position * gps_weight;
+                let gps_weight = 0.8; // Trust GPS more
+                latest_node.position =
+                    latest_node.position * (1.0 - gps_weight) + latest_gps.position * gps_weight;
 
                 // Update current state
                 self.current_position = latest_node.position;
@@ -345,6 +366,10 @@ impl GraphEstimator {
 
     /// Get statistics for debugging
     pub fn get_stats(&self) -> (usize, usize, usize) {
-        (self.nodes.len(), self.gps_factors.len(), self.optimization_count)
+        (
+            self.nodes.len(),
+            self.gps_factors.len(),
+            self.optimization_count,
+        )
     }
 }
