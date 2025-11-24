@@ -661,10 +661,11 @@ fn build_track_path(readings: &[SensorReading]) -> Vec<[f64; 2]> {
 }
 
 /// Save JSON with gzip compression, returning the actual filename written
-fn save_json_compressed(output: &ComparisonOutput, output_dir: &str, is_final: bool) -> Result<String> {
-    // Build temp file path
-    let temp_path = format!("{}/current_session.json.gz.tmp", output_dir);
-    let active_path = format!("{}/current_session.json.gz", output_dir);
+fn save_json_compressed(output: &ComparisonOutput, output_dir: &str, _is_final: bool) -> Result<String> {
+    // Generate timestamped filename (unique for each run)
+    let timestamp = ts_now_clean();
+    let session_path = format!("{}/comparison_{}.json.gz", output_dir, timestamp);
+    let temp_path = format!("{}.tmp", session_path);
 
     // Serialize to JSON
     let json = serde_json::to_string_pretty(&output)?;
@@ -677,17 +678,10 @@ fn save_json_compressed(output: &ComparisonOutput, output_dir: &str, is_final: b
         encoder.finish()?;
     }
 
-    // Atomic rename: move temp -> active
-    std::fs::rename(&temp_path, &active_path)?;
+    // Atomic rename: move temp -> final
+    std::fs::rename(&temp_path, &session_path)?;
 
-    // If final save, rename to timestamped version
-    if is_final {
-        let final_path = format!("{}/drive_{}.json.gz", output_dir, ts_now_clean());
-        std::fs::copy(&active_path, &final_path)?;
-        Ok(final_path)
-    } else {
-        Ok(active_path)
-    }
+    Ok(session_path)
 }
 
 #[tokio::main]
