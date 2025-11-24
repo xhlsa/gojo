@@ -1005,6 +1005,7 @@ async fn main() -> Result<()> {
 
     // GPS tracking
     let mut last_gps_timestamp = 0.0f64;
+    let mut last_gps_fix: Option<GpsData> = None;
     let mut is_heading_initialized = false;
     let gps_speed_threshold = 3.0; // m/s - minimum speed to use for heading alignment
     let mut last_accel_ts: Option<f64> = None;
@@ -1345,7 +1346,30 @@ async fn main() -> Result<()> {
             let latest_gps = sensor_state.latest_gps.read().await;
             if let Some(gps) = latest_gps.as_ref() {
                 if gps.timestamp > last_gps_timestamp {
+                    // Basic GPS gating: reject low-accuracy or physically implausible spikes
+                    let mut reject_gps = false;
+                    if gps.accuracy > 20.0 {
+                        reject_gps = true;
+                    }
+                    if let Some(prev_fix) = last_gps_fix.as_ref() {
+                        let dt = gps.timestamp - prev_fix.timestamp;
+                        if dt > 0.0 {
+                            let accel_est = (gps.speed - prev_fix.speed).abs() / dt;
+                            if accel_est > 19.62 {
+                                reject_gps = true;
+                            }
+                        }
+                    }
+                    if reject_gps {
+                        eprintln!(
+                            "[GPS] Rejected fix (acc={:.1}m, speed={:.2}m/s) as outlier",
+                            gps.accuracy, gps.speed
+                        );
+                        continue;
+                    }
+
                     last_gps_timestamp = gps.timestamp;
+                    last_gps_fix = Some(gps.clone());
 
                     // Update filters with GPS position
                     if args.filter == "ekf" || args.filter == "both" {
@@ -1685,9 +1709,10 @@ async fn main() -> Result<()> {
                 filename
             );
 
-            // Don't clear readings - let them accumulate for the dashboard map track
-            // For short tests this is fine memory-wise, and GPS data needs to persist
-            // Only clear after final save at end of program
+            // Prune historical IMU readings to cap memory (retain GPS and recent IMU for dashboard)
+            let cutoff_time = live_status::current_timestamp() - 60.0;
+            readings.retain(|r| r.gps.is_some() || r.timestamp > cutoff_time);
+
             last_save = now;
         }
 

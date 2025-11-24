@@ -461,7 +461,7 @@ impl Ekf15d {
             let h_na = MatrixMN::<f64, U3, U15>::from_row_slice(
                 h_full.as_slice().expect("H slice should exist"),
             );
-            let r_na = Matrix3::from_row_slice(r.as_slice());
+            let r_na = r;
             let p_na = MatrixMN::<f64, U15, U15>::from_row_slice(
                 self.covariance
                     .as_slice()
