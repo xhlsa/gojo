@@ -7,8 +7,7 @@
 /// References:
 /// - Forster et al., "On-Manifold Preintegration for Real-Time Visual-Inertial Odometry"
 /// - Qin et al., "VINS-Mono: A Robust and Versatile Monocular Visual-Inertial State Estimator"
-
-use nalgebra::{Matrix3, Matrix6, Vector3, Vector6, UnitQuaternion};
+use nalgebra::{Matrix3, Matrix6, UnitQuaternion, Vector3, Vector6};
 
 const G: f64 = 9.81; // Earth gravity (m/s²)
 
@@ -57,10 +56,7 @@ pub struct PreintegratedImuMeasurements {
 
 impl PreintegratedImuMeasurements {
     /// Create a new preintegrated IMU measurement set
-    pub fn new(
-        accel_noise_std: f64,
-        gyro_noise_std: f64,
-    ) -> Self {
+    pub fn new(accel_noise_std: f64, gyro_noise_std: f64) -> Self {
         let mut covariance = Matrix6::<f64>::zeros();
 
         // Accelerometer noise covariance [m²/s⁴]
@@ -122,7 +118,10 @@ impl PreintegratedImuMeasurements {
         if gyro_mag > 1e-8 {
             let half_angle = 0.5 * gyro_mag * dt;
             let axis = gyro_corrected / gyro_mag;
-            let dq = UnitQuaternion::from_axis_angle(&nalgebra::Unit::new_normalize(axis), half_angle * 2.0);
+            let dq = UnitQuaternion::from_axis_angle(
+                &nalgebra::Unit::new_normalize(axis),
+                half_angle * 2.0,
+            );
             self.delta_q = dq * self.delta_q;
         }
 
@@ -157,7 +156,9 @@ impl ImuFactor {
     /// Create a new IMU factor with preintegrated measurements
     pub fn new(preintegration: PreintegratedImuMeasurements) -> Self {
         // Information = Covariance^-1
-        let information = preintegration.covariance.try_inverse()
+        let information = preintegration
+            .covariance
+            .try_inverse()
             .unwrap_or_else(|| Matrix6::<f64>::identity());
 
         Self {
@@ -218,7 +219,11 @@ impl ImuFactor {
 
         // Compute position error in body frame of i
         // Expected position change: Ri^T * (Pj - Pi - Vi*Dt - 0.5*g*Dt²)
-        let gravity_offset = Vector3::new(0.0, 0.0, -0.5 * G * self.preintegration.sum_dt * self.preintegration.sum_dt);
+        let gravity_offset = Vector3::new(
+            0.0,
+            0.0,
+            -0.5 * G * self.preintegration.sum_dt * self.preintegration.sum_dt,
+        );
         let pos_change = pos_j - pos_i - vel_i * self.preintegration.sum_dt - gravity_offset;
         let pos_error = pose_i.transpose() * pos_change - corrected_dp;
 
@@ -261,10 +266,7 @@ impl ImuFactor {
         pos_j: &Vector3<f64>,
         vel_j: &Vector3<f64>,
     ) -> f64 {
-        let residual = self.compute_residual(
-            pose_i, pos_i, vel_i, bias_i,
-            pose_j, pos_j, vel_j,
-        );
+        let residual = self.compute_residual(pose_i, pos_i, vel_i, bias_i, pose_j, pos_j, vel_j);
 
         (residual.transpose() * self.information * residual)[0]
     }
@@ -272,11 +274,7 @@ impl ImuFactor {
 
 /// Create a skew-symmetric matrix from a 3D vector
 fn skew_symmetric(v: &Vector3<f64>) -> Matrix3<f64> {
-    Matrix3::new(
-        0.0,     -v[2],    v[1],
-        v[2],    0.0,      -v[0],
-        -v[1],   v[0],     0.0,
-    )
+    Matrix3::new(0.0, -v[2], v[1], v[2], 0.0, -v[0], -v[1], v[0], 0.0)
 }
 
 /// Compute the logarithm of a unit quaternion (returns 3D rotation vector)
@@ -332,10 +330,8 @@ mod tests {
         let vel_j = Vector3::zeros();
         let bias_i = Vector6::zeros();
 
-        let residual = factor.compute_residual(
-            &pose_i, &pos_i, &vel_i, &bias_i,
-            &pose_j, &pos_j, &vel_j,
-        );
+        let residual =
+            factor.compute_residual(&pose_i, &pos_i, &vel_i, &bias_i, &pose_j, &pos_j, &vel_j);
 
         // Residual should be small when states are consistent with zero motion
         assert!(residual.norm() < 0.1);

@@ -54,9 +54,8 @@ impl RestartState {
         self.record_failure_window();
 
         // Exponential backoff: multiply cooldown by 1.5 each time, cap at 30 seconds
-        self.current_cooldown = Duration::from_secs_f64(
-            (self.current_cooldown.as_secs_f64() * 1.5).min(30.0),
-        );
+        self.current_cooldown =
+            Duration::from_secs_f64((self.current_cooldown.as_secs_f64() * 1.5).min(30.0));
 
         self.next_retry_time = Instant::now() + self.current_cooldown;
 
@@ -281,15 +280,27 @@ impl RestartManager {
     }
 
     pub fn accel_circuit_tripped(&self) -> bool {
-        self.accel.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
+        self.accel
+            .lock()
+            .ok()
+            .map(|s| s.circuit_tripped())
+            .unwrap_or(false)
     }
 
     pub fn gyro_circuit_tripped(&self) -> bool {
-        self.gyro.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
+        self.gyro
+            .lock()
+            .ok()
+            .map(|s| s.circuit_tripped())
+            .unwrap_or(false)
     }
 
     pub fn gps_circuit_tripped(&self) -> bool {
-        self.gps.lock().ok().map(|s| s.circuit_tripped()).unwrap_or(false)
+        self.gps
+            .lock()
+            .ok()
+            .map(|s| s.circuit_tripped())
+            .unwrap_or(false)
     }
 }
 

@@ -52,7 +52,7 @@ impl IncidentDetector {
         // Hard Maneuver (Braking/Turn): > 4.0 m/s^2
         // Only if moving > 2 m/s to avoid handling noise
         if accel_mag > hard_maneuver_threshold {
-             if let Some(speed) = gps_speed {
+            if let Some(speed) = gps_speed {
                 if speed > 2.0 {
                     return Some(Incident {
                         timestamp,
@@ -63,7 +63,7 @@ impl IncidentDetector {
                         longitude: lon,
                     });
                 }
-             }
+            }
         }
 
         // Swerving: gyro_z > 45°/sec with GPS speed > 2 m/s

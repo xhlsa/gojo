@@ -29,6 +29,7 @@ pub struct EsEkf {
     covariance: Array2<f64>,
     process_noise: Array2<f64>,
     r_gps: Array2<f64>,
+    r_gps_velocity: f64,
     r_accel: f64,
     r_gyro: f64,
     enable_gyro: bool,
@@ -61,6 +62,9 @@ impl EsEkf {
         r_gps[[0, 0]] = gps_var;
         r_gps[[1, 1]] = gps_var;
 
+        // Trust GPS speed strongly to rein in velocity drift (std dev = 0.1 m/s)
+        let r_gps_velocity = 0.1f64 * 0.1f64;
+
         let r_accel = accel_noise_std * accel_noise_std;
         let r_gyro = gyro_noise_std * gyro_noise_std;
 
@@ -70,6 +74,7 @@ impl EsEkf {
             covariance,
             process_noise,
             r_gps,
+            r_gps_velocity,
             r_accel,
             r_gyro,
             enable_gyro,
@@ -147,6 +152,13 @@ impl EsEkf {
         let mut h = Array2::<f64>::zeros((2, 8));
         h[[0, 0]] = 1.0;
         h[[1, 1]] = 1.0;
+        h
+    }
+
+    fn gps_velocity_measurement_jacobian() -> Array2<f64> {
+        let mut h = Array2::<f64>::zeros((2, 8));
+        h[[0, 2]] = 1.0;
+        h[[1, 3]] = 1.0;
         h
     }
 
@@ -275,6 +287,7 @@ impl EsEkf {
         let (origin_lat, origin_lon) = self.origin.unwrap();
         let (x_meas, y_meas) = latlon_to_meters(latitude, longitude, origin_lat, origin_lon);
 
+        let mut velocity_bearing: Option<f64> = None;
         if let Some(speed) = gps_speed {
             if speed > 0.5 {
                 if let Some((lat_prev, lon_prev)) = self.last_position {
@@ -286,10 +299,13 @@ impl EsEkf {
                         - lat_prev_rad.sin() * lat_curr_rad.cos() * d_lon.cos();
                     let bearing = numerator.atan2(denominator);
                     self.last_gps_bearing = bearing;
+                    velocity_bearing = Some(bearing);
                     if !self.heading_initialized {
                         self.state[6] = bearing;
                         self.heading_initialized = true;
                     }
+                } else {
+                    velocity_bearing = Some(self.last_gps_bearing);
                 }
             }
         }
@@ -307,12 +323,26 @@ impl EsEkf {
 
         self.kalman_update(&measurement_matrix, &residual, &measurement_noise);
 
+        // GPS velocity update (projected into vx/vy) to clamp drift
+        if let (Some(speed), Some(bearing)) = (gps_speed, velocity_bearing) {
+            if speed > 0.5 {
+                let vx_meas = speed * bearing.cos();
+                let vy_meas = speed * bearing.sin();
+                let velocity_residual = arr1(&[vx_meas - self.state[2], vy_meas - self.state[3]]);
+                let velocity_h = Self::gps_velocity_measurement_jacobian();
+                let mut velocity_r = Array2::<f64>::zeros((2, 2));
+                velocity_r[[0, 0]] = self.r_gps_velocity;
+                velocity_r[[1, 1]] = self.r_gps_velocity;
+                self.kalman_update(&velocity_h, &velocity_residual, &velocity_r);
+            }
+        }
+
         if let Some((lat_prev, lon_prev)) = self.last_position {
             let delta_dist = haversine_distance(lat_prev, lon_prev, latitude, longitude);
             // Reject GPS jitter when stationary: require either a minimum speed or a meaningful jump
             let speed_ok = gps_speed.map(|s| s > 1.0).unwrap_or(false);
             let acc_limit = gps_accuracy.unwrap_or(5.0).max(1.0); // meters
-            // Require movement greater than 1x accuracy (more conservative than before)
+                                                                  // Require movement greater than 1x accuracy (more conservative than before)
             let dist_ok = delta_dist > acc_limit * 1.0;
             if speed_ok || dist_ok {
                 self.accumulated_distance += delta_dist;

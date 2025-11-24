@@ -8,7 +8,7 @@ const MIN_SPEED_MS: f64 = 2.0; // Only calculate above 2 m/s (lower threshold wi
 #[derive(Clone, Copy, Debug)]
 pub struct SpecificPowerOutput {
     pub specific_power_w_per_kg: f64, // Watts per kilogram (vehicle-independent metric)
-    pub power_coefficient: f64,        // Unitless power metric for dashboard
+    pub power_coefficient: f64,       // Unitless power metric for dashboard
 }
 
 impl Default for SpecificPowerOutput {

@@ -11,7 +11,6 @@
 ///
 /// Extends 13D EKF with accelerometer bias estimation for better long-term accuracy.
 /// Runs in shadow mode alongside main filter.
-
 use ndarray::{arr1, Array1, Array2};
 use serde::{Deserialize, Serialize};
 
@@ -79,22 +78,19 @@ pub struct Ekf15d {
 
 impl Ekf15d {
     /// Create a new 15D EKF
-    pub fn new(
-        dt: f64,
-        gps_noise_std: f64,
-        accel_noise_std: f64,
-        gyro_noise_std: f64,
-    ) -> Self {
-        let state = Array1::<f64>::zeros(15);
+    pub fn new(dt: f64, gps_noise_std: f64, accel_noise_std: f64, gyro_noise_std: f64) -> Self {
+        let mut state = Array1::<f64>::zeros(15);
+        // Initialize quaternion to identity
+        state[6] = 1.0;
 
         // Initialize covariance (15x15)
         let mut covariance = Array2::<f64>::zeros((15, 15));
         let diag = [
-            100.0, 100.0, 100.0,     // position: 100 m² uncertainty
-            10.0, 10.0, 10.0,        // velocity: 10 m²/s² uncertainty
-            1.0, 1.0, 1.0, 1.0,      // quaternion: 1.0 (unitless)
-            0.1, 0.1, 0.1,           // gyro bias: 0.1 rad²/s²
-            0.01, 0.01,              // accel bias (x, y): 0.01 m²/s⁴ [z is placeholder]
+            100.0, 100.0, 100.0, // position: 100 m² uncertainty
+            10.0, 10.0, 10.0, // velocity: 10 m²/s² uncertainty
+            1.0, 1.0, 1.0, 1.0, // quaternion: 1.0 (unitless)
+            0.1, 0.1, 0.1, // gyro bias: 0.1 rad²/s²
+            0.1, 0.1, // accel bias (x, y): assume stable sensors at start
         ];
         for (i, &val) in diag.iter().enumerate() {
             covariance[[i, i]] = val;
@@ -122,14 +118,14 @@ impl Ekf15d {
             process_noise[[i, i]] = gyro_var * dt * dt;
         }
 
-        // Gyro bias: random walk (slow drift)
-        let q_gyro_bias = 0.01 * gyro_var * dt;
+        // Gyro bias: random walk (extremely stable)
+        let q_gyro_bias = 1e-8;
         for i in 10..13 {
             process_noise[[i, i]] = q_gyro_bias;
         }
 
-        // Accel bias: random walk (very slow drift)
-        let q_accel_bias = 0.001 * accel_var * dt;
+        // Accel bias: random walk (extremely stable)
+        let q_accel_bias = 1e-7;
         for i in 13..15 {
             process_noise[[i, i]] = q_accel_bias;
         }
@@ -214,11 +210,9 @@ impl Ekf15d {
             quat = [qw, qx, qy, qz];
 
             // Normalize quaternion
-            let quat_mag = (quat[0] * quat[0]
-                + quat[1] * quat[1]
-                + quat[2] * quat[2]
-                + quat[3] * quat[3])
-                .sqrt();
+            let quat_mag =
+                (quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
+                    .sqrt();
             if quat_mag > 1e-6 {
                 quat[0] /= quat_mag;
                 quat[1] /= quat_mag;
@@ -260,11 +254,18 @@ impl Ekf15d {
 
     /// GPS update: correct position
     pub fn update_gps(&mut self, gps_pos: (f64, f64, f64)) {
+        let (mut pos_x, mut pos_y, mut pos_z) = gps_pos;
+        if let Some((origin_lat, origin_lon)) = self.origin {
+            let (x, y) = latlon_to_meters(pos_x, pos_y, origin_lat, origin_lon);
+            pos_x = x;
+            pos_y = y;
+        }
+
         // Simple measurement update for position [0-2]
         let innovation = [
-            gps_pos.0 - self.state[0],
-            gps_pos.1 - self.state[1],
-            gps_pos.2 - self.state[2],
+            pos_x - self.state[0],
+            pos_y - self.state[1],
+            pos_z - self.state[2],
         ];
 
         // Measurement matrix H (identity for position)
@@ -298,6 +299,14 @@ impl Ekf15d {
         self.gps_updates += 1;
     }
 
+    /// Set local origin for GPS conversion and reset position
+    pub fn set_origin(&mut self, lat: f64, lon: f64, _alt: f64) {
+        self.origin = Some((lat, lon));
+        self.state[0] = 0.0;
+        self.state[1] = 0.0;
+        self.state[2] = 0.0;
+    }
+
     /// Accelerometer update: correct velocity and accel bias
     pub fn update_accel(&mut self, accel_meas: (f64, f64, f64)) {
         // Rotate accel measurement to world frame
@@ -324,6 +333,15 @@ impl Ekf15d {
         // Gyro is already used in predict, no additional measurement update needed
         self.gyro_updates += 1;
     }
+}
+
+fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
+    const R: f64 = 6_371_000.0;
+    let d_lat = (lat - origin_lat).to_radians();
+    let d_lon = (lon - origin_lon).to_radians();
+    let x = R * d_lon * origin_lat.to_radians().cos();
+    let y = R * d_lat;
+    (x, y)
 }
 
 /// Rotate acceleration from body frame to world frame using quaternion

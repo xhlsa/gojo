@@ -49,10 +49,7 @@ async fn index_handler() -> Html<&'static str> {
     Html(include_str!("dashboard_static.html"))
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<SensorState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<SensorState>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 
@@ -66,14 +63,14 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
             let accel_count = *state.accel_count.read().await;
             let gyro_count = *state.gyro_count.read().await;
             let gps_count = *state.gps_count.read().await;
-            
+
             let gps_data = state.latest_gps.read().await;
             let (speed, bearing, lat, lon) = if let Some(g) = gps_data.as_ref() {
                 (g.speed, g.bearing, g.latitude, g.longitude)
             } else {
                 (0.0, 0.0, 0.0, 0.0)
             };
-            
+
             let accel_data = state.latest_accel.read().await;
             let (ax, ay, az) = if let Some(a) = accel_data.as_ref() {
                 (a.x, a.y, a.z)
@@ -88,7 +85,10 @@ async fn handle_socket(mut socket: WebSocket, state: SensorState) {
             let (sp_w_kg, pc) = if calc_velocity > 0.0 && (ax != 0.0 || ay != 0.0 || az != 0.0) {
                 use crate::physics;
                 let power = physics::calculate_specific_power(ax, ay, az, calc_velocity);
-                ((power.specific_power_w_per_kg * 100.0).round() / 100.0, (power.power_coefficient * 100.0).round() / 100.0)
+                (
+                    (power.specific_power_w_per_kg * 100.0).round() / 100.0,
+                    (power.power_coefficient * 100.0).round() / 100.0,
+                )
             } else {
                 (0.0, 0.0)
             };

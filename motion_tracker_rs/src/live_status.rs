@@ -39,8 +39,8 @@ pub struct LiveStatus {
     pub circuit_breaker_tripped: bool,
     pub circuit_breaker_since_secs: f64,
     // Virtual dyno (specific power - vehicle-agnostic)
-    pub specific_power_w_per_kg: f64,  // Power-to-weight ratio
-    pub power_coefficient: f64,         // Normalized power metric
+    pub specific_power_w_per_kg: f64, // Power-to-weight ratio
+    pub power_coefficient: f64,       // Normalized power metric
 }
 
 impl LiveStatus {

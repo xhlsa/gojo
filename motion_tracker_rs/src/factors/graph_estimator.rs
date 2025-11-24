@@ -1,10 +1,9 @@
+use crate::factors::{GpsFactor, ImuFactor, PreintegratedImuMeasurements};
 /// Factor Graph Optimizer (FGO) Manager for Visual-Inertial Odometry
 ///
 /// Manages the factor graph lifecycle, keyframe creation, IMU preintegration,
 /// and optimization loop. Coordinates between IMU, GPS, and bias factors.
-
-use nalgebra::{Vector3, Matrix3, Vector6};
-use crate::factors::{PreintegratedImuMeasurements, ImuFactor, GpsFactor};
+use nalgebra::{Matrix3, Vector3, Vector6};
 
 /// Key indices for pose, velocity, and bias variables in the factor graph
 #[derive(Clone, Copy, Debug)]
@@ -76,10 +75,7 @@ pub enum GraphFactor {
     },
 
     /// GPS position measurement constraint
-    Gps {
-        pose_key: usize,
-        factor: GpsFactor,
-    },
+    Gps { pose_key: usize, factor: GpsFactor },
 
     /// Bias random walk (zero-mean drift between keyframes)
     BiasRandomWalk {
@@ -99,11 +95,7 @@ pub enum GraphFactor {
 
 impl GraphEstimator {
     /// Create a new graph estimator
-    pub fn new(
-        gps_noise_std: f64,
-        accel_noise_std: f64,
-        gyro_noise_std: f64,
-    ) -> Self {
+    pub fn new(gps_noise_std: f64, accel_noise_std: f64, gyro_noise_std: f64) -> Self {
         let preintegration = PreintegratedImuMeasurements::new(accel_noise_std, gyro_noise_std);
 
         // Initialize with zero keys (will be assigned on first keyframe)
@@ -146,7 +138,8 @@ impl GraphEstimator {
     ) {
         // Simply accumulate the measurement
         // The actual integration happens in PreintegratedImuMeasurements::integrate_measurement
-        self.preintegration.integrate_measurement(accel, gyro, dt, accel_bias, gyro_bias);
+        self.preintegration
+            .integrate_measurement(accel, gyro, dt, accel_bias, gyro_bias);
     }
 
     /// Add a GPS measurement, triggering keyframe creation and graph optimization
@@ -216,10 +209,8 @@ impl GraphEstimator {
 
         // Reset preintegration with new bias for next cycle
         self.last_stamp = timestamp;
-        self.preintegration = PreintegratedImuMeasurements::new(
-            self.accel_noise_std,
-            self.gyro_noise_std,
-        );
+        self.preintegration =
+            PreintegratedImuMeasurements::new(self.accel_noise_std, self.gyro_noise_std);
         // Set nominal bias to current estimate for next integration cycle
         self.preintegration.nominal_accel_bias = current_bias.fixed_rows::<3>(0).into_owned();
         self.preintegration.nominal_gyro_bias = current_bias.fixed_rows::<3>(3).into_owned();
@@ -250,10 +241,8 @@ impl GraphEstimator {
     /// Reset the graph for a new estimation window
     pub fn reset(&mut self) {
         self.factors.clear();
-        self.preintegration = PreintegratedImuMeasurements::new(
-            self.accel_noise_std,
-            self.gyro_noise_std,
-        );
+        self.preintegration =
+            PreintegratedImuMeasurements::new(self.accel_noise_std, self.gyro_noise_std);
         self.current_keys = StateKeys {
             pose_key: 0,
             vel_key: 1,
@@ -294,12 +283,7 @@ impl GraphEstimator {
 ///
 /// # Returns
 /// ENU position as [East, North, Up] in meters
-fn latlon_to_enu(
-    lat: f64,
-    lon: f64,
-    origin_lat: f64,
-    origin_lon: f64,
-) -> Vector3<f64> {
+fn latlon_to_enu(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> Vector3<f64> {
     const R: f64 = 6_371_000.0; // Earth radius in meters
 
     let d_lat = (lat - origin_lat).to_radians();
@@ -361,7 +345,7 @@ mod tests {
         // Graph should have factors
         assert!(estimator.num_factors() >= 2); // At least IMU + GPS factors
         assert_eq!(new_keys.pose_key, 3); // New pose key
-        assert_eq!(new_keys.vel_key, 4);  // New vel key
+        assert_eq!(new_keys.vel_key, 4); // New vel key
         assert_eq!(new_keys.bias_key, 5); // New bias key
     }
 

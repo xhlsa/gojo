@@ -61,11 +61,7 @@ impl SensorHealth {
     }
 
     pub fn get_restart_attempts(&self) -> u32 {
-        self.restart_attempts
-            .lock()
-            .ok()
-            .map(|r| *r)
-            .unwrap_or(0)
+        self.restart_attempts.lock().ok().map(|r| *r).unwrap_or(0)
     }
 }
 
@@ -224,25 +220,25 @@ pub async fn health_monitor_task(
             }
         } else if report.gps_healthy {
             if monitor.gps.get_restart_attempts() > 0 {
-                 eprintln!("[HEALTH] ✓ GPS recovered! Resetting restart counters.");
-                 monitor.gps.reset_restart_attempts();
-                 restart_manager.gps_restart_success();
+                eprintln!("[HEALTH] ✓ GPS recovered! Resetting restart counters.");
+                monitor.gps.reset_restart_attempts();
+                restart_manager.gps_restart_success();
             }
         }
 
         // Gyro is part of Accel/IMU for restarts, but track its health separately
         if !report.gyro_healthy && !report.accel_healthy && report.gyro_restart_count < 60 {
-             // If BOTH are silent, we already handled accel.
-             // If ONLY gyro is silent, we might need to restart the whole IMU.
-             // Current architecture restarts IMU based on accel signal.
-             // Let's signal gyro restart too just to be safe/complete.
-             monitor.gyro.increment_restart_attempts();
-             restart_manager.signal_gyro_restart();
+            // If BOTH are silent, we already handled accel.
+            // If ONLY gyro is silent, we might need to restart the whole IMU.
+            // Current architecture restarts IMU based on accel signal.
+            // Let's signal gyro restart too just to be safe/complete.
+            monitor.gyro.increment_restart_attempts();
+            restart_manager.signal_gyro_restart();
         } else if report.gyro_healthy {
-             if monitor.gyro.get_restart_attempts() > 0 {
-                 monitor.gyro.reset_restart_attempts();
-                 restart_manager.gyro_restart_success();
-             }
+            if monitor.gyro.get_restart_attempts() > 0 {
+                monitor.gyro.reset_restart_attempts();
+                restart_manager.gyro_restart_success();
+            }
         }
 
         // Log max restart attempts exceeded

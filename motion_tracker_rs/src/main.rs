@@ -4,21 +4,21 @@
 use anyhow::Result;
 use chrono::Utc;
 use clap::Parser;
-use serde::{Deserialize, Serialize};
-use std::collections::VecDeque;
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::panic;
-use std::fs::{OpenOptions, File};
-use std::io::Write;
-use std::process::Stdio;
-use tokio::sync::mpsc;
-use tokio::time::{sleep, Duration};
-use tokio::process::Command;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use nalgebra::Vector3;
 use flate2::write::GzEncoder;
 use flate2::Compression;
+use nalgebra::Vector3;
+use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
+use std::fs::{File, OpenOptions};
+use std::io::Write;
+use std::panic;
+use std::process::Stdio;
+use std::sync::Arc;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::Command;
+use tokio::sync::mpsc;
+use tokio::sync::RwLock;
+use tokio::time::{sleep, Duration};
 
 struct LowPassFilter {
     alpha: f64,
@@ -70,24 +70,24 @@ impl IncidentCooldown {
         false
     }
 }
+mod dashboard;
 mod filters;
 mod health_monitor;
 mod incident;
 mod live_status;
-mod restart_manager;
-mod types;
-mod smoothing;
-mod dashboard;
 mod physics;
 mod rerun_logger;
+mod restart_manager;
+mod smoothing;
+mod types;
 
 use filters::complementary::ComplementaryFilter;
-use filters::es_ekf::EsEkf;
 use filters::ekf_13d::Ekf13d;
 use filters::ekf_15d::Ekf15d;
-use types::{AccelData, GpsData, GyroData};
-use smoothing::AccelSmoother;
+use filters::es_ekf::EsEkf;
 use rerun_logger::RerunLogger;
+use smoothing::AccelSmoother;
+use types::{AccelData, GpsData, GyroData};
 
 /// Log to file for debugging (bypasses stdout which may be corrupted)
 fn debug_log(msg: &str) {
@@ -152,6 +152,7 @@ struct SensorReading {
     power_coefficient: f64,
     experimental_13d: Option<filters::ekf_13d::Ekf13dState>,
     experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
+    fgo: Option<filters::fgo::FgoState>,  // Factor Graph Optimization (shadow mode)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -266,9 +267,12 @@ impl DynamicCalibration {
             return None;
         }
 
-        let sum: (f64, f64, f64) = self.gravity_accumulator.iter().fold((0.0, 0.0, 0.0), |acc, &(x, y, z)| {
-            (acc.0 + x, acc.1 + y, acc.2 + z)
-        });
+        let sum: (f64, f64, f64) = self
+            .gravity_accumulator
+            .iter()
+            .fold((0.0, 0.0, 0.0), |acc, &(x, y, z)| {
+                (acc.0 + x, acc.1 + y, acc.2 + z)
+            });
 
         let count = self.gravity_accumulator.len() as f64;
         Some((sum.0 / count, sum.1 / count, sum.2 / count))
@@ -375,13 +379,20 @@ fn calculate_biases(
 /// Combined sensor reader task: Read BOTH accel and gyro from single termux-sensor stream
 /// Accel and gyro come from same LSM6DSO IMU, must be in same command
 /// Handles multi-line pretty-printed JSON by accumulating until complete object
-async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>, enable_gyro: bool) {
+async fn imu_reader_task(
+    state: SensorState,
+    health_monitor: Arc<HealthMonitor>,
+    enable_gyro: bool,
+) {
     let sensor_list = if enable_gyro {
         "Accelerometer,Gyroscope"
     } else {
         "Accelerometer"
     };
-    eprintln!("[imu-reader] Initializing IMU reader (sensors: {})", sensor_list);
+    eprintln!(
+        "[imu-reader] Initializing IMU reader (sensors: {})",
+        sensor_list
+    );
 
     // Cleanup sensor
     let _ = Command::new("termux-sensor").arg("-c").output().await;
@@ -479,7 +490,9 @@ async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>,
                     // Process both accel and gyro from same JSON object
                     for (sensor_key, sensor_data) in obj_map.iter() {
                         if sensor_key.contains("Accelerometer") {
-                            if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                            if let Some(values) =
+                                sensor_data.get("values").and_then(|v| v.as_array())
+                            {
                                 if values.len() >= 3 {
                                     health_monitor.accel.update(); // Heartbeat
                                     let accel = AccelData {
@@ -511,7 +524,9 @@ async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>,
                                 }
                             }
                         } else if sensor_key.contains("Gyroscope") {
-                            if let Some(values) = sensor_data.get("values").and_then(|v| v.as_array()) {
+                            if let Some(values) =
+                                sensor_data.get("values").and_then(|v| v.as_array())
+                            {
                                 if values.len() >= 3 {
                                     health_monitor.gyro.update(); // Heartbeat
                                     let gyro = GyroData {
@@ -547,7 +562,10 @@ async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>,
 
                     // Log progress every 50 combined updates
                     if (accel_count + gyro_count) % 50 == 0 && (accel_count + gyro_count) > 0 {
-                        eprintln!("[imu-reader] Accel: {}, Gyro: {} samples parsed", accel_count, gyro_count);
+                        eprintln!(
+                            "[imu-reader] Accel: {}, Gyro: {} samples parsed",
+                            accel_count, gyro_count
+                        );
                     }
                 }
             }
@@ -557,12 +575,14 @@ async fn imu_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>,
         }
     }
 
-    eprintln!("[imu-reader] Stream ended: Accel: {}, Gyro: {}", accel_count, gyro_count);
-    
+    eprintln!(
+        "[imu-reader] Stream ended: Accel: {}, Gyro: {}",
+        accel_count, gyro_count
+    );
+
     // If stream ends naturally (not crash), we should still signal failure so it restarts
     // But if it was closed explicitly via Abort, this won't be reached.
 }
-
 
 /// GPS reader task: Poll termux-location every 1000ms
 async fn gps_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>) {
@@ -629,7 +649,6 @@ async fn gps_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>)
     }
 }
 
-
 use health_monitor::HealthMonitor;
 use restart_manager::RestartManager;
 
@@ -643,8 +662,8 @@ fn build_track_path(readings: &[SensorReading]) -> Vec<[f64; 2]> {
             let current_point = [gps.latitude, gps.longitude];
 
             if let Some(last) = last_point {
-                let dist_sq = (current_point[0] - last[0]).powi(2) +
-                              (current_point[1] - last[1]).powi(2);
+                let dist_sq =
+                    (current_point[0] - last[0]).powi(2) + (current_point[1] - last[1]).powi(2);
                 // ~5 meters in degrees at equator
                 let threshold_sq = 0.00005_f64; // (0.0000447)^2 ≈ 5m
                 if dist_sq >= threshold_sq {
@@ -661,7 +680,11 @@ fn build_track_path(readings: &[SensorReading]) -> Vec<[f64; 2]> {
 }
 
 /// Save JSON with gzip compression, returning the actual filename written
-fn save_json_compressed(output: &ComparisonOutput, output_dir: &str, _is_final: bool) -> Result<String> {
+fn save_json_compressed(
+    output: &ComparisonOutput,
+    output_dir: &str,
+    _is_final: bool,
+) -> Result<String> {
     // Generate timestamped filename (unique for each run)
     let timestamp = ts_now_clean();
     let session_path = format!("{}/comparison_{}.json.gz", output_dir, timestamp);
@@ -748,7 +771,9 @@ async fn main() -> Result<()> {
         // Supervisor loop
         loop {
             if imu_rm.accel_circuit_tripped() || imu_rm.gyro_circuit_tripped() {
-                eprintln!("[SUPERVISOR] IMU circuit breaker tripped; exiting to avoid restart loop.");
+                eprintln!(
+                    "[SUPERVISOR] IMU circuit breaker tripped; exiting to avoid restart loop."
+                );
                 std::process::exit(2);
             }
 
@@ -759,7 +784,7 @@ async fn main() -> Result<()> {
                 eprintln!("[SUPERVISOR] Starting IMU task...");
                 // Run the task - if it returns, it failed or finished
                 imu_reader_task(imu_state.clone(), imu_hm.clone(), enable_gyro_clone).await;
-                
+
                 // If task exits, report failure
                 eprintln!("[SUPERVISOR] IMU task exited unexpectedly.");
                 imu_rm.accel_restart_failed(); // Record failure to trigger backoff
@@ -782,17 +807,19 @@ async fn main() -> Result<()> {
     let gps_rm = restart_manager.clone();
     let gps_reader_handle = tokio::spawn(async move {
         loop {
-             if gps_rm.gps_circuit_tripped() {
-                 eprintln!("[SUPERVISOR] GPS circuit breaker tripped; exiting to avoid restart loop.");
-                 std::process::exit(2);
-             }
+            if gps_rm.gps_circuit_tripped() {
+                eprintln!(
+                    "[SUPERVISOR] GPS circuit breaker tripped; exiting to avoid restart loop."
+                );
+                std::process::exit(2);
+            }
 
-             let can_run = gps_rm.gps_ready_restart();
+            let can_run = gps_rm.gps_ready_restart();
 
             if can_run {
                 eprintln!("[SUPERVISOR] Starting GPS task...");
                 gps_reader_task(gps_state.clone(), gps_hm.clone()).await;
-                
+
                 eprintln!("[SUPERVISOR] GPS task exited unexpectedly.");
                 gps_rm.gps_restart_failed();
 
@@ -838,33 +865,54 @@ async fn main() -> Result<()> {
     let (mut gravity_bias, gyro_bias, calibration_complete) = {
         let accel_buf = sensor_state.accel_buffer.read().await;
         let gyro_buf = sensor_state.gyro_buffer.read().await;
-        eprintln!("[CALIB] After 3s: {} accel samples, {} gyro samples", accel_buf.len(), gyro_buf.len());
+        eprintln!(
+            "[CALIB] After 3s: {} accel samples, {} gyro samples",
+            accel_buf.len(),
+            gyro_buf.len()
+        );
 
         if accel_buf.len() < 50 {
-            eprintln!("[CALIB] WARNING: Only {} accel samples. Waiting 2 more seconds...", accel_buf.len());
+            eprintln!(
+                "[CALIB] WARNING: Only {} accel samples. Waiting 2 more seconds...",
+                accel_buf.len()
+            );
             drop(accel_buf);
             drop(gyro_buf);
             sleep(Duration::from_secs(2)).await;
 
             let accel_buf = sensor_state.accel_buffer.read().await;
             let gyro_buf = sensor_state.gyro_buffer.read().await;
-            eprintln!("[CALIB] After 5s: {} accel samples, {} gyro samples", accel_buf.len(), gyro_buf.len());
+            eprintln!(
+                "[CALIB] After 5s: {} accel samples, {} gyro samples",
+                accel_buf.len(),
+                gyro_buf.len()
+            );
 
             if accel_buf.len() < 50 {
-                eprintln!("[CALIB] WARNING: Still only {} samples. Waiting 2 more seconds...", accel_buf.len());
+                eprintln!(
+                    "[CALIB] WARNING: Still only {} samples. Waiting 2 more seconds...",
+                    accel_buf.len()
+                );
                 drop(accel_buf);
                 drop(gyro_buf);
                 sleep(Duration::from_secs(2)).await;
 
                 let accel_buf = sensor_state.accel_buffer.read().await;
                 let gyro_buf = sensor_state.gyro_buffer.read().await;
-                eprintln!("[CALIB] After 7s: {} accel samples, {} gyro samples", accel_buf.len(), gyro_buf.len());
+                eprintln!(
+                    "[CALIB] After 7s: {} accel samples, {} gyro samples",
+                    accel_buf.len(),
+                    gyro_buf.len()
+                );
 
                 if accel_buf.len() < 50 {
-                    eprintln!("[CALIB] FAILED: Still only {} samples after 7 seconds. Using defaults.", accel_buf.len());
+                    eprintln!(
+                        "[CALIB] FAILED: Still only {} samples after 7 seconds. Using defaults.",
+                        accel_buf.len()
+                    );
                     (
                         (0.0, 0.0, 9.81), // gravity_bias (x, y, z)
-                        (0.0, 0.0, 0.0),   // gyro_bias (x, y, z)
+                        (0.0, 0.0, 0.0),  // gyro_bias (x, y, z)
                         false,
                     )
                 } else {
@@ -883,13 +931,25 @@ async fn main() -> Result<()> {
         }
     };
 
-    eprintln!("[CALIB] Gravity bias vector: ({:.3}, {:.3}, {:.3}) m/s²", gravity_bias.0, gravity_bias.1, gravity_bias.2);
-    eprintln!("[CALIB] Gyro bias vector: ({:.6}, {:.6}, {:.6}) rad/s", gyro_bias.0, gyro_bias.1, gyro_bias.2);
+    eprintln!(
+        "[CALIB] Gravity bias vector: ({:.3}, {:.3}, {:.3}) m/s²",
+        gravity_bias.0, gravity_bias.1, gravity_bias.2
+    );
+    eprintln!(
+        "[CALIB] Gyro bias vector: ({:.6}, {:.6}, {:.6}) rad/s",
+        gyro_bias.0, gyro_bias.1, gyro_bias.2
+    );
     eprintln!("[CALIB] Calibration complete: {}", calibration_complete);
 
     // Initialize dynamic gravity calibration for runtime refinement
     let mut dyn_calib = DynamicCalibration::new(gravity_bias);
     eprintln!("[CALIB-DYN] Dynamic calibration initialized, will refine gravity during stillness");
+
+    // Initialize Factor Graph Optimization (FGO) in shadow mode
+    let start_pos = (0.0, 0.0, 0.0);  // Will be updated by first GPS fix
+    let start_vel = (0.0, 0.0, 0.0);
+    let mut fgo = filters::fgo::GraphEstimator::new(start_pos, start_vel, gravity_bias);
+    eprintln!("[FGO] Factor Graph Optimizer initialized (shadow mode)");
 
     // Duration timeout
     let (duration_tx, mut duration_rx) = mpsc::channel::<()>(1);
@@ -898,7 +958,10 @@ async fn main() -> Result<()> {
         let duration_secs = args.duration;
         Some(tokio::spawn(async move {
             sleep(Duration::from_secs(duration_secs)).await;
-            eprintln!("[TIMEOUT] Duration timer fired after {} seconds", duration_secs);
+            eprintln!(
+                "[TIMEOUT] Duration timer fired after {} seconds",
+                duration_secs
+            );
             let _ = tx.send(()).await;
         }))
     } else {
@@ -908,7 +971,10 @@ async fn main() -> Result<()> {
     println!("[{}] Starting data collection...", ts_now());
 
     // Initialize Rerun logger for 3D visualization (v0.15 API compatible)
-    let rerun_output_path = format!("motion_tracker_sessions/rerun_{}.rrd", start.format("%Y%m%d_%H%M%S"));
+    let rerun_output_path = format!(
+        "motion_tracker_sessions/rerun_{}.rrd",
+        start.format("%Y%m%d_%H%M%S")
+    );
     let rerun_logger = match RerunLogger::new(&rerun_output_path) {
         Ok(logger) => {
             eprintln!("[RERUN] Logging enabled → {}", rerun_output_path);
@@ -930,13 +996,15 @@ async fn main() -> Result<()> {
     let zupt_accel_threshold_high = 10.1;
     let zupt_gyro_threshold = 0.1; // rad/s
     let brake_threshold = 4.0; // m/s^2 (sustained maneuvers)
-    let turn_threshold = 4.0;  // m/s^2 (reuse accel magnitude for lateral events)
+    let turn_threshold = 4.0; // m/s^2 (reuse accel magnitude for lateral events)
     let crash_threshold = 20.0; // m/s^2 (instant shocks)
 
     // GPS tracking
     let mut last_gps_timestamp = 0.0f64;
     let mut is_heading_initialized = false;
     let gps_speed_threshold = 3.0; // m/s - minimum speed to use for heading alignment
+    let mut last_accel_ts: Option<f64> = None;
+    let mut last_gyro_ts: Option<f64> = None;
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -964,6 +1032,15 @@ async fn main() -> Result<()> {
             };
             let mut buf = sensor_state.accel_buffer.write().await;
             while let Some(accel) = buf.pop_front() {
+                if let Some(prev_ts) = last_accel_ts {
+                    let dt = accel.timestamp - prev_ts;
+                    if dt <= 0.0 || dt > 1.0 {
+                        last_accel_ts = Some(accel.timestamp);
+                        continue;
+                    }
+                }
+                last_accel_ts = Some(accel.timestamp);
+
                 // Track filtered acceleration magnitude BEFORE subtracting gravity (for ZUPT detection)
                 let raw_vec = Vector3::new(accel.x, accel.y, accel.z);
                 let filtered_vec = accel_lpf.update(raw_vec);
@@ -986,10 +1063,16 @@ async fn main() -> Result<()> {
                 if kick_frames_remaining > 0 {
                     corrected_y += 5.0; // Forward acceleration (Y-axis)
                     kick_frames_remaining -= 1;
-                    eprintln!("[KICK] Applied +5.0 m/s² (frames remaining: {})", kick_frames_remaining);
+                    eprintln!(
+                        "[KICK] Applied +5.0 m/s² (frames remaining: {})",
+                        kick_frames_remaining
+                    );
                 }
 
-                let corrected_mag = (corrected_x * corrected_x + corrected_y * corrected_y + corrected_z * corrected_z).sqrt();
+                let corrected_mag = (corrected_x * corrected_x
+                    + corrected_y * corrected_y
+                    + corrected_z * corrected_z)
+                    .sqrt();
                 let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 // Feed accel to 13D filter (prediction phase with zero gyro)
@@ -997,10 +1080,19 @@ async fn main() -> Result<()> {
 
                 // Feed raw accel to 15D filter (EKF handles gravity via quaternion)
                 // Use filtered_vec (low-pass but NOT gravity-corrected) - 15D subtracts its own bias estimate
-                ekf_15d.predict((filtered_vec.x, filtered_vec.y, filtered_vec.z), (0.0, 0.0, 0.0));
+                ekf_15d.predict(
+                    (filtered_vec.x, filtered_vec.y, filtered_vec.z),
+                    (0.0, 0.0, 0.0),
+                );
 
                 // Activate measurement update for accel bias estimation
                 ekf_15d.update_accel((filtered_vec.x, filtered_vec.y, filtered_vec.z));
+
+                // Feed FGO preintegrator (fast loop - non-blocking)
+                // Use corrected acceleration (gravity removed) and zero gyro for now
+                let accel_vec_fgo = Vector3::new(corrected_x, corrected_y, corrected_z);
+                let gyro_vec_fgo = Vector3::zeros();  // Will be updated when gyro arrives
+                fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, accel.timestamp);
 
                 // We'll update this reading with 13D/15D data later if gyro arrives
                 readings.push(SensorReading {
@@ -1013,14 +1105,19 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_13d: Some(ekf_13d.get_state()),
                     experimental_15d: Some(ekf_15d.get_state()),
+                    fgo: None,  // Will be updated on GPS fix
                 });
 
                 // ===== INCIDENT DETECTION =====
                 // Sustained maneuvers (filtered, gravity-removed) gated by EKF speed
                 let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
-                
+
                 // Extract raw gyro Z (if available) for swerve detection
-                let gyro_z = readings.last().and_then(|r| r.gyro.as_ref()).map(|g| g.z).unwrap_or(0.0);
+                let gyro_z = readings
+                    .last()
+                    .and_then(|r| r.gyro.as_ref())
+                    .map(|g| g.z)
+                    .unwrap_or(0.0);
                 let (lat, lon, _speed) = gps_snapshot
                     .as_ref()
                     .map(|g| (Some(g.latitude), Some(g.longitude), Some(g.speed)))
@@ -1028,44 +1125,58 @@ async fn main() -> Result<()> {
 
                 // Use unified detector (handles cooldowns internally for swerves, we handle global cooldown here)
                 if incident_cooldown.ready_and_touch(accel.timestamp) {
-                     // Pass corrected_mag (gravity removed) for maneuvers, but raw shock might need raw_vec
-                     // The detector logic we updated expects magnitude in m/s^2
-                     // For impacts, we want the raw shock. For maneuvers, we want the linear acceleration.
-                     // We'll pass the larger of the two to catch both cases, or prioritize based on magnitude.
-                     
-                     // Check for impact using RAW vector (includes gravity but shock is huge)
-                     let shock_val = raw_vec.norm();
-                     
-                     // Check for maneuver using CORRECTED vector
-                     let maneuver_val = corrected_mag;
+                    // Pass corrected_mag (gravity removed) for maneuvers, but raw shock might need raw_vec
+                    // The detector logic we updated expects magnitude in m/s^2
+                    // For impacts, we want the raw shock. For maneuvers, we want the linear acceleration.
+                    // We'll pass the larger of the two to catch both cases, or prioritize based on magnitude.
 
-                     // Priority to Impact
-                     let detection_val = if shock_val > 20.0 { shock_val } else { maneuver_val };
-                     
-                     if let Some(incident) = incident_detector.detect(
-                         detection_val,
-                         gyro_z,
-                         Some(ekf_speed), // Use EKF speed as it's smoother/more reliable than raw GPS for gating
-                         accel.timestamp,
-                         lat,
-                         lon
-                     ) {
-                         eprintln!("[INCIDENT] {} Detected: {:.1} (Unit)", incident.incident_type, incident.magnitude);
+                    // Check for impact using RAW vector (includes gravity but shock is huge)
+                    let shock_val = raw_vec.norm();
 
-                         // Log to Rerun 3D visualization
-                         if let Some(ref logger) = rerun_logger {
-                             if let (Some(lat), Some(lon)) = (incident.latitude, incident.longitude) {
-                                 logger.set_time(incident.timestamp);
-                                 logger.log_incident(&incident.incident_type, incident.magnitude, lat, lon);
-                             }
-                         }
+                    // Check for maneuver using CORRECTED vector
+                    let maneuver_val = corrected_mag;
 
-                         incidents.push(incident);
-                     }
+                    // Priority to Impact
+                    let detection_val = if shock_val > 20.0 {
+                        shock_val
+                    } else {
+                        maneuver_val
+                    };
+
+                    if let Some(incident) = incident_detector.detect(
+                        detection_val,
+                        gyro_z,
+                        Some(ekf_speed), // Use EKF speed as it's smoother/more reliable than raw GPS for gating
+                        accel.timestamp,
+                        lat,
+                        lon,
+                    ) {
+                        eprintln!(
+                            "[INCIDENT] {} Detected: {:.1} (Unit)",
+                            incident.incident_type, incident.magnitude
+                        );
+
+                        // Log to Rerun 3D visualization
+                        if let Some(ref logger) = rerun_logger {
+                            if let (Some(lat), Some(lon)) = (incident.latitude, incident.longitude)
+                            {
+                                logger.set_time(incident.timestamp);
+                                logger.log_incident(
+                                    &incident.incident_type,
+                                    incident.magnitude,
+                                    lat,
+                                    lon,
+                                );
+                            }
+                        }
+
+                        incidents.push(incident);
+                    }
                 }
 
                 // Check if stationary (for ZUPT)
-                let is_still = raw_accel_mag > zupt_accel_threshold_low && raw_accel_mag < zupt_accel_threshold_high;
+                let is_still = raw_accel_mag > zupt_accel_threshold_low
+                    && raw_accel_mag < zupt_accel_threshold_high;
                 let surface_smooth = avg_roughness < 0.5;
 
                 // ===== DYNAMIC GRAVITY CALIBRATION: Accumulate samples during stillness =====
@@ -1078,10 +1189,18 @@ async fn main() -> Result<()> {
                 if !is_still {
                     if args.filter == "ekf" || args.filter == "both" {
                         // Use the new vector-based update (respects sign: + for accel, - for braking)
-                        let _ = ekf.update_accelerometer_vector(corrected_x, corrected_y, corrected_z);
+                        let _ =
+                            ekf.update_accelerometer_vector(corrected_x, corrected_y, corrected_z);
                     }
                     if args.filter == "complementary" || args.filter == "both" {
-                        let _ = comp_filter.update(corrected_x, corrected_y, corrected_z, 0.0, 0.0, 0.0);
+                        let _ = comp_filter.update(
+                            corrected_x,
+                            corrected_y,
+                            corrected_z,
+                            0.0,
+                            0.0,
+                            0.0,
+                        );
                     }
                 }
 
@@ -1091,7 +1210,6 @@ async fn main() -> Result<()> {
                     logger.log_accel_raw(accel.x, accel.y, accel.z);
                     logger.log_accel_filtered(corrected_x, corrected_y, corrected_z);
                 }
-
             }
         }
 
@@ -1099,13 +1217,25 @@ async fn main() -> Result<()> {
         {
             let mut buf = sensor_state.gyro_buffer.write().await;
             while let Some(gyro) = buf.pop_front() {
+                if let Some(prev_ts) = last_gyro_ts {
+                    let dt = gyro.timestamp - prev_ts;
+                    if dt <= 0.0 || dt > 1.0 {
+                        last_gyro_ts = Some(gyro.timestamp);
+                        continue;
+                    }
+                }
+                last_gyro_ts = Some(gyro.timestamp);
+
                 // Apply gyro bias calibration
                 let corrected_gx = gyro.x - gyro_bias.0;
                 let corrected_gy = gyro.y - gyro_bias.1;
                 let corrected_gz = gyro.z - gyro_bias.2;
 
                 // Track gyro magnitude for ZUPT detection
-                let gyro_mag = (corrected_gx * corrected_gx + corrected_gy * corrected_gy + corrected_gz * corrected_gz).sqrt();
+                let gyro_mag = (corrected_gx * corrected_gx
+                    + corrected_gy * corrected_gy
+                    + corrected_gz * corrected_gz)
+                    .sqrt();
                 last_gyro_mag = gyro_mag;
 
                 if let Some(last) = readings.last_mut() {
@@ -1121,10 +1251,23 @@ async fn main() -> Result<()> {
                     // Activate measurement update for gyro bias estimation
                     ekf_15d.update_gyro((corrected_gx, corrected_gy, corrected_gz));
                     last.experimental_15d = Some(ekf_15d.get_state());
+
+                    // Feed FGO preintegrator with gyro data (fast loop)
+                    let gyro_vec_fgo = Vector3::new(corrected_gx, corrected_gy, corrected_gz);
+                    // Use the accel from this reading (already stored)
+                    if let Some(ref accel_data) = last.accel {
+                        let accel_vec_fgo = Vector3::new(
+                            accel_data.x - gravity_bias.0,
+                            accel_data.y - gravity_bias.1,
+                            accel_data.z - gravity_bias.2
+                        );
+                        fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, gyro.timestamp);
+                    }
                 }
 
                 // Only update gyro filter if NOT still
-                let is_still = last_accel_mag_raw > zupt_accel_threshold_low && last_accel_mag_raw < zupt_accel_threshold_high;
+                let is_still = last_accel_mag_raw > zupt_accel_threshold_low
+                    && last_accel_mag_raw < zupt_accel_threshold_high;
                 if !is_still {
                     if args.filter == "ekf" || args.filter == "both" {
                         let _ = ekf.update_gyroscope(corrected_gx, corrected_gy, corrected_gz);
@@ -1136,13 +1279,13 @@ async fn main() -> Result<()> {
                     logger.set_time(gyro.timestamp);
                     logger.log_gyro_raw(gyro.x, gyro.y, gyro.z);
                 }
-
             }
         }
 
         // ===== ZUPT CHECK: Force velocity to zero if vehicle is stationary =====
         // Conditions: accel near gravity magnitude AND gyro rotation near zero
-        if last_accel_mag_raw > zupt_accel_threshold_low && last_accel_mag_raw < zupt_accel_threshold_high
+        if last_accel_mag_raw > zupt_accel_threshold_low
+            && last_accel_mag_raw < zupt_accel_threshold_high
             && last_gyro_mag < zupt_gyro_threshold
         {
             if args.filter == "ekf" || args.filter == "both" {
@@ -1191,18 +1334,33 @@ async fn main() -> Result<()> {
 
                     // Update filters with GPS position
                     if args.filter == "ekf" || args.filter == "both" {
-                        ekf.update_gps(gps.latitude, gps.longitude, Some(gps.speed), Some(gps.accuracy));
+                        ekf.update_gps(
+                            gps.latitude,
+                            gps.longitude,
+                            Some(gps.speed),
+                            Some(gps.accuracy),
+                        );
                     }
 
                     // Update 13D filter with GPS
                     // Initialize origin on first fix for proper coordinate transformation
                     if !ekf_13d.is_origin_set() {
                         ekf_13d.set_origin(gps.latitude, gps.longitude);
+                        ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
+                        println!("[EKF] Origin set to GPS start.");
                     }
                     ekf_13d.update_gps(gps.latitude, gps.longitude, gps.latitude, gps.longitude);
 
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)
                     ekf_15d.update_gps((gps.latitude, gps.longitude, 0.0));
+
+                    // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)
+                    fgo.add_gps_measurement(gps.latitude, gps.longitude, 0.0, gps.timestamp);
+                    let fgo_stats = fgo.get_stats();
+                    if fgo_stats.2 % 10 == 0 && fgo_stats.2 > 0 {  // Log every 10 optimizations
+                        eprintln!("[FGO] Optimization #{}: {} nodes, {} GPS factors",
+                            fgo_stats.2, fgo_stats.0, fgo_stats.1);
+                    }
 
                     // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
                     if gps.speed > gps_speed_threshold && !is_heading_initialized {
@@ -1234,6 +1392,7 @@ async fn main() -> Result<()> {
                         power_coefficient: 0.0,
                         experimental_13d: Some(ekf_13d.get_state()),
                         experimental_15d: Some(ekf_15d.get_state()),
+                        fgo: Some(fgo.get_current_state()),  // FGO shadow mode output
                     };
                     readings.push(gps_reading);
                 }
@@ -1247,13 +1406,18 @@ async fn main() -> Result<()> {
 
         // ===== RERUN LOGGING: Log filter states =====
         if let Some(ref logger) = rerun_logger {
-            let elapsed = Utc::now().signed_duration_since(start).num_milliseconds() as f64 / 1000.0;
+            let elapsed =
+                Utc::now().signed_duration_since(start).num_milliseconds() as f64 / 1000.0;
             logger.set_time(elapsed);
 
             // Log EKF state (2D filter: position + velocity_vector)
             if let Some(ekf_state) = ekf.get_state() {
                 // EsEkf is 2D: velocity_vector is (vx, vy), log with z=0
-                logger.log_ekf_velocity(ekf_state.velocity_vector.0, ekf_state.velocity_vector.1, 0.0);
+                logger.log_ekf_velocity(
+                    ekf_state.velocity_vector.0,
+                    ekf_state.velocity_vector.1,
+                    0.0,
+                );
             }
 
             // Log 13D filter state (orientation + position + velocity)
@@ -1290,7 +1454,8 @@ async fn main() -> Result<()> {
             let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
             let ekf_13d_speed = (ekf_13d_state.velocity.0 * ekf_13d_state.velocity.0
                 + ekf_13d_state.velocity.1 * ekf_13d_state.velocity.1
-                + ekf_13d_state.velocity.2 * ekf_13d_state.velocity.2).sqrt();
+                + ekf_13d_state.velocity.2 * ekf_13d_state.velocity.2)
+                .sqrt();
             logger.log_filter_comparison("velocity", ekf_speed, ekf_13d_speed);
 
             // Compare position accuracy
@@ -1370,18 +1535,19 @@ async fn main() -> Result<()> {
                 if let Some(accel) = sensor_state.latest_accel.read().await.as_ref() {
                     // Note: accel is already corrected (gravity_bias subtracted)
                     let ekf_velocity = ekf_state.as_ref().map(|s| s.velocity).unwrap_or(0.0);
-                    let power = physics::calculate_specific_power(
-                        accel.x,
-                        accel.y,
-                        accel.z,
-                        ekf_velocity,
-                    );
-                    live_status.specific_power_w_per_kg = (power.specific_power_w_per_kg * 100.0).round() / 100.0;
-                    live_status.power_coefficient = (power.power_coefficient * 100.0).round() / 100.0;
+                    let power =
+                        physics::calculate_specific_power(accel.x, accel.y, accel.z, ekf_velocity);
+                    live_status.specific_power_w_per_kg =
+                        (power.specific_power_w_per_kg * 100.0).round() / 100.0;
+                    live_status.power_coefficient =
+                        (power.power_coefficient * 100.0).round() / 100.0;
                 }
             }
             // Calculate magnitude of calibrated gravity vector
-            let gravity_mag = (gravity_bias.0 * gravity_bias.0 + gravity_bias.1 * gravity_bias.1 + gravity_bias.2 * gravity_bias.2).sqrt();
+            let gravity_mag = (gravity_bias.0 * gravity_bias.0
+                + gravity_bias.1 * gravity_bias.1
+                + gravity_bias.2 * gravity_bias.2)
+                .sqrt();
             live_status.gravity_magnitude = gravity_mag;
             live_status.uptime_seconds = uptime;
 
@@ -1457,7 +1623,10 @@ async fn main() -> Result<()> {
                     accel_samples: accel_count,
                     gyro_samples: gyro_count,
                     gps_samples: gps_count,
-                    gravity_magnitude: (gravity_bias.0 * gravity_bias.0 + gravity_bias.1 * gravity_bias.1 + gravity_bias.2 * gravity_bias.2).sqrt(),
+                    gravity_magnitude: (gravity_bias.0 * gravity_bias.0
+                        + gravity_bias.1 * gravity_bias.1
+                        + gravity_bias.2 * gravity_bias.2)
+                        .sqrt(),
                     gravity_x: gravity_bias.0,
                     gravity_y: gravity_bias.1,
                     gravity_z: gravity_bias.2,
@@ -1510,7 +1679,10 @@ async fn main() -> Result<()> {
                 let filtered_vec = accel_lpf.update(raw_vec);
                 let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
                 let corrected_vec = filtered_vec - gravity_vec;
-                let corrected_mag = (corrected_vec.x * corrected_vec.x + corrected_vec.y * corrected_vec.y + corrected_vec.z * corrected_vec.z).sqrt();
+                let corrected_mag = (corrected_vec.x * corrected_vec.x
+                    + corrected_vec.y * corrected_vec.y
+                    + corrected_vec.z * corrected_vec.z)
+                    .sqrt();
                 let _smoothed_mag = accel_smoother.apply(corrected_mag);
 
                 let reading = SensorReading {
@@ -1523,15 +1695,27 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_13d: None,
                     experimental_15d: None,
+                    fgo: None,
                 };
 
                 readings.push(reading);
 
                 if args.filter == "ekf" || args.filter == "both" {
-                    let _ = ekf.update_accelerometer_vector(corrected_vec.x, corrected_vec.y, corrected_vec.z);
+                    let _ = ekf.update_accelerometer_vector(
+                        corrected_vec.x,
+                        corrected_vec.y,
+                        corrected_vec.z,
+                    );
                 }
                 if args.filter == "complementary" || args.filter == "both" {
-                    let _ = comp_filter.update(corrected_vec.x, corrected_vec.y, corrected_vec.z, 0.0, 0.0, 0.0);
+                    let _ = comp_filter.update(
+                        corrected_vec.x,
+                        corrected_vec.y,
+                        corrected_vec.z,
+                        0.0,
+                        0.0,
+                        0.0,
+                    );
                 }
 
                 // Incident detection on final drain (best-effort)
@@ -1592,7 +1776,10 @@ async fn main() -> Result<()> {
         sleep(Duration::from_millis(10)).await;
     }
 
-    eprintln!("[CLEANUP] Final drain complete: {} readings collected", readings.len());
+    eprintln!(
+        "[CLEANUP] Final drain complete: {} readings collected",
+        readings.len()
+    );
 
     // Abort IMU and GPS reader tasks
     println!("[CLEANUP] Aborting IMU reader task...");
@@ -1646,7 +1833,10 @@ async fn main() -> Result<()> {
             accel_samples: accel_count,
             gyro_samples: gyro_count,
             gps_samples: gps_count,
-            gravity_magnitude: (gravity_bias.0 * gravity_bias.0 + gravity_bias.1 * gravity_bias.1 + gravity_bias.2 * gravity_bias.2).sqrt(),
+            gravity_magnitude: (gravity_bias.0 * gravity_bias.0
+                + gravity_bias.1 * gravity_bias.1
+                + gravity_bias.2 * gravity_bias.2)
+                .sqrt(),
             gravity_x: gravity_bias.0,
             gravity_y: gravity_bias.1,
             gravity_z: gravity_bias.2,

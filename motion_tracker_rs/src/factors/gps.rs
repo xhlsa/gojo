@@ -3,7 +3,6 @@
 /// Constrains a pose variable to a GPS measurement in local ENU coordinates.
 /// Simple position pinning factor that minimizes the difference between
 /// estimated pose position and GPS measurement.
-
 use nalgebra::{Matrix3, Vector3};
 
 /// GPS Measurement Factor - Unary factor constraining position to GPS measurement

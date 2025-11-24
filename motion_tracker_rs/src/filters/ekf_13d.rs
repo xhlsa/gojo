@@ -10,7 +10,6 @@
 ///
 /// Runs in passive shadow mode alongside the main 8D filter.
 /// Does NOT feed back into ZUPT or dashboard logic.
-
 use ndarray::{arr1, Array1, Array2};
 use serde::{Deserialize, Serialize};
 
@@ -73,13 +72,10 @@ pub struct Ekf13d {
 
 impl Ekf13d {
     /// Create a new 13D EKF
-    pub fn new(
-        dt: f64,
-        gps_noise_std: f64,
-        accel_noise_std: f64,
-        gyro_noise_std: f64,
-    ) -> Self {
-        let state = Array1::<f64>::zeros(13);
+    pub fn new(dt: f64, gps_noise_std: f64, accel_noise_std: f64, gyro_noise_std: f64) -> Self {
+        let mut state = Array1::<f64>::zeros(13);
+        // Initialize quaternion to identity
+        state[6] = 1.0;
         let covariance = Self::default_covariance();
         let process_noise = Self::build_process_noise(dt, accel_noise_std, gyro_noise_std);
 
@@ -101,19 +97,19 @@ impl Ekf13d {
     fn default_covariance() -> Array2<f64> {
         let mut p = Array2::<f64>::zeros((13, 13));
         let diag = [
-            100.0,  // pos_x
-            100.0,  // pos_y
-            100.0,  // pos_z
-            10.0,   // vel_x
-            10.0,   // vel_y
-            10.0,   // vel_z
-            0.1,    // qw
-            0.1,    // qx
-            0.1,    // qy
-            0.1,    // qz
-            0.01,   // bias_x
-            0.01,   // bias_y
-            0.01,   // bias_z
+            100.0, // pos_x
+            100.0, // pos_y
+            100.0, // pos_z
+            10.0,  // vel_x
+            10.0,  // vel_y
+            10.0,  // vel_z
+            0.1,   // qw
+            0.1,   // qx
+            0.1,   // qy
+            0.1,   // qz
+            0.01,  // bias_x
+            0.01,  // bias_y
+            0.01,  // bias_z
         ];
         for (idx, value) in diag.iter().enumerate() {
             p[[idx, idx]] = *value;
@@ -200,14 +196,11 @@ impl Ekf13d {
         let bias = [self.state[10], self.state[11], self.state[12]];
 
         // Rotation: Body accel -> World accel (minus gravity)
-        let accel_world = Self::rotate_body_to_world(&quat, &[accel_body.0, accel_body.1, accel_body.2]);
+        let accel_world =
+            Self::rotate_body_to_world(&quat, &[accel_body.0, accel_body.1, accel_body.2]);
 
         // Gravity correction (gravity acts downward in world frame)
-        let accel_corrected = [
-            accel_world[0],
-            accel_world[1],
-            accel_world[2] - G,
-        ];
+        let accel_corrected = [accel_world[0], accel_world[1], accel_world[2] - G];
 
         // Kinematics: Position += Velocity * dt
         let new_pos = [
@@ -225,18 +218,23 @@ impl Ekf13d {
 
         // Quaternion integration: q_new = q + 0.5 * q * (gyro - bias) * dt
         // Simplified: q += 0.5 * [0, wx, wy, wz] * q * dt
-        let gyro_corrected = [
-            gyro.0 - bias[0],
-            gyro.1 - bias[1],
-            gyro.2 - bias[2],
-        ];
+        let gyro_corrected = [gyro.0 - bias[0], gyro.1 - bias[1], gyro.2 - bias[2]];
 
         let dq_factor = 0.5 * self.dt;
         let dq = [
-            -dq_factor * (gyro_corrected[0] * quat[1] + gyro_corrected[1] * quat[2] + gyro_corrected[2] * quat[3]),
-            dq_factor * (gyro_corrected[0] * quat[0] - gyro_corrected[1] * quat[3] + gyro_corrected[2] * quat[2]),
-            dq_factor * (gyro_corrected[1] * quat[0] + gyro_corrected[0] * quat[3] - gyro_corrected[2] * quat[1]),
-            dq_factor * (gyro_corrected[2] * quat[0] - gyro_corrected[0] * quat[2] + gyro_corrected[1] * quat[1]),
+            -dq_factor
+                * (gyro_corrected[0] * quat[1]
+                    + gyro_corrected[1] * quat[2]
+                    + gyro_corrected[2] * quat[3]),
+            dq_factor
+                * (gyro_corrected[0] * quat[0] - gyro_corrected[1] * quat[3]
+                    + gyro_corrected[2] * quat[2]),
+            dq_factor
+                * (gyro_corrected[1] * quat[0] + gyro_corrected[0] * quat[3]
+                    - gyro_corrected[2] * quat[1]),
+            dq_factor
+                * (gyro_corrected[2] * quat[0] - gyro_corrected[0] * quat[2]
+                    + gyro_corrected[1] * quat[1]),
         ];
 
         for i in 0..4 {
@@ -280,18 +278,16 @@ impl Ekf13d {
 
         // Convert GPS (lat, lon) to local (east, north) relative to origin
         let (origin_lat_stored, origin_lon_stored) = self.origin.unwrap();
-        let (meas_east, meas_north) = self.latlonalt_to_local(lat, lon, origin_lat_stored, origin_lon_stored);
+        let (meas_east, meas_north) =
+            self.latlonalt_to_local(lat, lon, origin_lat_stored, origin_lon_stored);
 
         // Measurement: [pos_x, pos_y]
-        let residual = arr1(&[
-            meas_east - self.state[0],
-            meas_north - self.state[1],
-        ]);
+        let residual = arr1(&[meas_east - self.state[0], meas_north - self.state[1]]);
 
         // Measurement matrix H (2x13)
         let mut h = Array2::<f64>::zeros((2, 13));
-        h[[0, 0]] = 1.0;  // pos_x
-        h[[1, 1]] = 1.0;  // pos_y
+        h[[0, 0]] = 1.0; // pos_x
+        h[[1, 1]] = 1.0; // pos_y
 
         // Innovation covariance: S = H * P * H^T + R
         let ph_t = self.covariance.dot(&h.t());
@@ -358,10 +354,10 @@ impl Ekf13d {
     pub fn set_initial_quaternion(&mut self, yaw_rad: f64) {
         // Quaternion from yaw only (roll=0, pitch=0)
         let half_yaw = yaw_rad * 0.5;
-        self.state[6] = half_yaw.cos();      // w
-        self.state[7] = 0.0;                 // x
-        self.state[8] = 0.0;                 // y
-        self.state[9] = half_yaw.sin();      // z
+        self.state[6] = half_yaw.cos(); // w
+        self.state[7] = 0.0; // x
+        self.state[8] = 0.0; // y
+        self.state[9] = half_yaw.sin(); // z
     }
 
     /// Get current state snapshot
@@ -379,7 +375,13 @@ impl Ekf13d {
     }
 
     /// Convert lat/lon to local east/north relative to origin
-    fn latlonalt_to_local(&self, lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
+    fn latlonalt_to_local(
+        &self,
+        lat: f64,
+        lon: f64,
+        origin_lat: f64,
+        origin_lon: f64,
+    ) -> (f64, f64) {
         let lat_rad = lat.to_radians();
         let lon_rad = lon.to_radians();
         let origin_lat_rad = origin_lat.to_radians();

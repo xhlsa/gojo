@@ -9,12 +9,12 @@ use axum::{
     Json, Router,
 };
 use clap::Parser;
+use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{net::SocketAddr, path::PathBuf, time::Duration, io::Read};
+use std::{io::Read, net::SocketAddr, path::PathBuf, time::Duration};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
-use flate2::read::GzDecoder;
 
 #[derive(Parser, Debug)]
 #[command(name = "dashboard")]
@@ -131,8 +131,13 @@ fn parse_timestamp_from_filename(filename: &str) -> Option<chrono::DateTime<chro
         if parts[i].len() == 8 && parts[i].chars().all(|c| c.is_numeric()) {
             if parts[i + 1].len() >= 6 && parts[i + 1][0..6].chars().all(|c| c.is_numeric()) {
                 let timestamp_str = format!("{}_{}", parts[i], &parts[i + 1][0..6]);
-                if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y%m%d_%H%M%S") {
-                    return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(dt, chrono::Utc));
+                if let Ok(dt) =
+                    chrono::NaiveDateTime::parse_from_str(&timestamp_str, "%Y%m%d_%H%M%S")
+                {
+                    return Some(chrono::DateTime::<chrono::Utc>::from_naive_utc_and_offset(
+                        dt,
+                        chrono::Utc,
+                    ));
                 }
             }
         }
@@ -161,16 +166,20 @@ fn extract_drive_stats(data: &Value) -> DriveStats {
 
     // Try to extract from metrics (Rust format)
     if let Some(metrics) = data.get("metrics").and_then(|m| m.as_object()) {
-        stats.gps_samples = metrics.get("gps_samples")
+        stats.gps_samples = metrics
+            .get("gps_samples")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        stats.accel_samples = metrics.get("accel_samples")
+        stats.accel_samples = metrics
+            .get("accel_samples")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        stats.gyro_samples = metrics.get("gyro_samples")
+        stats.gyro_samples = metrics
+            .get("gyro_samples")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        stats.peak_memory_mb = metrics.get("peak_memory_mb")
+        stats.peak_memory_mb = metrics
+            .get("peak_memory_mb")
             .and_then(|v| v.as_f64())
             .unwrap_or(0.0);
 
@@ -203,11 +212,7 @@ fn extract_drive_stats(data: &Value) -> DriveStats {
     if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
         let gps_fix_count = readings
             .iter()
-            .filter(|r| {
-                r.get("gps")
-                    .and_then(|g| g.get("latitude"))
-                    .is_some()
-            })
+            .filter(|r| r.get("gps").and_then(|g| g.get("latitude")).is_some())
             .count() as u64;
         if stats.gps_samples == 0 {
             stats.gps_samples = gps_fix_count;
@@ -219,9 +224,11 @@ fn extract_drive_stats(data: &Value) -> DriveStats {
 
 fn has_gps_data(data: &Value) -> bool {
     // Quick check in metrics
-    if let Some(gps_samples) = data.get("metrics")
+    if let Some(gps_samples) = data
+        .get("metrics")
         .and_then(|m| m.get("gps_samples"))
-        .and_then(|v| v.as_u64()) {
+        .and_then(|v| v.as_u64())
+    {
         if gps_samples > 0 {
             return true;
         }
@@ -230,9 +237,7 @@ fn has_gps_data(data: &Value) -> bool {
     // Check readings array (first 1000 entries)
     if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
         for reading in readings.iter().take(1000) {
-            if reading.get("gps")
-                .and_then(|g| g.get("latitude"))
-                .is_some() {
+            if reading.get("gps").and_then(|g| g.get("latitude")).is_some() {
                 return true;
             }
         }
@@ -282,11 +287,7 @@ async fn list_drives_handler(
     });
 
     let total = filepaths.len();
-    let paginated: Vec<_> = filepaths
-        .into_iter()
-        .skip(offset)
-        .take(limit)
-        .collect();
+    let paginated: Vec<_> = filepaths.into_iter().skip(offset).take(limit).collect();
 
     let mut drives = Vec::new();
 
@@ -295,23 +296,24 @@ async fn list_drives_handler(
             if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
                 let drive_id = filename.replace(".json.gz", "");
 
-                    let timestamp = parse_timestamp_from_filename(filename)
-                        .map(|dt| dt.to_rfc3339())
-                        .unwrap_or_default();
-                    let datetime = parse_timestamp_from_filename(filename)
-                        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                        .unwrap_or_default();
+                let timestamp = parse_timestamp_from_filename(filename)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default();
+                let datetime = parse_timestamp_from_filename(filename)
+                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+                    .unwrap_or_default();
 
-                    let stats = extract_drive_stats(&data);
-                    let has_gps = has_gps_data(&data);
+                let stats = extract_drive_stats(&data);
+                let has_gps = has_gps_data(&data);
 
-                    let file_size = std::fs::metadata(&filepath)
-                        .ok()
-                        .map(|m| m.len() as f64 / (1024.0 * 1024.0))
-                        .unwrap_or(0.0);
+                let file_size = std::fs::metadata(&filepath)
+                    .ok()
+                    .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+                    .unwrap_or(0.0);
 
-                    // Calculate duration from first and last reading timestamps
-                    let duration_seconds = if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
+                // Calculate duration from first and last reading timestamps
+                let duration_seconds =
+                    if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
                         if readings.len() > 1 {
                             let first_ts = readings[0]
                                 .get("timestamp")
@@ -329,17 +331,17 @@ async fn list_drives_handler(
                         0
                     };
 
-                    drives.push(DriveMetadata {
-                        id: drive_id,
-                        timestamp,
-                        datetime,
-                        duration_seconds,
-                        accel_samples: stats.accel_samples,
-                        gps_fixes: stats.gps_samples,
-                        distance_meters: stats.distance_km * 1000.0,
-                        has_gps,
-                        file_size_mb: file_size,
-                    });
+                drives.push(DriveMetadata {
+                    id: drive_id,
+                    timestamp,
+                    datetime,
+                    duration_seconds,
+                    accel_samples: stats.accel_samples,
+                    gps_fixes: stats.gps_samples,
+                    distance_meters: stats.distance_km * 1000.0,
+                    has_gps,
+                    file_size_mb: file_size,
+                });
             }
         }
     }
@@ -364,8 +366,8 @@ async fn drive_details_handler(
         return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
     }
 
-    let data = read_gzipped_json(&json_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let data =
+        read_gzipped_json(&json_path).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let timestamp = parse_timestamp_from_filename(&drive_id)
         .map(|dt| dt.to_rfc3339())
@@ -378,7 +380,8 @@ async fn drive_details_handler(
     let has_gps = has_gps_data(&data);
 
     // Extract readings array
-    let readings = data.get("readings")
+    let readings = data
+        .get("readings")
         .and_then(|r| r.as_array())
         .map(|arr| arr.clone())
         .unwrap_or_default();
@@ -403,18 +406,16 @@ async fn drive_gpx_handler(
         return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
     }
 
-    let data = read_gzipped_json(&json_path)
-        .map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+    let data =
+        read_gzipped_json(&json_path).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
 
     let gpx = generate_gpx_from_json(&data)?;
 
     Ok((
-        [(
-            axum::http::header::CONTENT_TYPE,
-            "application/gpx+xml",
-        )],
+        [(axum::http::header::CONTENT_TYPE, "application/gpx+xml")],
         gpx,
-    ).into_response())
+    )
+        .into_response())
 }
 
 fn generate_gpx_from_json(data: &Value) -> Result<String, (StatusCode, String)> {
@@ -429,7 +430,8 @@ fn generate_gpx_from_json(data: &Value) -> Result<String, (StatusCode, String)> 
                     gps.get("longitude").and_then(|v| v.as_f64()),
                 ) {
                     let ele = gps.get("altitude").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                    let ts = reading.get("timestamp")
+                    let ts = reading
+                        .get("timestamp")
                         .and_then(|v| v.as_f64())
                         .map(|t| t.to_string())
                         .unwrap_or_default();
@@ -476,10 +478,7 @@ fn generate_gpx_from_json(data: &Value) -> Result<String, (StatusCode, String)> 
     Ok(gpx_lines.join("\n"))
 }
 
-async fn ws_handler(
-    ws: WebSocketUpgrade,
-    State(state): State<AppState>,
-) -> impl IntoResponse {
+async fn ws_handler(ws: WebSocketUpgrade, State(state): State<AppState>) -> impl IntoResponse {
     ws.on_upgrade(|socket| handle_socket(socket, state))
 }
 

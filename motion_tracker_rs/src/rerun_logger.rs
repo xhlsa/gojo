@@ -1,8 +1,5 @@
 use anyhow::Result;
-use rerun::{
-    archetypes::Scalar,
-    RecordingStreamBuilder,
-};
+use rerun::{archetypes::Scalar, RecordingStreamBuilder};
 
 /// Rerun 3D visualization logger for motion tracking and high-speed replay
 /// Supports Rerun v0.15+ API with archetype-based logging
