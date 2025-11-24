@@ -250,20 +250,48 @@ impl Ekf15d {
         self.state[9] = quat[3];
         // Biases held constant (updated by measurement corrections)
 
-        // FIXED: Update covariance P = F*P*F^T + Q
-        // Build linearized Jacobian F (first-order approx: I + dt*A)
+        // STEP 2: Proper 15D Jacobian with attitude-velocity coupling
         let dim = self.state.len();
         let mut f = Array2::<f64>::eye(dim);
 
         // Position depends on velocity: dp/dt = v
-        // F[0:3, 3:6] = I * dt
         f[[0, 3]] = self.dt;
         f[[1, 4]] = self.dt;
         f[[2, 5]] = self.dt;
 
+        // Velocity depends on attitude and accel bias
+        // dv/dθ = -R * [accel]_× * dt (attitude errors affect velocity)
+        let quat = [self.state[6], self.state[7], self.state[8], self.state[9]];
+        let r_mat = quat_to_rotation_matrix(&quat);
+        let accel_skew = skew_symmetric(&accel_corr);
+
+        // Compute -R * [accel]_× * dt
+        let vel_wrt_att = -(&r_mat.dot(&accel_skew)) * self.dt;
+
+        // Fill velocity-attitude coupling (3x3 block at [3:6, 6:9])
+        // Note: quaternion has 4 elements but we use first 3 for error-state
+        for i in 0..3 {
+            for j in 0..3 {
+                f[[3 + i, 6 + j]] = vel_wrt_att[[i, j]];
+            }
+        }
+
+        // Velocity depends on accel bias: dv/d(b_a) = -R * dt
+        let vel_wrt_ab = -(&r_mat) * self.dt;
+        for i in 0..3 {
+            for j in 0..2 {  // Only X, Y accel bias (Z is placeholder)
+                f[[3 + i, 13 + j]] = vel_wrt_ab[[i, j]];
+            }
+        }
+
+        // Attitude depends on gyro bias: dθ/d(b_g) = -I * dt
+        f[[6, 10]] = -self.dt;
+        f[[7, 11]] = -self.dt;
+        f[[8, 12]] = -self.dt;
+
         // Propagate covariance: P = F * P * F^T + Q
-        let fp = f.dot(&self.covariance);       // F * P
-        let fpf_t = fp.dot(&f.t());             // (F * P) * F^T
+        let fp = f.dot(&self.covariance);
+        let fpf_t = fp.dot(&f.t());
         self.covariance = fpf_t + &self.process_noise;
 
         // Force symmetry (floating point correction)
@@ -271,8 +299,11 @@ impl Ekf15d {
         self.covariance = (&self.covariance + &p_t) * 0.5;
     }
 
-    /// GPS update: correct position
-    pub fn update_gps(&mut self, gps_pos: (f64, f64, f64)) {
+    /// GPS update: correct position with accuracy-based gating
+    pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64) {
+        // STEP 3: Enforce GPS accuracy floor (minimum 5m)
+        let gps_noise = (accuracy * accuracy).max(5.0 * 5.0);
+
         let (mut pos_x, mut pos_y, mut pos_z) = gps_pos;
         if let Some((origin_lat, origin_lon)) = self.origin {
             let (x, y) = latlon_to_meters(pos_x, pos_y, origin_lat, origin_lon);
@@ -299,9 +330,14 @@ impl Ekf15d {
             for j in 0..3 {
                 s[[i, j]] = self.covariance[[i, j]];
                 if i == j {
-                    s[[i, j]] += self.r_gps;
+                    s[[i, j]] += gps_noise;
                 }
             }
+        }
+
+        // STEP 1: Tikhonov regularization - Add damping to prevent singularity
+        for i in 0..3 {
+            s[[i, i]] += 1e-6;
         }
 
         // Kalman gain: K = P*H^T*S^-1 (simplified for diagonal case)
@@ -363,10 +399,11 @@ impl Ekf15d {
     /// Zero-velocity update: clamp velocity and shrink covariance when stationary.
     pub fn apply_zupt(&mut self) {
         self.force_zero_velocity();
-        // Tighten velocity covariance to keep it from exploding after stillness
+        // STEP 3: Relax velocity covariance clamping from 1e-9 to 1e-3
+        // This prevents S-matrix singularity during ZUPT
         let vel_indices = [3, 4, 5];
         for &idx in &vel_indices {
-            self.covariance[[idx, idx]] = self.covariance[[idx, idx]].min(0.01);
+            self.covariance[[idx, idx]] = self.covariance[[idx, idx]].min(1e-3);
         }
     }
 
@@ -579,4 +616,39 @@ fn rotate_accel_to_world(quat: &[f64; 4], accel_body: &[f64; 3]) -> [f64; 3] {
         r01 * accel_body[0] + r11 * accel_body[1] + r21 * accel_body[2],
         r02 * accel_body[0] + r12 * accel_body[1] + r22 * accel_body[2],
     ]
+}
+
+/// Compute skew-symmetric matrix for cross product (used in Jacobian)
+fn skew_symmetric(v: &[f64; 3]) -> Array2<f64> {
+    Array2::from_shape_vec((3, 3), vec![
+        0.0, -v[2], v[1],
+        v[2], 0.0, -v[0],
+        -v[1], v[0], 0.0,
+    ]).unwrap()
+}
+
+/// Compute rotation matrix from quaternion
+fn quat_to_rotation_matrix(quat: &[f64; 4]) -> Array2<f64> {
+    let qw = quat[0];
+    let qx = quat[1];
+    let qy = quat[2];
+    let qz = quat[3];
+
+    let r00 = 1.0 - 2.0 * (qy * qy + qz * qz);
+    let r01 = 2.0 * (qx * qy - qw * qz);
+    let r02 = 2.0 * (qx * qz + qw * qy);
+
+    let r10 = 2.0 * (qx * qy + qw * qz);
+    let r11 = 1.0 - 2.0 * (qx * qx + qz * qz);
+    let r12 = 2.0 * (qy * qz - qw * qx);
+
+    let r20 = 2.0 * (qx * qz - qw * qy);
+    let r21 = 2.0 * (qy * qz + qw * qx);
+    let r22 = 1.0 - 2.0 * (qx * qx + qy * qy);
+
+    Array2::from_shape_vec((3, 3), vec![
+        r00, r01, r02,
+        r10, r11, r12,
+        r20, r21, r22,
+    ]).unwrap()
 }

@@ -1405,11 +1405,12 @@ async fn main() -> Result<()> {
                     ekf_13d.update_gps(gps_proj_lat, gps_proj_lon, gps_proj_lat, gps_proj_lon);
 
                     // Update 15D filter with GPS (uses lat/lon directly for position correction)
-                    ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0));
+                    ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
 
-                    // If GPS indicates near-zero speed, strongly clamp 15D velocity to zero
+                    // If GPS indicates near-zero speed, clamp 15D velocity to zero
+                    // STEP 3: Relax noise floor from 1e-9 to 1e-3 to prevent singularity
                     if gps.speed < 0.5 {
-                        ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-9);
+                        ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-3);
                     }
 
                     // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)
