@@ -1218,12 +1218,16 @@ async fn main() -> Result<()> {
                         in_gap_mode = true;
                     }
                     if in_gap_mode {
-                        let base_limit = if last_gps_speed > 3.0 {
-                            1.3 * last_gps_speed + 3.0
+                        let limit = if last_gps_speed < 1.0 {
+                            2.0 // stationary: very tight cap
                         } else {
-                            last_gps_speed + 10.0
+                            let base_limit = if last_gps_speed > 3.0 {
+                                1.3 * last_gps_speed + 3.0
+                            } else {
+                                last_gps_speed + 10.0
+                            };
+                            base_limit.max(20.0)
                         };
-                        let limit = base_limit.max(20.0);
                         let ekf_speed = ekf_15d.get_speed();
                         if ekf_speed > limit {
                             eprintln!(
