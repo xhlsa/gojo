@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
 use std::path::PathBuf;
@@ -74,6 +75,14 @@ fn load_log(path: &PathBuf) -> anyhow::Result<LogFile> {
     }
 }
 
+fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
+    if pairs.is_empty() {
+        return f64::INFINITY;
+    }
+    let sum_sq: f64 = pairs.iter().map(|(a, b)| (a - b).powi(2)).sum();
+    (sum_sq / pairs.len() as f64).sqrt()
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let log = load_log(&args.log)?;
@@ -88,10 +97,15 @@ fn main() -> anyhow::Result<()> {
     let mut ekf_speeds = Vec::new();
     let mut gps_speeds = Vec::new();
     let mut paired = Vec::new();
+    let mut recent_gps: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
+    let window_sec = 10.0;
+    let mut last_speed_clamp_ts: f64 = -1.0;
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
             ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
+            // Non-holonomic constraint every accel frame (body Y/Z -> 0)
+            ekf.update_body_velocity(nalgebra::Vector3::zeros());
         }
         if let Some(g) = r.gyro.as_ref() {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
@@ -100,8 +114,33 @@ fn main() -> anyhow::Result<()> {
         if let Some(gps) = r.gps.as_ref() {
             ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
             ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
+            // Clamp vertical velocity aggressively for land vehicle
+            ekf.zero_vertical_velocity(1e-4);
+
+            // Track recent GPS speeds for sanity gate
+            recent_gps.push_back((gps.timestamp, gps.speed));
+            while let Some((ts, _)) = recent_gps.front() {
+                if gps.timestamp - *ts > window_sec {
+                    recent_gps.pop_front();
+                } else {
+                    break;
+                }
+            }
+
             gps_speeds.push(gps.speed);
             paired.push((ekf.get_speed(), gps.speed));
+        }
+
+        // Velocity sanity gate based on recent GPS envelope
+        if let Some(max_gps) = recent_gps.iter().map(|(_, s)| *s).max_by(|a, b| a.partial_cmp(b).unwrap()) {
+            if max_gps > 3.0 {
+                let ekf_speed = ekf.get_speed();
+                let limit = 1.3 * max_gps + 5.0;
+                if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > 0.5 {
+                    ekf.clamp_speed(limit);
+                    last_speed_clamp_ts = r.timestamp;
+                }
+            }
         }
         ekf_speeds.push(ekf.get_speed());
     }
@@ -124,12 +163,4 @@ fn main() -> anyhow::Result<()> {
     println!("{}", serde_json::to_string_pretty(&out)?);
 
     Ok(())
-}
-
-fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
-    if pairs.is_empty() {
-        return f64::INFINITY;
-    }
-    let sum_sq: f64 = pairs.iter().map(|(a, b)| (a - b).powi(2)).sum();
-    (sum_sq / pairs.len() as f64).sqrt()
 }

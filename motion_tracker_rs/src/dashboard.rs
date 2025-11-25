@@ -7,9 +7,8 @@ use axum::{
     routing::get,
     Router,
 };
-use futures::{sink::SinkExt, stream::StreamExt};
 use serde::Serialize;
-use std::{sync::Arc, time::Duration};
+use std::time::Duration;
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 

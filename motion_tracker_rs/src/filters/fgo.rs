@@ -9,7 +9,7 @@
 //!
 //! Status: Shadow Mode - Logs FGO estimates alongside EKF for comparison
 
-use nalgebra::{Matrix3, Matrix6, Vector3, Vector6};
+use nalgebra::{Matrix3, Vector3};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 

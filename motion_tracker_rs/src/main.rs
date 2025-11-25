@@ -1006,6 +1006,9 @@ async fn main() -> Result<()> {
     let gps_speed_threshold = 3.0; // m/s - minimum speed to use for heading alignment
     let mut last_accel_ts: Option<f64> = None;
     let mut last_gyro_ts: Option<f64> = None;
+    let mut recent_gps_speeds: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
+    let gps_speed_window = 10.0;
+    let mut last_speed_clamp_ts: f64 = -1.0;
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -1090,6 +1093,21 @@ async fn main() -> Result<()> {
                 } else {
                     0.0
                 };
+
+                // Velocity sanity gate: prevent EKF from exceeding recent GPS speed envelope
+                let max_recent_gps = recent_gps_speeds
+                    .iter()
+                    .map(|(_, s)| *s)
+                    .fold(0.0_f64, f64::max);
+                if max_recent_gps > 3.0 {
+                    let ekf_speed = ekf_15d.get_speed();
+                    let limit = 1.3 * max_recent_gps + 5.0;
+                    let now_ts = accel.timestamp;
+                    if ekf_speed > limit && ekf_speed > 1e-3 && (now_ts - last_speed_clamp_ts) > 0.5 {
+                        ekf_15d.clamp_speed(limit);
+                        last_speed_clamp_ts = now_ts;
+                    }
+                }
 
                 // Feed accel to 13D filter (prediction phase with zero gyro)
                 ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
@@ -1427,6 +1445,16 @@ async fn main() -> Result<()> {
                         );
                     }
 
+                    // Track recent GPS speeds for sanity gating
+                    recent_gps_speeds.push_back((gps.timestamp, gps.speed));
+                    while let Some((ts, _)) = recent_gps_speeds.front() {
+                        if gps.timestamp - *ts > gps_speed_window {
+                            recent_gps_speeds.pop_front();
+                        } else {
+                            break;
+                        }
+                    }
+
                     // COLD START PROTOCOL: Initialize on first GPS fix, update on subsequent
                     let is_first_gps_fix = !ekf_13d.is_origin_set();
 
@@ -1449,7 +1477,7 @@ async fn main() -> Result<()> {
                         // Update 15D filter with GPS (uses lat/lon directly for position correction)
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
                         // Update 15D velocity using GPS speed/bearing when available
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.5);
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.2);
                     }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
@@ -1462,6 +1490,8 @@ async fn main() -> Result<()> {
                         let vy = gps.speed * rad.cos(); // North
                                                         // Z velocity damped to 0.0
                         ekf_15d.update_velocity((vx, vy, 0.0), 0.25);
+                        // Land vehicle assumption: clamp vertical velocity tightly
+                        ekf_15d.zero_vertical_velocity(1e-4);
                     }
 
                     // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)

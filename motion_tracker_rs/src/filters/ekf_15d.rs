@@ -32,16 +32,16 @@ pub struct Ekf15dState {
 
 pub struct Ekf15d {
     /// Time step [seconds]
-    dt: f64,
+    pub dt: f64,
 
     /// State vector [15D]
-    state: Array1<f64>,
+    pub state: Array1<f64>,
 
     /// Covariance matrix [15x15]
-    covariance: Array2<f64>,
+    pub covariance: Array2<f64>,
 
     /// Process noise matrix [15x15]
-    process_noise: Array2<f64>,
+    pub process_noise: Array2<f64>,
 
     /// GPS measurement noise (position) [m²]
     _r_gps: f64,
@@ -108,13 +108,13 @@ impl Ekf15d {
         }
 
         // Gyro bias: random walk (LOCKED DOWN - prevent error dumping)
-        let q_gyro_bias = 1e-10; // was 1e-8, tightened 100x
+        let q_gyro_bias = 1e-8; // allow slow drift to avoid dumping error into velocity
         for i in 10..13 {
             process_noise[[i, i]] = q_gyro_bias;
         }
 
         // Accel bias: random walk (LOCKED DOWN - prevent error dumping)
-        let q_accel_bias = 1e-9; // was 1e-7, tightened 100x
+        let q_accel_bias = 1e-8; // allow small adaptation to sensor drift
         for i in 13..15 {
             process_noise[[i, i]] = q_accel_bias;
         }
@@ -247,10 +247,11 @@ impl Ekf15d {
         f[[1, 4]] = self.dt;
         f[[2, 5]] = self.dt;
 
-        // 2. Velocity depends on Attitude Error
-        // dV/dTheta = -R * [a_body]x * dt
+        // 2. Velocity depends on Attitude Error (scaled coupling)
+        // dV/dTheta = -R * [a_body]x * dt * coupling_scale
+        let coupling_scale = 0.2; // damped to avoid instability
         let a_skew = skew_symmetric(&[accel_corr[0], accel_corr[1], accel_corr[2]]);
-        let dv_dtheta = r_mat.dot(&a_skew) * -self.dt;
+        let dv_dtheta = r_mat.dot(&a_skew) * -self.dt * coupling_scale;
 
         // Map 3D rotation error to indices 6,7,8
         for r in 0..3 {
@@ -259,9 +260,9 @@ impl Ekf15d {
             }
         }
 
-        // 3. Velocity depends on Accel Bias
-        // dV/db_a = -R * dt
-        let dv_dba = &r_mat * -self.dt;
+        // 3. Velocity depends on Accel Bias (scaled)
+        // dV/db_a = -R * dt * coupling_scale
+        let dv_dba = &r_mat * -self.dt * coupling_scale;
         // Map to bias states 13 (bx), 14 (by).
         for r in 0..3 {
             f[[3 + r, 13]] = dv_dba[[r, 0]];
@@ -388,8 +389,16 @@ impl Ekf15d {
                     s_inv[[r, c]] = inv[(r, c)];
                 }
             }
+
+            // Clamp extreme innovations to avoid runaway spikes
+            let max_jump = 15.0;
+            let mut innovation_clamped = innovation.clone();
+            for i in 0..3 {
+                innovation_clamped[i] = innovation_clamped[i].clamp(-max_jump, max_jump);
+            }
+
             let k = p.dot(&h_t).dot(&s_inv);
-            let dx = k.dot(&innovation);
+            let dx = k.dot(&innovation_clamped);
             for i in 0..15 {
                 self.state[i] += dx[i];
             }
@@ -463,46 +472,33 @@ impl Ekf15d {
         r[[1, 1]] = self.r_accel;
         r[[2, 2]] = self.r_accel;
 
-        // Kalman Update
+        // Kalman Update (Joseph form to keep covariance consistent)
         let p = &self.covariance;
         let h_t = h.t();
-        let s = h.dot(p).dot(&h_t) + r;
+        let s = h.dot(p).dot(&h_t) + r.clone();
 
-        // Invert S (3x3)
-        let s_inv = match s.shape() {
-            _ => {
-                // Simple naive inversion for 3x3 diagonal-ish
-                // For robustness, use nalgebra if available or just simplify
-                // Since we are in ndarray land, let's do a quick trick or use simplified diagonal update if H was diagonal
-                // But H is not diagonal (skew symmetric part).
-                // We'll assume small off-diagonals for now or use a simplified update for just Bias?
-                // No, user wants "proper KF update".
-                // Let's use the Matrix3 inverse from nalgebra since we used it before in update_body_velocity
-                use nalgebra::Matrix3;
-                let s_mat = Matrix3::new(
-                    s[[0, 0]],
-                    s[[0, 1]],
-                    s[[0, 2]],
-                    s[[1, 0]],
-                    s[[1, 1]],
-                    s[[1, 2]],
-                    s[[2, 0]],
-                    s[[2, 1]],
-                    s[[2, 2]],
-                );
-                if let Some(inv) = s_mat.try_inverse() {
-                    let mut inv_arr = Array2::<f64>::zeros((3, 3));
-                    for r in 0..3 {
-                        for c in 0..3 {
-                            inv_arr[[r, c]] = inv[(r, c)];
-                        }
-                    }
-                    inv_arr
-                } else {
-                    return; // Singularity
-                }
-            }
+        // Invert S (3x3) using nalgebra for robustness
+        use nalgebra::Matrix3;
+        let s_mat = Matrix3::new(
+            s[[0, 0]],
+            s[[0, 1]],
+            s[[0, 2]],
+            s[[1, 0]],
+            s[[1, 1]],
+            s[[1, 2]],
+            s[[2, 0]],
+            s[[2, 1]],
+            s[[2, 2]],
+        );
+        let Some(inv) = s_mat.try_inverse() else {
+            return; // Singular innovation covariance
         };
+        let mut s_inv = Array2::<f64>::zeros((3, 3));
+        for r in 0..3 {
+            for c in 0..3 {
+                s_inv[[r, c]] = inv[(r, c)];
+            }
+        }
 
         let k = p.dot(&h_t).dot(&s_inv);
         let dx = k.dot(&innovation);
@@ -513,7 +509,14 @@ impl Ekf15d {
 
         let i_mat = Array2::<f64>::eye(15);
         let kh = k.dot(&h);
-        self.covariance = (&i_mat - &kh).dot(p);
+        let i_minus_kh = &i_mat - &kh;
+        let term1 = i_minus_kh.dot(p).dot(&i_minus_kh.t());
+        let term2 = k.dot(&r).dot(&k.t());
+        self.covariance = term1 + term2;
+
+        // Symmetrize to limit numerical drift
+        let p_t = self.covariance.t().to_owned();
+        self.covariance = (&self.covariance + &p_t) / 2.0;
 
         self.accel_updates += 1;
     }
@@ -539,15 +542,9 @@ impl Ekf15d {
         r[[1, 1]] = self.r_gyro;
         r[[2, 2]] = self.r_gyro;
 
-        // Kalman Update (Simple diagonal)
-        // S = P_bias + R
-        // K = P_bias * S^-1
-        // Avoid full matrix math for independent bias?
-        // Actually, bias might be correlated. Use full update.
-
         let p = &self.covariance;
         let h_t = h.t();
-        let s = h.dot(p).dot(&h_t) + r;
+        let s = h.dot(p).dot(&h_t) + r.clone();
 
         // Invert 3x3 S
         use nalgebra::Matrix3;
@@ -578,9 +575,16 @@ impl Ekf15d {
                 self.state[i] += dx[i];
             }
 
+            // Joseph form keeps covariance PSD after bias updates
             let i_mat = Array2::<f64>::eye(15);
             let kh = k.dot(&h);
-            self.covariance = (&i_mat - &kh).dot(p);
+            let i_minus_kh = &i_mat - &kh;
+            let term1 = i_minus_kh.dot(p).dot(&i_minus_kh.t());
+            let term2 = k.dot(&r).dot(&k.t());
+            self.covariance = term1 + term2;
+
+            let p_t = self.covariance.t().to_owned();
+            self.covariance = (&self.covariance + &p_t) / 2.0;
         }
 
         self.gyro_updates += 1;
@@ -611,17 +615,98 @@ impl Ekf15d {
 
     /// Velocity update with small noise to shrink covariance when GPS reports stationary.
     pub fn update_velocity(&mut self, velocity: (f64, f64, f64), noise_var: f64) {
-        let measurement = [velocity.0, velocity.1, velocity.2];
-        for i in 0..3 {
-            let idx = 3 + i;
-            let innovation = measurement[i] - self.state[idx];
-            let s = self.covariance[[idx, idx]] + noise_var;
-            if s.abs() > 1e-12 {
-                let gain = self.covariance[[idx, idx]] / s;
-                self.state[idx] += gain * innovation;
-                self.covariance[[idx, idx]] *= 1.0 - gain;
+        let meas = arr1(&[velocity.0, velocity.1, velocity.2]);
+        let mut h = Array2::<f64>::zeros((3, 15));
+        h[[0, 3]] = 1.0;
+        h[[1, 4]] = 1.0;
+        h[[2, 5]] = 1.0;
+
+        let mut r = Array2::<f64>::eye(3);
+        r[[0, 0]] = noise_var;
+        r[[1, 1]] = noise_var;
+        r[[2, 2]] = noise_var;
+
+        let p = &self.covariance;
+        let h_t = h.t();
+        let s = h.dot(p).dot(&h_t) + r.clone();
+
+        use nalgebra::Matrix3;
+        let s_mat = Matrix3::new(
+            s[[0, 0]],
+            s[[0, 1]],
+            s[[0, 2]],
+            s[[1, 0]],
+            s[[1, 1]],
+            s[[1, 2]],
+            s[[2, 0]],
+            s[[2, 1]],
+            s[[2, 2]],
+        );
+        let Some(inv) = s_mat.try_inverse() else {
+            return;
+        };
+
+        let mut s_inv = Array2::<f64>::zeros((3, 3));
+        for r_i in 0..3 {
+            for c_i in 0..3 {
+                s_inv[[r_i, c_i]] = inv[(r_i, c_i)];
             }
         }
+
+        let k = p.dot(&h_t).dot(&s_inv);
+        let innovation = &meas - &arr1(&[self.state[3], self.state[4], self.state[5]]);
+        let dx = k.dot(&innovation);
+        for i in 0..15 {
+            self.state[i] += dx[i];
+        }
+
+        let i_mat = Array2::<f64>::eye(15);
+        let kh = k.dot(&h);
+        let i_minus_kh = &i_mat - &kh;
+        let term1 = i_minus_kh.dot(p).dot(&i_minus_kh.t());
+        let term2 = k.dot(&r).dot(&k.t());
+        self.covariance = term1 + term2;
+
+        let p_t = self.covariance.t().to_owned();
+        self.covariance = (&self.covariance + &p_t) / 2.0;
+    }
+
+    /// Clamp vertical velocity to zero with a strong prior (land vehicle assumption).
+    pub fn zero_vertical_velocity(&mut self, noise_var: f64) {
+        self.update_velocity((self.state[3], self.state[4], 0.0), noise_var);
+    }
+
+    /// Clamp speed magnitude to a limit and scrub velocity covariance rows/cols.
+    pub fn clamp_speed(&mut self, limit: f64) {
+        if limit <= 0.0 {
+            return;
+        }
+        let vx = self.state[3];
+        let vy = self.state[4];
+        let vz = self.state[5];
+        let speed = (vx * vx + vy * vy + vz * vz).sqrt();
+        if speed <= limit || speed < 1e-6 {
+            return;
+        }
+        let scale = limit / speed;
+        self.state[3] *= scale;
+        self.state[4] *= scale;
+        self.state[5] *= scale;
+
+        // Reinforce velocity and position variance floors to avoid PSD issues
+        for i in 3..6 {
+            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-1);
+        }
+        for i in 0..3 {
+            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-1);
+        }
+        // Gentle full-diagonal bump to keep P positive definite after aggressive scaling
+        for i in 0..self.covariance.nrows() {
+            self.covariance[[i, i]] += 1e-4;
+        }
+        // Symmetrize to reduce numerical drift
+        let p_t = self.covariance.t().to_owned();
+        self.covariance = (&self.covariance + &p_t) / 2.0;
     }
 
     /// Non-holonomic body-frame velocity constraint (constrains lateral/vertical drift)
@@ -674,8 +759,8 @@ impl Ekf15d {
         // Measurement noise (ignore X, constrain Y/Z)
         let mut r = Matrix3::zeros();
         r[(0, 0)] = 999.0;
-        r[(1, 1)] = 0.1;
-        r[(2, 2)] = 0.1;
+        r[(1, 1)] = 0.01;
+        r[(2, 2)] = 0.01;
 
         // Extract velocity covariance block P_vv (3x3)
         let p_vv = self.covariance.slice(s![3..6, 3..6]).to_owned();
@@ -762,10 +847,9 @@ impl Ekf15d {
                 }
             }
 
-            // Ensure positive definite (circuit breaker)
+            // Ensure positive definiteness: clamp any negative variances to a small floor
             for i in 0..self.state.len() {
-                if sym_p[[i, i]] < 0.0 {
-                    eprintln!("[EKF-15D] WARNING: Negative variance at index {}: {:.2e}, clamping to 1e-6", i, sym_p[[i, i]]);
+                if sym_p[[i, i]] < 1e-6 {
                     sym_p[[i, i]] = 1e-6;
                 }
             }
