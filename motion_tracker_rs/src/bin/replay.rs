@@ -139,6 +139,7 @@ fn main() -> anyhow::Result<()> {
     let mut _latest_mag: Option<MagData> = None;
     let mut max_gps_gap = 0.0;
     let mut in_gap_mode: bool = false;
+    let mut last_baro: Option<(f64, f64)> = None; // (timestamp, pressure_hpa)
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
@@ -209,6 +210,27 @@ fn main() -> anyhow::Result<()> {
                         );
                     }
                 }
+            }
+        }
+        if let Some(baro_val) = r.baro.as_ref() {
+            // Extract pressure and timestamp (fallback to reading timestamp)
+            if let Some(pressure_hpa) = baro_val
+                .get("pressure_hpa")
+                .and_then(|v| v.as_f64())
+            {
+                let ts = baro_val
+                    .get("timestamp")
+                    .and_then(|v| v.as_f64())
+                    .unwrap_or(r.timestamp);
+                if let Some((prev_ts, prev_p)) = last_baro {
+                    let dt = (ts - prev_ts).max(1e-3);
+                    let dp_dt_hpa = (pressure_hpa - prev_p) / dt;
+                    let dp_dt_pa = dp_dt_hpa * 100.0;
+                    let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
+                    let z_noise = if pressure_stable { 0.01 } else { 1.0 };
+                    ekf.zero_vertical_velocity(z_noise);
+                }
+                last_baro = Some((ts, pressure_hpa));
             }
         }
         if let Some(gps) = r.gps.as_ref() {
