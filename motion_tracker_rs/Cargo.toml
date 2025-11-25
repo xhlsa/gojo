@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "dashboard"
 path = "src/bin/dashboard.rs"
 
+[lib]
+name = "motion_tracker_rs"
+path = "src/lib.rs"
+
 [dependencies]
 ndarray = "0.15"
 nalgebra = "0.32"
