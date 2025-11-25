@@ -7,6 +7,7 @@ use clap::Parser;
 use flate2::read::GzDecoder;
 use motion_tracker_rs::filters::ekf_15d::Ekf15d;
 use serde::Deserialize;
+use serde_json::Value;
 use motion_tracker_rs::types;
 use serde_json::json;
 
@@ -80,6 +81,7 @@ struct Reading {
     accel: Option<AccelData>,
     gyro: Option<GyroData>,
     mag: Option<MagData>,
+    baro: Option<Value>,
     gps: Option<GpsData>,
 }
 

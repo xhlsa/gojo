@@ -147,6 +147,7 @@ struct SensorReading {
     accel: Option<AccelData>,
     gyro: Option<GyroData>,
     mag: Option<types::MagData>,
+    baro: Option<types::BaroData>,
     gps: Option<GpsData>,
     roughness: Option<f64>,
     specific_power_w_per_kg: f64,
@@ -310,13 +311,16 @@ struct SensorState {
     pub accel_buffer: Arc<RwLock<VecDeque<AccelData>>>,
     pub gyro_buffer: Arc<RwLock<VecDeque<GyroData>>>,
     pub mag_buffer: Arc<RwLock<VecDeque<types::MagData>>>,
+    pub baro_buffer: Arc<RwLock<VecDeque<types::BaroData>>>,
     pub latest_accel: Arc<RwLock<Option<AccelData>>>,
     pub latest_gyro: Arc<RwLock<Option<GyroData>>>,
     pub latest_gps: Arc<RwLock<Option<GpsData>>>,
     pub latest_mag: Arc<RwLock<Option<types::MagData>>>,
+    pub latest_baro: Arc<RwLock<Option<types::BaroData>>>,
     pub accel_count: Arc<RwLock<u64>>,
     pub gyro_count: Arc<RwLock<u64>>,
     pub mag_count: Arc<RwLock<u64>>,
+    pub baro_count: Arc<RwLock<u64>>,
     pub gps_count: Arc<RwLock<u64>>,
 }
 
@@ -326,13 +330,16 @@ impl SensorState {
             accel_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
             gyro_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
             mag_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(512))),
+            baro_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(256))),
             latest_accel: Arc::new(RwLock::new(None)),
             latest_gyro: Arc::new(RwLock::new(None)),
             latest_gps: Arc::new(RwLock::new(None)),
             latest_mag: Arc::new(RwLock::new(None)),
+            latest_baro: Arc::new(RwLock::new(None)),
             accel_count: Arc::new(RwLock::new(0u64)),
             gyro_count: Arc::new(RwLock::new(0u64)),
             mag_count: Arc::new(RwLock::new(0u64)),
+            baro_count: Arc::new(RwLock::new(0u64)),
             gps_count: Arc::new(RwLock::new(0u64)),
         }
     }
@@ -392,9 +399,9 @@ async fn imu_reader_task(
     enable_gyro: bool,
 ) {
     let sensor_list = if enable_gyro {
-        "Accelerometer,Gyroscope,Magnetometer"
+        "Accelerometer,Gyroscope,Magnetometer,Pressure"
     } else {
-        "Accelerometer,Magnetometer"
+        "Accelerometer,Magnetometer,Pressure"
     };
     eprintln!(
         "[imu-reader] Initializing IMU reader (sensors: {})",
@@ -588,6 +595,32 @@ async fn imu_reader_task(
                                     }
                                     {
                                         let mut count = state.mag_count.write().await;
+                                        *count += 1;
+                                    }
+                                }
+                            }
+                        } else if sensor_key.contains("Pressure") {
+                            if let Some(values) =
+                                sensor_data.get("values").and_then(|v| v.as_array())
+                            {
+                                if let Some(p) = values.get(0).and_then(|v| v.as_f64()) {
+                                    let baro = types::BaroData {
+                                        timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
+                                        pressure_hpa: p,
+                                    };
+                                    {
+                                        let mut buf = state.baro_buffer.write().await;
+                                        if buf.len() > 256 {
+                                            buf.pop_front();
+                                        }
+                                        buf.push_back(baro.clone());
+                                    }
+                                    {
+                                        let mut latest = state.latest_baro.write().await;
+                                        *latest = Some(baro);
+                                    }
+                                    {
+                                        let mut count = state.baro_count.write().await;
                                         *count += 1;
                                     }
                                 }
@@ -1046,8 +1079,10 @@ async fn main() -> Result<()> {
     let mut last_speed_clamp_ts: f64 = -1.0;
     let mut last_nhc_ts: f64 = -1.0;
     let mut last_gps_speed: f64 = 0.0;
+    let mut in_gap_mode: bool = false;
     let mut last_mag_ts: Option<f64> = None;
     let mut last_gps_fix_ts: Option<f64> = None;
+    let mut last_baro: Option<types::BaroData> = None;
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -1203,6 +1238,25 @@ async fn main() -> Result<()> {
                     in_gap_mode = false;
                 }
 
+                // Barometer: adjust vertical velocity prior based on pressure stability
+                if let Some(baro) = sensor_state.latest_baro.read().await.as_ref().cloned() {
+                    let is_new = last_baro
+                        .as_ref()
+                        .map(|b| (b.timestamp - baro.timestamp).abs() > 1e-6)
+                        .unwrap_or(true);
+                    if is_new {
+                        if let Some(prev) = last_baro.as_ref() {
+                            let dt = (baro.timestamp - prev.timestamp).max(1e-3);
+                            let dp_dt_hpa = (baro.pressure_hpa - prev.pressure_hpa) / dt;
+                            let dp_dt_pa = dp_dt_hpa * 100.0;
+                            let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
+                            let noise_var = if pressure_stable { 1e-4 } else { 1e-2 };
+                            ekf_15d.zero_vertical_velocity(noise_var);
+                        }
+                        last_baro = Some(baro);
+                    }
+                }
+
                 // Non-holonomic constraint: clamp lateral/vertical body velocity at reduced rate.
                 // Disable after very long GPS gaps to avoid constraining with stale heading.
                 if last_nhc_ts < 0.0 || (accel.timestamp - last_nhc_ts) >= 1.0 {
@@ -1246,6 +1300,7 @@ async fn main() -> Result<()> {
                     accel: Some(accel.clone()),
                     gyro: None,
                     gps: None,
+                    baro: sensor_state.latest_baro.read().await.clone(),
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: specific_power_est,
                     power_coefficient: 0.0,
@@ -1655,6 +1710,7 @@ async fn main() -> Result<()> {
                         accel: None,
                         gyro: None,
                         mag: sensor_state.latest_mag.read().await.clone(),
+                        baro: sensor_state.latest_baro.read().await.clone(),
                         gps: Some(GpsData {
                             timestamp: gps.timestamp,
                             latitude: gps_proj_lat,
@@ -1974,6 +2030,7 @@ async fn main() -> Result<()> {
                     accel: Some(accel.clone()),
                     gyro: None,
                     mag: sensor_state.latest_mag.read().await.clone(),
+                    baro: sensor_state.latest_baro.read().await.clone(),
                     gps: None,
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: 0.0,

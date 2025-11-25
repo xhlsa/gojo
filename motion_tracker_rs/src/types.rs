@@ -33,3 +33,9 @@ pub struct GpsData {
     pub bearing: f64,
     pub accuracy: f64,
 }
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct BaroData {
+    pub timestamp: f64,
+    pub pressure_hpa: f64,
+}
