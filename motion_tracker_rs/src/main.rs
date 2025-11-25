@@ -84,7 +84,7 @@ use filters::ekf_15d::Ekf15d;
 use filters::es_ekf::EsEkf;
 use rerun_logger::RerunLogger;
 use smoothing::AccelSmoother;
-use types::{AccelData, GpsData, GyroData};
+use types::{AccelData, GpsData, GyroData, MagData};
 
 /// Log to file for debugging (bypasses stdout which may be corrupted)
 fn debug_log(msg: &str) {
@@ -146,6 +146,7 @@ struct SensorReading {
     timestamp: f64,
     accel: Option<AccelData>,
     gyro: Option<GyroData>,
+    mag: Option<types::MagData>,
     gps: Option<GpsData>,
     roughness: Option<f64>,
     specific_power_w_per_kg: f64,
@@ -308,11 +309,14 @@ impl DynamicCalibration {
 struct SensorState {
     pub accel_buffer: Arc<RwLock<VecDeque<AccelData>>>,
     pub gyro_buffer: Arc<RwLock<VecDeque<GyroData>>>,
+    pub mag_buffer: Arc<RwLock<VecDeque<types::MagData>>>,
     pub latest_accel: Arc<RwLock<Option<AccelData>>>,
     pub latest_gyro: Arc<RwLock<Option<GyroData>>>,
     pub latest_gps: Arc<RwLock<Option<GpsData>>>,
+    pub latest_mag: Arc<RwLock<Option<types::MagData>>>,
     pub accel_count: Arc<RwLock<u64>>,
     pub gyro_count: Arc<RwLock<u64>>,
+    pub mag_count: Arc<RwLock<u64>>,
     pub gps_count: Arc<RwLock<u64>>,
 }
 
@@ -321,11 +325,14 @@ impl SensorState {
         Self {
             accel_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
             gyro_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(1024))),
+            mag_buffer: Arc::new(RwLock::new(VecDeque::with_capacity(512))),
             latest_accel: Arc::new(RwLock::new(None)),
             latest_gyro: Arc::new(RwLock::new(None)),
             latest_gps: Arc::new(RwLock::new(None)),
+            latest_mag: Arc::new(RwLock::new(None)),
             accel_count: Arc::new(RwLock::new(0u64)),
             gyro_count: Arc::new(RwLock::new(0u64)),
+            mag_count: Arc::new(RwLock::new(0u64)),
             gps_count: Arc::new(RwLock::new(0u64)),
         }
     }
@@ -376,8 +383,8 @@ fn calculate_biases(
     (gravity_bias, gyro_bias)
 }
 
-/// Combined sensor reader task: Read BOTH accel and gyro from single termux-sensor stream
-/// Accel and gyro come from same LSM6DSO IMU, must be in same command
+/// Combined sensor reader task: Read accel, gyro, and mag from single termux-sensor stream
+/// Accel and gyro come from same LSM6DSO IMU, mag is AK09918; requested together
 /// Handles multi-line pretty-printed JSON by accumulating until complete object
 async fn imu_reader_task(
     state: SensorState,
@@ -385,9 +392,9 @@ async fn imu_reader_task(
     enable_gyro: bool,
 ) {
     let sensor_list = if enable_gyro {
-        "Accelerometer,Gyroscope"
+        "Accelerometer,Gyroscope,Magnetometer"
     } else {
-        "Accelerometer"
+        "Accelerometer,Magnetometer"
     };
     eprintln!(
         "[imu-reader] Initializing IMU reader (sensors: {})",
@@ -398,7 +405,7 @@ async fn imu_reader_task(
     let _ = Command::new("termux-sensor").arg("-c").output().await;
     sleep(Duration::from_millis(500)).await;
 
-    // Single termux-sensor command for accel and optionally gyro (no jq - handle JSON in Rust)
+    // Single termux-sensor command for accel, gyro, mag (no jq - handle JSON in Rust)
     let mut child = match Command::new("termux-sensor")
         .arg("-s")
         .arg(sensor_list)
@@ -557,6 +564,34 @@ async fn imu_reader_task(
                                     gyro_count += 1;
                                 }
                             }
+                        } else if sensor_key.contains("Magnetometer") {
+                            if let Some(values) =
+                                sensor_data.get("values").and_then(|v| v.as_array())
+                            {
+                                if values.len() >= 3 {
+                                    let mag = types::MagData {
+                                        timestamp: Utc::now().timestamp_millis() as f64 / 1000.0,
+                                        x: values[0].as_f64().unwrap_or(0.0),
+                                        y: values[1].as_f64().unwrap_or(0.0),
+                                        z: values[2].as_f64().unwrap_or(0.0),
+                                    };
+                                    {
+                                        let mut buf = state.mag_buffer.write().await;
+                                        if buf.len() > 512 {
+                                            buf.pop_front();
+                                        }
+                                        buf.push_back(mag.clone());
+                                    }
+                                    {
+                                        let mut latest = state.latest_mag.write().await;
+                                        *latest = Some(mag);
+                                    }
+                                    {
+                                        let mut count = state.mag_count.write().await;
+                                        *count += 1;
+                                    }
+                                }
+                            }
                         }
                     }
 
@@ -637,11 +672,11 @@ async fn gps_reader_task(state: SensorState, health_monitor: Arc<HealthMonitor>)
                                     "[gps-reader] Fix {}: ({:.5}, {:.5}) speed={:.2} m/s bearing={:.1}° acc={:.1}m",
                                     fix_count, lat, lon, speed, bearing, accuracy
                                 );
+                                }
                             }
                         }
                     }
                 }
-            }
             Err(e) => {
                 eprintln!("[gps-reader] Error: {}", e);
             }
@@ -1010,6 +1045,9 @@ async fn main() -> Result<()> {
     let gps_speed_window = 10.0;
     let mut last_speed_clamp_ts: f64 = -1.0;
     let mut last_nhc_ts: f64 = -1.0;
+    let mut last_gps_speed: f64 = 0.0;
+    let mut last_mag_ts: Option<f64> = None;
+    let mut last_gps_fix_ts: Option<f64> = None;
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -1095,17 +1133,27 @@ async fn main() -> Result<()> {
                     0.0
                 };
 
-                // Velocity sanity gate: prevent EKF from exceeding recent GPS speed envelope
+                // Velocity sanity gate: prevent EKF from exceeding recent GPS speed envelope.
                 let max_recent_gps = recent_gps_speeds
                     .iter()
                     .map(|(_, s)| *s)
                     .fold(0.0_f64, f64::max);
                 if max_recent_gps > 3.0 {
                     let ekf_speed = ekf_15d.get_speed();
-                    // Moderate clamp to catch explosions
-                    let limit = 2.5 * max_recent_gps + 12.0;
                     let now_ts = accel.timestamp;
-                    if ekf_speed > limit && ekf_speed > 1e-3 && (now_ts - last_speed_clamp_ts) > 0.5 {
+                    let gap_for_clamp = last_gps_fix_ts.map(|ts| (now_ts - ts).max(0.0)).unwrap_or(f64::INFINITY);
+                    // Envelope clamp remains, but gap-mode per-prediction clamp above should catch outages
+                    let (scale, offset, min_interval) = if gap_for_clamp > 5.0 {
+                        (1.0, 3.0, 0.0)
+                    } else {
+                        (1.5, 5.0, 0.0)
+                    };
+                    let limit = scale * max_recent_gps + offset;
+                    if ekf_speed > limit && ekf_speed > 1e-3 && (now_ts - last_speed_clamp_ts) > min_interval {
+                        eprintln!(
+                            "[CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
+                            now_ts, gap_for_clamp, ekf_speed, limit
+                        );
                         ekf_15d.clamp_speed(limit);
                         last_speed_clamp_ts = now_ts;
                     }
@@ -1121,10 +1169,69 @@ async fn main() -> Result<()> {
                     (0.0, 0.0, 0.0),
                 );
 
-                // Non-holonomic constraint: clamp lateral/vertical body velocity at reduced rate
+                // Magnetometer yaw assist during GPS gaps (>3s)
+                let gps_gap = if let Some(ts) = last_gps_fix_ts {
+                    (accel.timestamp - ts).max(0.0)
+                } else {
+                    f64::INFINITY
+                };
+                // Gap-mode speed ceiling during GPS outages (per prediction clamp)
+                if let Some(ts) = last_gps_fix_ts {
+                    let gap = (accel.timestamp - ts).max(0.0);
+                    // Enter gap mode after 5s; hysteresis keeps us in gap mode until GPS returns
+                    if gap > 5.0 || (in_gap_mode && gap > 0.5) {
+                        in_gap_mode = true;
+                    }
+                    if in_gap_mode {
+                        let base_limit = if last_gps_speed > 3.0 {
+                            1.3 * last_gps_speed + 3.0
+                        } else {
+                            last_gps_speed + 10.0
+                        };
+                        let limit = base_limit.max(20.0);
+                        let ekf_speed = ekf_15d.get_speed();
+                        if ekf_speed > limit {
+                            eprintln!(
+                                "[GAP CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
+                                accel.timestamp, gap, ekf_speed, limit
+                            );
+                            ekf_15d.clamp_speed(limit);
+                        }
+                    }
+                } else {
+                    // No GPS yet; avoid gap mode until first fix
+                    in_gap_mode = false;
+                }
+
+                // Non-holonomic constraint: clamp lateral/vertical body velocity at reduced rate.
+                // Disable after very long GPS gaps to avoid constraining with stale heading.
                 if last_nhc_ts < 0.0 || (accel.timestamp - last_nhc_ts) >= 1.0 {
-                    ekf_15d.update_body_velocity(Vector3::zeros());
+                    let nhc_gap = last_gps_fix_ts
+                        .map(|ts| (accel.timestamp - ts).max(0.0))
+                        .unwrap_or(0.0);
+                    // Soften with gap; after 10s gap, skip NHC entirely.
+                    if nhc_gap <= 10.0 {
+                        let nhc_r = (1.0 + nhc_gap * 0.5).min(5.0);
+                        ekf_15d.update_body_velocity(Vector3::zeros(), nhc_r);
+                    } else {
+                        eprintln!("[NHC SKIP] gap {:.1}s", nhc_gap);
+                    }
                     last_nhc_ts = accel.timestamp;
+                }
+
+                if gps_gap > 3.0 {
+                    if let Some(mag) = sensor_state.latest_mag.read().await.as_ref() {
+                        if let Some(innov) = ekf_15d.update_mag_heading(
+                            mag,
+                            0.157, // approx 9° declination in radians (Tucson)
+                        ) {
+                            eprintln!(
+                                "[MAG] gap {:.1}s yaw correction: {:.1}°",
+                                gps_gap,
+                                innov.to_degrees()
+                            );
+                        }
+                    }
                 }
 
                 // Feed FGO preintegrator (fast loop - non-blocking)
@@ -1144,6 +1251,7 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_13d: Some(ekf_13d.get_state()),
                     experimental_15d: Some(ekf_15d.get_state()),
+                    mag: sensor_state.latest_mag.read().await.clone(),
                     fgo: None, // Will be updated on GPS fix
                 });
 
@@ -1459,6 +1567,8 @@ async fn main() -> Result<()> {
                             break;
                         }
                     }
+                    last_gps_fix_ts = Some(gps.timestamp);
+                    last_gps_speed = gps.speed;
 
                     // COLD START PROTOCOL: Initialize on first GPS fix, update on subsequent
                     let is_first_gps_fix = !ekf_13d.is_origin_set();
@@ -1544,6 +1654,7 @@ async fn main() -> Result<()> {
                         timestamp: gps.timestamp,
                         accel: None,
                         gyro: None,
+                        mag: sensor_state.latest_mag.read().await.clone(),
                         gps: Some(GpsData {
                             timestamp: gps.timestamp,
                             latitude: gps_proj_lat,
@@ -1862,6 +1973,7 @@ async fn main() -> Result<()> {
                     timestamp: accel.timestamp,
                     accel: Some(accel.clone()),
                     gyro: None,
+                    mag: sensor_state.latest_mag.read().await.clone(),
                     gps: None,
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: 0.0,

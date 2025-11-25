@@ -1,6 +1,7 @@
 use nalgebra::{Matrix3, SMatrix, Vector3};
 use ndarray::{arr1, s, Array1, Array2};
 use serde::{Deserialize, Serialize};
+use crate::types::MagData;
 
 const G: f64 = 9.81; // Earth gravity (m/s²)
 
@@ -365,6 +366,11 @@ impl Ekf15d {
         r[[1, 1]] = var;
         r[[2, 2]] = var * 2.0; // slight damp on vertical
 
+        // Ensure velocity covariance is not crushed so GPS can influence it
+        for i in 3..6 {
+            self.covariance[[i, i]] = self.covariance[[i, i]].max(0.1);
+        }
+
         let p = &self.covariance;
         let h_t = h.t();
         let s = h.dot(p).dot(&h_t) + r.clone();
@@ -676,6 +682,76 @@ impl Ekf15d {
         self.update_velocity((self.state[3], self.state[4], 0.0), noise_var);
     }
 
+    /// Approximate tilt-compensated magnetic heading update (loose correction).
+    /// mag is in body frame (microtesla), declination_rad adjusts magnetic north to true north (positive east).
+    pub fn update_mag_heading(
+        &mut self,
+        mag: &crate::types::MagData,
+        declination_rad: f64,
+    ) -> Option<f64> {
+        // Reject bad magnitudes (Earth field ~25-65 uT)
+        let mag_norm =
+            (mag.x * mag.x + mag.y * mag.y + mag.z * mag.z).sqrt();
+        if mag_norm < 20.0 || mag_norm > 80.0 {
+            return None;
+        }
+
+        // Extract roll/pitch from quaternion
+        let qw = self.state[6];
+        let qx = self.state[7];
+        let qy = self.state[8];
+        let qz = self.state[9];
+        let sinr_cosp = 2.0 * (qw * qx + qy * qz);
+        let cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy);
+        let roll = sinr_cosp.atan2(cosr_cosp);
+
+        let sinp = 2.0 * (qw * qy - qz * qx);
+        let pitch = if sinp.abs() >= 1.0 {
+            sinp.signum() * std::f64::consts::FRAC_PI_2
+        } else {
+            sinp.asin()
+        };
+
+        // Tilt compensation
+        let (sin_r, cos_r) = (roll.sin(), roll.cos());
+        let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
+        let mag_x_h = mag.x * cos_p + mag.y * sin_r * sin_p + mag.z * cos_r * sin_p;
+        let mag_y_h = mag.y * cos_r - mag.z * sin_r;
+        let mut mag_yaw = mag_y_h.atan2(mag_x_h) + declination_rad; // ENU yaw (CCW from East)
+
+        // Extract current yaw
+        let siny_cosp = 2.0 * (qw * qz + qx * qy);
+        let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+        let current_yaw = siny_cosp.atan2(cosy_cosp);
+
+        // Innovation with wrap
+        let mut innov = mag_yaw - current_yaw;
+        while innov > std::f64::consts::PI {
+            innov -= 2.0 * std::f64::consts::PI;
+        }
+        while innov < -std::f64::consts::PI {
+            innov += 2.0 * std::f64::consts::PI;
+        }
+
+        // Reject extreme innovations (>90 deg)
+        if innov.abs() > std::f64::consts::FRAC_PI_2 {
+            return None;
+        }
+
+        // Apply partial correction (poor-man's gain)
+        let gain = 0.3;
+        let new_yaw = current_yaw + gain * innov;
+        let half = new_yaw * 0.5;
+        let qw_new = half.cos();
+        let qz_new = half.sin();
+        self.state[6] = qw_new;
+        self.state[7] = 0.0;
+        self.state[8] = 0.0;
+        self.state[9] = qz_new;
+
+        Some(innov)
+    }
+
     /// Clamp speed magnitude to a limit and scrub velocity covariance rows/cols.
     pub fn clamp_speed(&mut self, limit: f64) {
         if limit <= 0.0 {
@@ -710,7 +786,7 @@ impl Ekf15d {
     }
 
     /// Non-holonomic body-frame velocity constraint (constrains lateral/vertical drift)
-    pub fn update_body_velocity(&mut self, measurement: Vector3<f64>) {
+    pub fn update_body_velocity(&mut self, measurement: Vector3<f64>, lateral_vertical_noise: f64) {
         // Rotation matrix from body to world (transpose used to project world velocity into body frame)
         let mut qw = self.state[6];
         let mut qx = self.state[7];
@@ -758,9 +834,10 @@ impl Ekf15d {
 
         // Measurement noise (ignore X, constrain Y/Z)
         let mut r = Matrix3::zeros();
+        let r_yz = lateral_vertical_noise.max(1e-6);
         r[(0, 0)] = 999.0;
-        r[(1, 1)] = 1.0;
-        r[(2, 2)] = 1.0;
+        r[(1, 1)] = r_yz;
+        r[(2, 2)] = r_yz;
 
         // Extract velocity covariance block P_vv (3x3)
         let p_vv = self.covariance.slice(s![3..6, 3..6]).to_owned();

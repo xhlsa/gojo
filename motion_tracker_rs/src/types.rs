@@ -17,6 +17,14 @@ pub struct GyroData {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MagData {
+    pub timestamp: f64,
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct GpsData {
     pub timestamp: f64,
     pub latitude: f64,

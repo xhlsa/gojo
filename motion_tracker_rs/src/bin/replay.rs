@@ -63,10 +63,19 @@ struct GyroData {
 }
 
 #[derive(Deserialize)]
+struct MagData {
+    timestamp: f64,
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+#[derive(Deserialize)]
 struct Reading {
     timestamp: f64,
     accel: Option<AccelData>,
     gyro: Option<GyroData>,
+    mag: Option<MagData>,
     gps: Option<GpsData>,
 }
 
@@ -115,15 +124,54 @@ fn main() -> anyhow::Result<()> {
     let mut last_nhc_ts: f64 = -1.0;
     let mut max_innov_norm = 0.0;
     let mut max_delta_v = 0.0;
-    let mut max_bearing_diff_deg = 0.0;
     let mut yaw_debug_lines = 0;
+    let mut max_speed_ts = 0.0;
+    let mut max_speed_val = 0.0;
+    let mut clamp_count = 0u64;
+    let mut last_gps_ts: Option<f64> = None;
+    let mut last_gps_speed: f64 = 0.0;
+    let mut max_gps_gap = 0.0;
+    let mut in_gap_mode: bool = false;
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
             ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
-            // Apply NHC at reduced rate (1s)
+            // Gap-mode speed ceiling during GPS outages (per prediction clamp)
+            if let Some(ts) = last_gps_ts {
+                let gap = (r.timestamp - ts).max(0.0);
+                if gap > 5.0 || (in_gap_mode && gap > 0.5) {
+                    in_gap_mode = true;
+                }
+                if in_gap_mode {
+                    let base_limit = if last_gps_speed > 3.0 {
+                        1.3 * last_gps_speed + 3.0
+                    } else {
+                        last_gps_speed + 10.0
+                    };
+                    let limit = base_limit.max(20.0);
+                    let ekf_speed = ekf.get_speed();
+                    if ekf_speed > limit {
+                        println!(
+                            "[GAP CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
+                            r.timestamp, gap, ekf_speed, limit
+                        );
+                        ekf.clamp_speed(limit);
+                    }
+                }
+            } else {
+                in_gap_mode = false;
+            }
+            // Apply NHC at reduced rate (1s) with gap-aware noise; disable after long gaps
             if last_nhc_ts < 0.0 || (r.timestamp - last_nhc_ts) >= 1.0 {
-                ekf.update_body_velocity(nalgebra::Vector3::zeros());
+                let nhc_gap = last_gps_ts
+                    .map(|ts| (r.timestamp - ts).max(0.0))
+                    .unwrap_or(0.0);
+                if nhc_gap <= 10.0 {
+                    let nhc_r = (1.0 + nhc_gap * 0.5).min(5.0);
+                    ekf.update_body_velocity(nalgebra::Vector3::zeros(), nhc_r);
+                } else {
+                    println!("[NHC SKIP] gap {:.1}s", nhc_gap);
+                }
                 last_nhc_ts = r.timestamp;
             }
         }
@@ -134,7 +182,8 @@ fn main() -> anyhow::Result<()> {
         if let Some(gps) = r.gps.as_ref() {
             let vx_before = ekf.state[3];
             let vy_before = ekf.state[4];
-            let speed_before = (vx_before * vx_before + vy_before * vy_before).sqrt();
+            let vz_before = ekf.state[5];
+            let speed_before = (vx_before * vx_before + vy_before * vy_before + vz_before * vz_before).sqrt();
             let bearing_rad = gps.bearing.to_radians();
             let vx_meas = gps.speed * bearing_rad.sin();
             let vy_meas = gps.speed * bearing_rad.cos();
@@ -196,30 +245,32 @@ fn main() -> anyhow::Result<()> {
             // Clamp vertical velocity aggressively for land vehicle
             ekf.zero_vertical_velocity(1e-4);
 
+            // Track GPS gap
+            if let Some(last) = last_gps_ts {
+                let gap = gps.timestamp - last;
+                if gap > max_gps_gap {
+                    max_gps_gap = gap;
+                }
+            }
+            last_gps_ts = Some(gps.timestamp);
+            last_gps_speed = gps.speed;
+
             let vx_after = ekf.state[3];
             let vy_after = ekf.state[4];
+            let vz_after = ekf.state[5];
             let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2)).sqrt();
             if delta_v > max_delta_v {
                 max_delta_v = delta_v;
             }
-
-            // Heading difference: convert yaw (ENU CCW from East) to North/CW bearing
-            let qw = ekf.state[6];
-            let qx = ekf.state[7];
-            let qy = ekf.state[8];
-            let qz = ekf.state[9];
-            let siny_cosp = 2.0 * (qw * qz + qx * qy);
-            let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-            // EKF yaw: ENU, CCW from East
-            let yaw = siny_cosp.atan2(cosy_cosp);
-            // Convert to North/CW heading
-            let heading_north_cw = std::f64::consts::FRAC_PI_2 - yaw;
-            let mut diff = gps.bearing.to_radians() - heading_north_cw;
-            // Wrap to [-pi, pi]
-            diff = ((diff + std::f64::consts::PI) % (2.0 * std::f64::consts::PI)) - std::f64::consts::PI;
-            let adiff = diff.abs().to_degrees();
-            if adiff > max_bearing_diff_deg {
-                max_bearing_diff_deg = adiff;
+            let speed_after = (vx_after * vx_after + vy_after * vy_after + vz_after * vz_after).sqrt();
+            if yaw_debug_lines < 5 {
+                println!(
+                    "[GPS_VEL] t={:.1} pre=({:.1},{:.1},{:.1}) |{:.1}| innov=({:.1},{:.1}) post=({:.1},{:.1},{:.1}) |{:.1}|",
+                    gps.timestamp,
+                    vx_before, vy_before, vz_before, speed_before,
+                    innov_x, innov_y,
+                    vx_after, vy_after, vz_after, speed_after
+                );
             }
 
             // Track recent GPS speeds for sanity gate
@@ -236,18 +287,37 @@ fn main() -> anyhow::Result<()> {
             paired.push((ekf.get_speed(), gps.speed));
         }
 
-        // Velocity sanity gate based on recent GPS envelope
+        // Velocity sanity gate based on recent GPS envelope; tighten during long GPS gaps
         if let Some(max_gps) = recent_gps.iter().map(|(_, s)| *s).max_by(|a, b| a.partial_cmp(b).unwrap()) {
             if max_gps > 3.0 {
                 let ekf_speed = ekf.get_speed();
-                let limit = args.clamp_scale * max_gps + args.clamp_offset;
-                if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > args.clamp_interval {
+                let gap_for_clamp = last_gps_ts.map(|ts| (r.timestamp - ts).max(0.0)).unwrap_or(f64::INFINITY);
+                let (scale, offset, min_interval) = if gap_for_clamp > 5.0 {
+                    (1.0, 3.0, 0.0)
+                } else {
+                    (1.5, 5.0, 0.25)
+                };
+                let limit = scale * max_gps + offset;
+                if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > min_interval {
+                    println!(
+                        "[CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
+                        r.timestamp,
+                        gap_for_clamp,
+                        ekf_speed,
+                        limit
+                    );
                     ekf.clamp_speed(limit);
                     last_speed_clamp_ts = r.timestamp;
+                    clamp_count += 1;
                 }
             }
         }
-        ekf_speeds.push(ekf.get_speed());
+        let cur_speed = ekf.get_speed();
+        if cur_speed > max_speed_val {
+            max_speed_val = cur_speed;
+            max_speed_ts = r.timestamp;
+        }
+        ekf_speeds.push(cur_speed);
     }
 
     let rmse_val = rmse_pairs(&paired);
@@ -269,7 +339,9 @@ fn main() -> anyhow::Result<()> {
         "ekf_samples": ekf_speeds.len(),
         "max_innovation_norm": max_innov_norm,
         "max_delta_v": max_delta_v,
-        "max_bearing_diff_deg": max_bearing_diff_deg
+        "max_speed_ts": max_speed_ts,
+        "clamp_count": clamp_count,
+        "max_gps_gap": max_gps_gap
     });
     println!("{}", serde_json::to_string_pretty(&out)?);
 
