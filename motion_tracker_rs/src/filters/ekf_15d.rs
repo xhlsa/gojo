@@ -1,7 +1,6 @@
 use nalgebra::{Matrix3, SMatrix, Vector3};
 use ndarray::{arr1, s, Array1, Array2};
 use serde::{Deserialize, Serialize};
-use crate::types::MagData;
 
 const G: f64 = 9.81; // Earth gravity (m/s²)
 
@@ -717,7 +716,7 @@ impl Ekf15d {
         let (sin_p, cos_p) = (pitch.sin(), pitch.cos());
         let mag_x_h = mag.x * cos_p + mag.y * sin_r * sin_p + mag.z * cos_r * sin_p;
         let mag_y_h = mag.y * cos_r - mag.z * sin_r;
-        let mut mag_yaw = mag_y_h.atan2(mag_x_h) + declination_rad; // ENU yaw (CCW from East)
+        let mag_yaw = mag_y_h.atan2(mag_x_h) + declination_rad; // ENU yaw (CCW from East)
 
         // Extract current yaw
         let siny_cosp = 2.0 * (qw * qz + qx * qy);

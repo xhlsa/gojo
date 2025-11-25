@@ -7,6 +7,7 @@ use clap::Parser;
 use flate2::read::GzDecoder;
 use motion_tracker_rs::filters::ekf_15d::Ekf15d;
 use serde::Deserialize;
+use motion_tracker_rs::types;
 use serde_json::json;
 
 #[derive(Parser, Debug)]
@@ -46,6 +47,7 @@ struct GpsData {
     accuracy: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct AccelData {
     timestamp: f64,
@@ -54,6 +56,7 @@ struct AccelData {
     z: f64,
 }
 
+#[allow(dead_code)]
 #[derive(Deserialize)]
 struct GyroData {
     timestamp: f64,
@@ -62,7 +65,8 @@ struct GyroData {
     z: f64,
 }
 
-#[derive(Deserialize)]
+#[allow(dead_code)]
+#[derive(Debug, Clone, Deserialize)]
 struct MagData {
     timestamp: f64,
     x: f64,
@@ -130,6 +134,7 @@ fn main() -> anyhow::Result<()> {
     let mut clamp_count = 0u64;
     let mut last_gps_ts: Option<f64> = None;
     let mut last_gps_speed: f64 = 0.0;
+    let mut _latest_mag: Option<MagData> = None;
     let mut max_gps_gap = 0.0;
     let mut in_gap_mode: bool = false;
 
@@ -179,6 +184,31 @@ fn main() -> anyhow::Result<()> {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
         }
+        if let Some(m) = r.mag.as_ref() {
+            _latest_mag = Some(m.clone());
+            // Mag yaw assist during GPS gaps (>3s)
+            if let Some(last) = last_gps_ts {
+                let gap = (r.timestamp - last).max(0.0);
+                if gap > 3.0 {
+                    // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
+                    if let Some(yaw_correction) = ekf.update_mag_heading(
+                        &crate::types::MagData {
+                            timestamp: m.timestamp,
+                            x: m.x,
+                            y: m.y,
+                            z: m.z,
+                        },
+                        0.157, // ~9° declination (Tucson)
+                    ) {
+                        println!(
+                            "[MAG] gap {:.1}s yaw correction: {:.1}°",
+                            gap,
+                            yaw_correction.to_degrees()
+                        );
+                    }
+                }
+            }
+        }
         if let Some(gps) = r.gps.as_ref() {
             let vx_before = ekf.state[3];
             let vy_before = ekf.state[4];
@@ -214,7 +244,7 @@ fn main() -> anyhow::Result<()> {
                 while innov < -std::f64::consts::PI {
                     innov += 2.0 * std::f64::consts::PI;
                 }
-                let r_yaw = 0.1; // rad^2
+                let _r_yaw = 0.1; // rad^2
                 // Simple scalar Kalman update on yaw, assuming small-angle approx on quaternion z component
                 // For robustness, just overwrite quaternion with target yaw (as measurement) and skip cov math here
                 let half = target_yaw * 0.5;
