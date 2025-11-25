@@ -82,6 +82,7 @@ struct DriveMetadata {
     distance_meters: f64,
     has_gps: bool,
     file_size_mb: f64,
+    is_golden: bool,
 }
 
 #[derive(Serialize)]
@@ -254,7 +255,8 @@ async fn list_drives_handler(
     let offset = params.offset.unwrap_or(0) as usize;
 
     // Scan directory for drive files (compressed gzip JSON)
-    let mut filepaths = Vec::new();
+    // Collect (path, is_golden)
+    let mut filepaths: Vec<(std::path::PathBuf, bool)> = Vec::new();
 
     match std::fs::read_dir(&state.data_dir) {
         Ok(entries) => {
@@ -264,7 +266,7 @@ async fn list_drives_handler(
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                         // Only list finalized drive files (drive_*.json.gz), ignore current_session
                         if name.starts_with("drive_") && name.ends_with(".json.gz") {
-                            filepaths.push(path);
+                            filepaths.push((path, false));
                         }
                     }
                 }
@@ -273,13 +275,26 @@ async fn list_drives_handler(
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
 
+    // Also include curated golden drives if present (comparison_*.json.gz in golden/)
+    let golden_dir = state.data_dir.join("golden");
+    if let Ok(entries) = std::fs::read_dir(&golden_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("comparison_") && name.ends_with(".json.gz") {
+                    filepaths.push((path, true));
+                }
+            }
+        }
+    }
+
     // Sort by modification time descending (newest first)
     filepaths.sort_by(|a, b| {
-        let mtime_a = std::fs::metadata(a)
+        let mtime_a = std::fs::metadata(&a.0)
             .ok()
             .and_then(|m| m.modified().ok())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let mtime_b = std::fs::metadata(b)
+        let mtime_b = std::fs::metadata(&b.0)
             .ok()
             .and_then(|m| m.modified().ok())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
@@ -291,7 +306,7 @@ async fn list_drives_handler(
 
     let mut drives = Vec::new();
 
-    for filepath in paginated {
+    for (filepath, is_golden) in paginated {
         if let Ok(data) = read_gzipped_json(&filepath) {
             if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
                 let drive_id = filename.replace(".json.gz", "");
@@ -341,6 +356,7 @@ async fn list_drives_handler(
                     distance_meters: stats.distance_km * 1000.0,
                     has_gps,
                     file_size_mb: file_size,
+                    is_golden,
                 });
             }
         }
@@ -359,11 +375,18 @@ async fn drive_details_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
 ) -> Result<Json<DriveDetailsResponse>, (StatusCode, String)> {
-    // Find the file (gzipped format)
-    let json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
-
+    // Find the file (gzipped format). Try root, then golden/.
+    let mut json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
     if !json_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+        let golden_candidate = state
+            .data_dir
+            .join("golden")
+            .join(format!("{}.json.gz", drive_id));
+        if golden_candidate.exists() {
+            json_path = golden_candidate;
+        } else {
+            return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+        }
     }
 
     let data =
@@ -400,10 +423,17 @@ async fn drive_gpx_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
 ) -> Result<Response, (StatusCode, String)> {
-    let json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
-
+    let mut json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
     if !json_path.exists() {
-        return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+        let golden_candidate = state
+            .data_dir
+            .join("golden")
+            .join(format!("{}.json.gz", drive_id));
+        if golden_candidate.exists() {
+            json_path = golden_candidate;
+        } else {
+            return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+        }
     }
 
     let data =
