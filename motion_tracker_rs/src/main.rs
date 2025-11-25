@@ -1009,6 +1009,7 @@ async fn main() -> Result<()> {
     let mut recent_gps_speeds: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
     let gps_speed_window = 10.0;
     let mut last_speed_clamp_ts: f64 = -1.0;
+    let mut last_nhc_ts: f64 = -1.0;
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -1101,7 +1102,8 @@ async fn main() -> Result<()> {
                     .fold(0.0_f64, f64::max);
                 if max_recent_gps > 3.0 {
                     let ekf_speed = ekf_15d.get_speed();
-                    let limit = 1.3 * max_recent_gps + 5.0;
+                    // Moderate clamp to catch explosions
+                    let limit = 2.5 * max_recent_gps + 12.0;
                     let now_ts = accel.timestamp;
                     if ekf_speed > limit && ekf_speed > 1e-3 && (now_ts - last_speed_clamp_ts) > 0.5 {
                         ekf_15d.clamp_speed(limit);
@@ -1119,8 +1121,11 @@ async fn main() -> Result<()> {
                     (0.0, 0.0, 0.0),
                 );
 
-                // Non-holonomic constraint: clamp lateral/vertical body velocity to zero each accel frame
-                ekf_15d.update_body_velocity(Vector3::zeros());
+                // Non-holonomic constraint: clamp lateral/vertical body velocity at reduced rate
+                if last_nhc_ts < 0.0 || (accel.timestamp - last_nhc_ts) >= 1.0 {
+                    ekf_15d.update_body_velocity(Vector3::zeros());
+                    last_nhc_ts = accel.timestamp;
+                }
 
                 // Feed FGO preintegrator (fast loop - non-blocking)
                 // Use corrected acceleration (gravity removed) and zero gyro for now
@@ -1416,11 +1421,11 @@ async fn main() -> Result<()> {
                     let vx = ekf_state.velocity.0;
                     let vy = ekf_state.velocity.1;
                     let speed = (vx * vx + vy * vy).sqrt();
-                    let (gps_proj_lat, gps_proj_lon) = if latency < 1.0 && speed < 50.0 {
-                        let lat_proj = gps.latitude
-                            + (vy * latency) / 6371000.0 * 180.0 / std::f64::consts::PI;
-                        let lon_proj = gps.longitude
-                            + (vx * latency)
+                let (gps_proj_lat, gps_proj_lon) = if latency < 1.0 && speed < 50.0 {
+                    let lat_proj = gps.latitude
+                        + (vy * latency) / 6371000.0 * 180.0 / std::f64::consts::PI;
+                    let lon_proj = gps.longitude
+                        + (vx * latency)
                                 / (6371000.0 * (gps.latitude.to_radians().cos() + 1e-9))
                                 * 180.0
                                 / std::f64::consts::PI;
@@ -1477,7 +1482,7 @@ async fn main() -> Result<()> {
                         // Update 15D filter with GPS (uses lat/lon directly for position correction)
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
                         // Update 15D velocity using GPS speed/bearing when available
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.2);
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.05);
                     }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
@@ -1488,8 +1493,8 @@ async fn main() -> Result<()> {
                         let rad = gps.bearing.to_radians();
                         let vx = gps.speed * rad.sin(); // East
                         let vy = gps.speed * rad.cos(); // North
-                                                        // Z velocity damped to 0.0
-                        ekf_15d.update_velocity((vx, vy, 0.0), 0.25);
+                        // Z velocity damped to 0.0
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.5);
                         // Land vehicle assumption: clamp vertical velocity tightly
                         ekf_15d.zero_vertical_velocity(1e-4);
                     }
@@ -1513,12 +1518,23 @@ async fn main() -> Result<()> {
 
                     // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
                     if gps.speed > gps_speed_threshold && !is_heading_initialized {
-                        // Manually set heading from GPS bearing
-                        ekf.state_set_heading(gps.bearing.to_radians());
+                        // Align heading to GPS bearing.
+                        // GPS bearing: degrees, clockwise from North.
+                        // EKF yaw (ENU CCW from East): yaw = 90° - bearing
+                        let gps_yaw = (90.0 - gps.bearing).to_radians();
+                        ekf.state_set_heading(gps_yaw);
+                        // Set 15D quaternion to the yaw-only rotation
+                        let half = gps_yaw * 0.5;
+                        ekf_15d.state[6] = half.cos(); // w
+                        ekf_15d.state[7] = 0.0;        // x
+                        ekf_15d.state[8] = 0.0;        // y
+                        ekf_15d.state[9] = half.sin(); // z
                         is_heading_initialized = true;
                         eprintln!(
-                            "[ALIGN] Heading aligned to GPS: {:.1}° (speed: {:.2} m/s)",
-                            gps.bearing, gps.speed
+                            "[ALIGN] Heading aligned to GPS: bearing {:.1}° -> yaw {:.1}° (speed: {:.2} m/s)",
+                            gps.bearing,
+                            gps_yaw.to_degrees(),
+                            gps.speed
                         );
                     }
 

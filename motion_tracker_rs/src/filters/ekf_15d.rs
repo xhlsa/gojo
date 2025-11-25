@@ -97,7 +97,7 @@ impl Ekf15d {
 
         // Velocity: driven by accel noise
         // Velocity process noise (tuned for responsiveness after ZUPT)
-        let q_vel = 0.5;
+        let q_vel = 2.0;
         for i in 3..6 {
             process_noise[[i, i]] = q_vel;
         }
@@ -391,7 +391,7 @@ impl Ekf15d {
             }
 
             // Clamp extreme innovations to avoid runaway spikes
-            let max_jump = 15.0;
+            let max_jump = 50.0;
             let mut innovation_clamped = innovation.clone();
             for i in 0..3 {
                 innovation_clamped[i] = innovation_clamped[i].clamp(-max_jump, max_jump);
@@ -695,10 +695,10 @@ impl Ekf15d {
 
         // Reinforce velocity and position variance floors to avoid PSD issues
         for i in 3..6 {
-            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-1);
+            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-2);
         }
         for i in 0..3 {
-            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-1);
+            self.covariance[[i, i]] = self.covariance[[i, i]].max(1e-2);
         }
         // Gentle full-diagonal bump to keep P positive definite after aggressive scaling
         for i in 0..self.covariance.nrows() {
@@ -759,8 +759,8 @@ impl Ekf15d {
         // Measurement noise (ignore X, constrain Y/Z)
         let mut r = Matrix3::zeros();
         r[(0, 0)] = 999.0;
-        r[(1, 1)] = 0.01;
-        r[(2, 2)] = 0.01;
+        r[(1, 1)] = 1.0;
+        r[(2, 2)] = 1.0;
 
         // Extract velocity covariance block P_vv (3x3)
         let p_vv = self.covariance.slice(s![3..6, 3..6]).to_owned();

@@ -22,6 +22,18 @@ struct Args {
     /// GPS velocity std (meters/sec)
     #[arg(long, default_value = "0.5")]
     gps_vel_std: f64,
+
+    /// Clamp scale multiplier on recent GPS speed
+    #[arg(long, default_value = "2.5")]
+    clamp_scale: f64,
+
+    /// Clamp offset added after scaling
+    #[arg(long, default_value = "12.0")]
+    clamp_offset: f64,
+
+    /// Minimum seconds between clamps
+    #[arg(long, default_value = "0.5")]
+    clamp_interval: f64,
 }
 
 #[derive(Deserialize)]
@@ -100,22 +112,115 @@ fn main() -> anyhow::Result<()> {
     let mut recent_gps: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
     let window_sec = 10.0;
     let mut last_speed_clamp_ts: f64 = -1.0;
+    let mut last_nhc_ts: f64 = -1.0;
+    let mut max_innov_norm = 0.0;
+    let mut max_delta_v = 0.0;
+    let mut max_bearing_diff_deg = 0.0;
+    let mut yaw_debug_lines = 0;
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
             ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
-            // Non-holonomic constraint every accel frame (body Y/Z -> 0)
-            ekf.update_body_velocity(nalgebra::Vector3::zeros());
+            // Apply NHC at reduced rate (1s)
+            if last_nhc_ts < 0.0 || (r.timestamp - last_nhc_ts) >= 1.0 {
+                ekf.update_body_velocity(nalgebra::Vector3::zeros());
+                last_nhc_ts = r.timestamp;
+            }
         }
         if let Some(g) = r.gyro.as_ref() {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
         }
         if let Some(gps) = r.gps.as_ref() {
+            let vx_before = ekf.state[3];
+            let vy_before = ekf.state[4];
+            let speed_before = (vx_before * vx_before + vy_before * vy_before).sqrt();
+            let bearing_rad = gps.bearing.to_radians();
+            let vx_meas = gps.speed * bearing_rad.sin();
+            let vy_meas = gps.speed * bearing_rad.cos();
+            let innov_x = vx_meas - vx_before;
+            let innov_y = vy_meas - vy_before;
+            let innov_norm = (innov_x * innov_x + innov_y * innov_y).sqrt();
+            if innov_norm > max_innov_norm {
+                max_innov_norm = innov_norm;
+            }
+
+            // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
+            if gps.speed > 3.0 {
+                let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
+                // Extract current yaw
+                let qw = ekf.state[6];
+                let qx = ekf.state[7];
+                let qy = ekf.state[8];
+                let qz = ekf.state[9];
+                let siny_cosp = 2.0 * (qw * qz + qx * qy);
+                let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+                let yaw_before = siny_cosp.atan2(cosy_cosp);
+
+                // Yaw measurement update (scalar)
+                let mut innov = target_yaw - yaw_before;
+                while innov > std::f64::consts::PI {
+                    innov -= 2.0 * std::f64::consts::PI;
+                }
+                while innov < -std::f64::consts::PI {
+                    innov += 2.0 * std::f64::consts::PI;
+                }
+                let r_yaw = 0.1; // rad^2
+                // Simple scalar Kalman update on yaw, assuming small-angle approx on quaternion z component
+                // For robustness, just overwrite quaternion with target yaw (as measurement) and skip cov math here
+                let half = target_yaw * 0.5;
+                ekf.state[6] = half.cos();
+                ekf.state[7] = 0.0;
+                ekf.state[8] = 0.0;
+                ekf.state[9] = half.sin();
+
+                let siny_cosp2 = 2.0 * (ekf.state[6] * ekf.state[9] + ekf.state[7] * ekf.state[8]);
+                let cosy_cosp2 = 1.0 - 2.0 * (ekf.state[8] * ekf.state[8] + ekf.state[9] * ekf.state[9]);
+                let yaw_after = siny_cosp2.atan2(cosy_cosp2);
+
+                if yaw_debug_lines < 10 {
+                    println!(
+                        "[YAW ALIGN] bearing={:.1}° target={:.1}° before={:.1}° after={:.1}° innov={:.2} rad",
+                        gps.bearing,
+                        target_yaw.to_degrees(),
+                        yaw_before.to_degrees(),
+                        yaw_after.to_degrees(),
+                        innov
+                    );
+                    yaw_debug_lines += 1;
+                }
+            }
+
             ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
             ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
             // Clamp vertical velocity aggressively for land vehicle
             ekf.zero_vertical_velocity(1e-4);
+
+            let vx_after = ekf.state[3];
+            let vy_after = ekf.state[4];
+            let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2)).sqrt();
+            if delta_v > max_delta_v {
+                max_delta_v = delta_v;
+            }
+
+            // Heading difference: convert yaw (ENU CCW from East) to North/CW bearing
+            let qw = ekf.state[6];
+            let qx = ekf.state[7];
+            let qy = ekf.state[8];
+            let qz = ekf.state[9];
+            let siny_cosp = 2.0 * (qw * qz + qx * qy);
+            let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+            // EKF yaw: ENU, CCW from East
+            let yaw = siny_cosp.atan2(cosy_cosp);
+            // Convert to North/CW heading
+            let heading_north_cw = std::f64::consts::FRAC_PI_2 - yaw;
+            let mut diff = gps.bearing.to_radians() - heading_north_cw;
+            // Wrap to [-pi, pi]
+            diff = ((diff + std::f64::consts::PI) % (2.0 * std::f64::consts::PI)) - std::f64::consts::PI;
+            let adiff = diff.abs().to_degrees();
+            if adiff > max_bearing_diff_deg {
+                max_bearing_diff_deg = adiff;
+            }
 
             // Track recent GPS speeds for sanity gate
             recent_gps.push_back((gps.timestamp, gps.speed));
@@ -135,8 +240,8 @@ fn main() -> anyhow::Result<()> {
         if let Some(max_gps) = recent_gps.iter().map(|(_, s)| *s).max_by(|a, b| a.partial_cmp(b).unwrap()) {
             if max_gps > 3.0 {
                 let ekf_speed = ekf.get_speed();
-                let limit = 1.3 * max_gps + 5.0;
-                if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > 0.5 {
+                let limit = args.clamp_scale * max_gps + args.clamp_offset;
+                if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > args.clamp_interval {
                     ekf.clamp_speed(limit);
                     last_speed_clamp_ts = r.timestamp;
                 }
@@ -153,12 +258,18 @@ fn main() -> anyhow::Result<()> {
         "log": args.log.display().to_string(),
         "q_vel": args.q_vel,
         "gps_vel_std": args.gps_vel_std,
+        "clamp_scale": args.clamp_scale,
+        "clamp_offset": args.clamp_offset,
+        "clamp_interval": args.clamp_interval,
         "rmse": rmse_val,
         "max_ekf": max_ekf,
         "max_gps": max_gps,
         "pairs": paired.len(),
         "gps_samples": gps_speeds.len(),
-        "ekf_samples": ekf_speeds.len()
+        "ekf_samples": ekf_speeds.len(),
+        "max_innovation_norm": max_innov_norm,
+        "max_delta_v": max_delta_v,
+        "max_bearing_diff_deg": max_bearing_diff_deg
     });
     println!("{}", serde_json::to_string_pretty(&out)?);
 
