@@ -267,18 +267,17 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                         let dp_dt_pa = dp_dt_hpa * 100.0;
                         let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
                         // Gate by speed: only constrain while moving, to mirror runtime
-                        let ekf_speed = ekf.get_speed();
-                        if ekf_speed > 3.0 {
+                        let gate_speed = last_gps_speed; // use last GPS speed, not drifting EKF speed
+                        if gate_speed > 3.0 {
                             let z_noise = if pressure_stable { 0.01 } else { 1.0 };
                             println!(
-                                "[BARO] t={:.2}s speed={:.2} stable={} noise={:.3}",
+                                "[BARO] t={:.2}s gps_speed={:.2} stable={} noise={:.3}",
                                 r.timestamp,
-                                ekf_speed,
+                                gate_speed,
                                 pressure_stable,
                                 z_noise
                             );
-                            // Temporarily disable baro fusion in replay to isolate RMSE impact
-                            // ekf.zero_vertical_velocity(z_noise);
+                            ekf.zero_vertical_velocity(z_noise);
                         }
                     }
                     last_baro = Some((ts, pressure_hpa));

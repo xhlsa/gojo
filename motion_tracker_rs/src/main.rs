@@ -1269,8 +1269,8 @@ async fn main() -> Result<()> {
                                 let dp_dt_hpa = (baro.pressure_hpa - prev.pressure_hpa) / dt;
                                 let dp_dt_pa = dp_dt_hpa * 100.0;
                                 let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
-                                // Gate by speed: only constrain while moving
-                                if ekf_15d.get_speed() > 3.0 {
+                                // Gate by speed: only constrain while moving (use last GPS speed)
+                                if last_gps_speed > 3.0 {
                                     let noise_var = if pressure_stable { 1e-2 } else { 1e-1 }; // relaxed to reduce over-constraint at rest
                                     ekf_15d.zero_vertical_velocity(noise_var);
                                 }
