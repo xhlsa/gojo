@@ -33,6 +33,7 @@ dist/
 docs_archive/
 AGENTS.md
 GEMINI.md
+CLAUDE.md
 
 # Ad-hoc local analysis
 analyze_latest.py
