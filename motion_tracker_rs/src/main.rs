@@ -55,6 +55,85 @@ impl LowPassFilter {
     }
 }
 
+// 2nd-order high-pass filter (Butterworth 3 Hz @ 50 Hz sample rate) for road roughness
+struct HighPassFilter {
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+}
+
+impl HighPassFilter {
+    fn new() -> Self {
+        Self {
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn filter(&mut self, x: f64) -> f64 {
+        // Coefficients from scipy.signal.butter(2, 3, 'high', fs=50)
+        const B: [f64; 3] = [0.8371, -1.6742, 0.8371];
+        const A: [f64; 3] = [1.0, -1.6475, 0.7009];
+
+        let y = B[0] * x + B[1] * self.x1 + B[2] * self.x2 - A[1] * self.y1 - A[2] * self.y2;
+
+        self.x2 = self.x1;
+        self.x1 = x;
+        self.y2 = self.y1;
+        self.y1 = y;
+
+        y
+    }
+}
+
+struct RoughnessEstimator {
+    hp_x: HighPassFilter,
+    hp_y: HighPassFilter,
+    hp_z: HighPassFilter,
+    window: VecDeque<f64>,
+    window_size: usize,
+    ewma: f64,
+    alpha: f64,
+}
+
+impl RoughnessEstimator {
+    fn new(window_size: usize, alpha: f64) -> Self {
+        Self {
+            hp_x: HighPassFilter::new(),
+            hp_y: HighPassFilter::new(),
+            hp_z: HighPassFilter::new(),
+            window: VecDeque::with_capacity(window_size),
+            window_size,
+            ewma: 0.0,
+            alpha,
+        }
+    }
+
+    fn update(&mut self, ax: f64, ay: f64, az: f64) -> f64 {
+        // High-pass each axis to isolate vibration content
+        let hx = self.hp_x.filter(ax);
+        let hy = self.hp_y.filter(ay);
+        let hz = self.hp_z.filter(az);
+
+        // Accumulate squared magnitude into a sliding window
+        let vib_sq = hx * hx + hy * hy + hz * hz;
+        self.window.push_back(vib_sq);
+        if self.window.len() > self.window_size {
+            self.window.pop_front();
+        }
+
+        // RMS of the high-passed magnitude
+        let rms = (self.window.iter().sum::<f64>() / self.window.len().max(1) as f64).sqrt();
+
+        // Smooth for stability
+        self.ewma = self.alpha * rms + (1.0 - self.alpha) * self.ewma;
+        self.ewma
+    }
+}
+
 struct IncidentCooldown {
     last_trigger: f64,
     cooldown_secs: f64,
@@ -1127,6 +1206,7 @@ async fn main() -> Result<()> {
     let mut in_gap_mode: bool = false;
     let mut last_gps_fix_ts: Option<f64> = None;
     let mut last_baro: Option<types::BaroData> = None;
+    let mut roughness_estimator = RoughnessEstimator::new(50, 0.1); // 1s RMS window @50Hz, light EWMA
 
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
@@ -1176,10 +1256,13 @@ async fn main() -> Result<()> {
                 let mut corrected_y = corrected_vec.y;
                 let corrected_z = corrected_vec.z;
 
-                // High-pass component (what LPF removed)
-                let vibration_vec = raw_vec - filtered_vec;
-                let roughness_instant = vibration_vec.norm();
-                avg_roughness = avg_roughness * 0.9 + roughness_instant * 0.1;
+                // Road roughness: high-pass + RMS to isolate vibration
+                let roughness_value = roughness_estimator.update(
+                    corrected_vec.x,
+                    corrected_vec.y,
+                    corrected_vec.z,
+                );
+                avg_roughness = roughness_value;
 
                 // Apply virtual kick if active
                 if kick_frames_remaining > 0 {
