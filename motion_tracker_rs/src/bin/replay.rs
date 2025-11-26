@@ -1,5 +1,5 @@
 use std::collections::VecDeque;
-use std::fs::File;
+use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
 
@@ -114,6 +114,21 @@ fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
     (sum_sq / pairs.len() as f64).sqrt()
 }
 
+fn get_memory_mb() -> f64 {
+    if let Ok(content) = fs::read_to_string("/proc/self/status") {
+        for line in content.lines() {
+            if line.starts_with("VmRSS:") {
+                if let Some(value) = line.split_whitespace().nth(1) {
+                    if let Ok(kb) = value.parse::<f64>() {
+                        return kb / 1024.0;
+                    }
+                }
+            }
+        }
+    }
+    0.0
+}
+
 fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let log = load_log(path)?;
     // dt set to 0.02s (50 Hz) by default; adjust if your log differs
@@ -142,6 +157,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut max_gps_gap = 0.0;
     let mut in_gap_mode: bool = false;
     let mut last_baro: Option<(f64, f64)> = None; // (timestamp, pressure_hpa)
+    let mut peak_mem_mb = get_memory_mb();
+    let mut sample_counter = 0u32;
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
@@ -185,6 +202,13 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     println!("[NHC SKIP] gap {:.1}s", nhc_gap);
                 }
                 last_nhc_ts = r.timestamp;
+            }
+        }
+        sample_counter = sample_counter.wrapping_add(1);
+        if sample_counter % 50 == 0 {
+            let cur_mem = get_memory_mb();
+            if cur_mem > peak_mem_mb {
+                peak_mem_mb = cur_mem;
             }
         }
         if let Some(g) = r.gyro.as_ref() {
@@ -414,7 +438,9 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "max_delta_v": max_delta_v,
         "max_speed_ts": max_speed_ts,
         "clamp_count": clamp_count,
-        "max_gps_gap": max_gps_gap
+        "max_gps_gap": max_gps_gap,
+        "peak_memory_mb": peak_mem_mb,
+        "final_memory_mb": get_memory_mb()
     }))
 }
 
