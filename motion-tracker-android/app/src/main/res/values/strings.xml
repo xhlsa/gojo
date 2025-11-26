@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <string name="app_name">Motion Tracker</string>
-    <string name="start_button">Start Recording</string>
-    <string name="stop_button">Stop Recording</string>
-    <string name="pause_button">Pause</string>
-    <string name="resume_button">Resume</string>
-</resources>

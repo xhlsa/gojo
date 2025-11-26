@@ -37,6 +37,10 @@ GEMINI.md
 # Ad-hoc local analysis
 analyze_latest.py
 
+# Archived legacy code/data (kept locally, not tracked)
+legacy_archive/
+motion-tracker-android/
+
 # Test artifacts
 test_*.py
 
