@@ -22,15 +22,15 @@ struct Args {
     q_vel: f64,
 
     /// GPS velocity std (meters/sec)
-    #[arg(long, default_value = "0.5")]
+    #[arg(long, default_value = "0.3")]
     gps_vel_std: f64,
 
     /// Clamp scale multiplier on recent GPS speed
-    #[arg(long, default_value = "2.5")]
+    #[arg(long, default_value = "1.5")]
     clamp_scale: f64,
 
     /// Clamp offset added after scaling
-    #[arg(long, default_value = "12.0")]
+    #[arg(long, default_value = "5.0")]
     clamp_offset: f64,
 
     /// Minimum seconds between clamps
@@ -151,12 +151,14 @@ fn main() -> anyhow::Result<()> {
                     in_gap_mode = true;
                 }
                 if in_gap_mode {
-                    let base_limit = if last_gps_speed > 3.0 {
-                        1.3 * last_gps_speed + 3.0
+                    let limit = if last_gps_speed < 1.0 {
+                        2.0
+                    } else if last_gps_speed < 5.0 {
+                        last_gps_speed * 2.0 + 2.0
                     } else {
-                        last_gps_speed + 10.0
-                    };
-                    let limit = base_limit.max(20.0);
+                        1.1 * last_gps_speed + 2.0
+                    }
+                    .max(2.0);
                     let ekf_speed = ekf.get_speed();
                     if ekf_speed > limit {
                         println!(
@@ -249,7 +251,7 @@ fn main() -> anyhow::Result<()> {
             }
 
             // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
-            if gps.speed > 3.0 {
+            if gps.speed > 5.0 {
                 let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
                 // Extract current yaw
                 let qw = ekf.state[6];
@@ -295,20 +297,12 @@ fn main() -> anyhow::Result<()> {
             }
 
             ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
+            // Fixed GPS velocity std
             ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
             // Clamp vertical velocity aggressively for land vehicle
             ekf.zero_vertical_velocity(1e-4);
 
-            // Track GPS gap
-            if let Some(last) = last_gps_ts {
-                let gap = gps.timestamp - last;
-                if gap > max_gps_gap {
-                    max_gps_gap = gap;
-                }
-            }
-            last_gps_ts = Some(gps.timestamp);
-            last_gps_speed = gps.speed;
-
+            // Track GPS gap and log errors after post-update velocity is available
             let vx_after = ekf.state[3];
             let vy_after = ekf.state[4];
             let vz_after = ekf.state[5];
@@ -326,6 +320,29 @@ fn main() -> anyhow::Result<()> {
                     vx_after, vy_after, vz_after, speed_after
                 );
             }
+
+            // Track GPS gap
+            if let Some(last) = last_gps_ts {
+                let gap = gps.timestamp - last;
+                if gap > max_gps_gap {
+                    max_gps_gap = gap;
+                }
+                // Per-fix error logging (pre/post vs GPS ENU velocity)
+                let err_pre =
+                    ((vx_before - vx_meas).powi(2) + (vy_before - vy_meas).powi(2)).sqrt();
+                let err_post =
+                    ((vx_after - vx_meas).powi(2) + (vy_after - vy_meas).powi(2)).sqrt();
+                println!(
+                    "[ERR] t={:.1} gap={:.2}s err_pre={:.2} err_post={:.2} gps_speed={:.1}",
+                    gps.timestamp,
+                    gap,
+                    err_pre,
+                    err_post,
+                    gps.speed
+                );
+            }
+            last_gps_ts = Some(gps.timestamp);
+            last_gps_speed = gps.speed;
 
             // Track recent GPS speeds for sanity gate
             recent_gps.push_back((gps.timestamp, gps.speed));

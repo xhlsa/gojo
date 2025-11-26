@@ -17,6 +17,15 @@ use tokio::sync::mpsc;
 use tokio::sync::RwLock;
 use tokio::time::{sleep, Duration};
 
+// Runtime tuning constants (promoted from replay experiments)
+const GPS_VEL_STD: f64 = 0.3;
+const NORMAL_CLAMP_SCALE: f64 = 1.5;
+const NORMAL_CLAMP_OFFSET: f64 = 5.0;
+const GAP_CLAMP_SCALE: f64 = 1.1;
+const GAP_CLAMP_OFFSET: f64 = 2.0;
+const GAP_CLAMP_TRIGGER: f64 = 5.0;
+const GAP_CLAMP_HYST: f64 = 0.5;
+
 struct LowPassFilter {
     alpha: f64,
     last_output: Vector3<f64>,
@@ -84,7 +93,7 @@ use filters::ekf_15d::Ekf15d;
 use filters::es_ekf::EsEkf;
 use rerun_logger::RerunLogger;
 use smoothing::AccelSmoother;
-use types::{AccelData, GpsData, GyroData, MagData};
+use types::{AccelData, GpsData, GyroData};
 
 /// Log to file for debugging (bypasses stdout which may be corrupted)
 fn debug_log(msg: &str) {
@@ -1071,7 +1080,6 @@ async fn main() -> Result<()> {
     // GPS tracking
     let mut last_gps_timestamp = 0.0f64;
     let mut is_heading_initialized = false;
-    let gps_speed_threshold = 3.0; // m/s - minimum speed to use for heading alignment
     let mut last_accel_ts: Option<f64> = None;
     let mut last_gyro_ts: Option<f64> = None;
     let mut recent_gps_speeds: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
@@ -1080,7 +1088,6 @@ async fn main() -> Result<()> {
     let mut last_nhc_ts: f64 = -1.0;
     let mut last_gps_speed: f64 = 0.0;
     let mut in_gap_mode: bool = false;
-    let mut last_mag_ts: Option<f64> = None;
     let mut last_gps_fix_ts: Option<f64> = None;
     let mut last_baro: Option<types::BaroData> = None;
 
@@ -1179,9 +1186,9 @@ async fn main() -> Result<()> {
                     let gap_for_clamp = last_gps_fix_ts.map(|ts| (now_ts - ts).max(0.0)).unwrap_or(f64::INFINITY);
                     // Envelope clamp remains, but gap-mode per-prediction clamp above should catch outages
                     let (scale, offset, min_interval) = if gap_for_clamp > 5.0 {
-                        (1.0, 3.0, 0.0)
+                        (GAP_CLAMP_SCALE, GAP_CLAMP_OFFSET, 0.0)
                     } else {
-                        (1.5, 5.0, 0.0)
+                        (NORMAL_CLAMP_SCALE, NORMAL_CLAMP_OFFSET, 0.0)
                     };
                     let limit = scale * max_recent_gps + offset;
                     if ekf_speed > limit && ekf_speed > 1e-3 && (now_ts - last_speed_clamp_ts) > min_interval {
@@ -1213,21 +1220,19 @@ async fn main() -> Result<()> {
                 // Gap-mode speed ceiling during GPS outages (per prediction clamp)
                 if let Some(ts) = last_gps_fix_ts {
                     let gap = (accel.timestamp - ts).max(0.0);
-                    // Enter gap mode after 5s; hysteresis keeps us in gap mode until GPS returns
-                    if gap > 5.0 || (in_gap_mode && gap > 0.5) {
+                    // Enter gap mode after threshold; hysteresis keeps us in gap mode until GPS returns
+                    if gap > GAP_CLAMP_TRIGGER || (in_gap_mode && gap > GAP_CLAMP_HYST) {
                         in_gap_mode = true;
                     }
                     if in_gap_mode {
                         let limit = if last_gps_speed < 1.0 {
                             2.0 // stationary: very tight cap
+                        } else if last_gps_speed < 5.0 {
+                            last_gps_speed * 2.0 + GAP_CLAMP_OFFSET // low speed: moderate headroom
                         } else {
-                            let base_limit = if last_gps_speed > 3.0 {
-                                1.3 * last_gps_speed + 3.0
-                            } else {
-                                last_gps_speed + 10.0
-                            };
-                            base_limit.max(20.0)
-                        };
+                            GAP_CLAMP_SCALE * last_gps_speed + GAP_CLAMP_OFFSET // tighter headroom during outages
+                        }
+                        .max(2.0); // floor
                         let ekf_speed = ekf_15d.get_speed();
                         if ekf_speed > limit {
                             eprintln!(
@@ -1650,20 +1655,16 @@ async fn main() -> Result<()> {
 
                         // Update 15D filter with GPS (uses lat/lon directly for position correction)
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
-                        // Update 15D velocity using GPS speed/bearing when available
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.05);
+                        // Update 15D velocity using GPS speed/bearing when available (fixed R)
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                     }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
                     if gps.speed < 0.5 {
                         ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-3);
                     } else {
-                        // GPS Velocity Update (Corrects drift using Speed + Bearing)
-                        let rad = gps.bearing.to_radians();
-                        let vx = gps.speed * rad.sin(); // East
-                        let vy = gps.speed * rad.cos(); // North
-                        // Z velocity damped to 0.0
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), 0.5);
+                        // GPS Velocity Update (fixed R)
+                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                         // Land vehicle assumption: clamp vertical velocity tightly
                         ekf_15d.zero_vertical_velocity(1e-4);
                     }
@@ -1685,8 +1686,8 @@ async fn main() -> Result<()> {
                         );
                     }
 
-                    // Motion Alignment: If gps_speed > 3.0 m/s AND heading not yet initialized
-                    if gps.speed > gps_speed_threshold && !is_heading_initialized {
+                    // Motion Alignment: If gps_speed > 5.0 m/s AND heading not yet initialized
+                    if gps.speed > 5.0 && !is_heading_initialized {
                         // Align heading to GPS bearing.
                         // GPS bearing: degrees, clockwise from North.
                         // EKF yaw (ENU CCW from East): yaw = 90° - bearing
