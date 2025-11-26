@@ -28,6 +28,14 @@ dist/
 # OS
 .DS_Store
 *.tmp
+# Internal docs (keep local, not in public tree)
+.claude/
+docs_archive/
+AGENTS.md
+GEMINI.md
+
+# Ad-hoc local analysis
+analyze_latest.py
 
 # Test artifacts
 test_*.py
