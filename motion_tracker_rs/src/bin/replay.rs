@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufReader;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use flate2::read::GzDecoder;
@@ -14,8 +14,12 @@ use serde_json::json;
 #[derive(Parser, Debug)]
 struct Args {
     /// Path to comparison_*.json[.gz] log
+    #[arg(long, conflicts_with = "golden_dir")]
+    log: Option<PathBuf>,
+
+    /// Directory of golden logs to batch replay (processes comparison_*.json[.gz])
     #[arg(long)]
-    log: PathBuf,
+    golden_dir: Option<PathBuf>,
 
     /// Velocity process noise (q_vel)
     #[arg(long, default_value = "0.5")]
@@ -90,7 +94,7 @@ struct LogFile {
     readings: Vec<Reading>,
 }
 
-fn load_log(path: &PathBuf) -> anyhow::Result<LogFile> {
+fn load_log(path: &Path) -> anyhow::Result<LogFile> {
     let file = File::open(path)?;
     if path.extension().map(|e| e == "gz").unwrap_or(false) {
         let gz = GzDecoder::new(file);
@@ -110,10 +114,8 @@ fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
     (sum_sq / pairs.len() as f64).sqrt()
 }
 
-fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let log = load_log(&args.log)?;
-
+fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
+    let log = load_log(path)?;
     // dt set to 0.02s (50 Hz) by default; adjust if your log differs
     let mut ekf = Ekf15d::new(0.02, 8.0, 0.5, 0.0005);
     // Override velocity process noise
@@ -395,8 +397,8 @@ fn main() -> anyhow::Result<()> {
     let max_ekf: f64 = ekf_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
     let max_gps: f64 = gps_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
 
-    let out = json!({
-        "log": args.log.display().to_string(),
+    Ok(json!({
+        "log": path.display().to_string(),
         "q_vel": args.q_vel,
         "gps_vel_std": args.gps_vel_std,
         "clamp_scale": args.clamp_scale,
@@ -413,8 +415,35 @@ fn main() -> anyhow::Result<()> {
         "max_speed_ts": max_speed_ts,
         "clamp_count": clamp_count,
         "max_gps_gap": max_gps_gap
-    });
-    println!("{}", serde_json::to_string_pretty(&out)?);
+    }))
+}
 
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    let mut results = Vec::new();
+
+    if let Some(dir) = args.golden_dir.as_ref() {
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if !(name.starts_with("comparison_") && (name.ends_with(".json") || name.ends_with(".json.gz"))) {
+                continue;
+            }
+            match run_once(&path, &args) {
+                Ok(res) => results.push(res),
+                Err(e) => eprintln!("Failed {}: {}", path.display(), e),
+            }
+        }
+    } else if let Some(log) = args.log.as_ref() {
+        results.push(run_once(log, &args)?);
+    } else {
+        anyhow::bail!("Provide --log or --golden-dir");
+    }
+
+    println!("{}", serde_json::to_string_pretty(&results)?);
     Ok(())
 }
