@@ -148,6 +148,14 @@ struct Args {
     /// Dashboard port (default: 8080)
     #[arg(long, default_value = "8080")]
     dashboard_port: u16,
+
+    /// Enable magnetometer fusion (still collected if off)
+    #[arg(long, default_value_t = false)]
+    enable_mag: bool,
+
+    /// Enable barometer-based vertical constraint (still collected if off)
+    #[arg(long, default_value_t = false)]
+    enable_baro: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1248,21 +1256,27 @@ async fn main() -> Result<()> {
                 }
 
                 // Barometer: adjust vertical velocity prior based on pressure stability
-                if let Some(baro) = sensor_state.latest_baro.read().await.as_ref().cloned() {
-                    let is_new = last_baro
-                        .as_ref()
-                        .map(|b| (b.timestamp - baro.timestamp).abs() > 1e-6)
-                        .unwrap_or(true);
-                    if is_new {
-                        if let Some(prev) = last_baro.as_ref() {
-                            let dt = (baro.timestamp - prev.timestamp).max(1e-3);
-                            let dp_dt_hpa = (baro.pressure_hpa - prev.pressure_hpa) / dt;
-                            let dp_dt_pa = dp_dt_hpa * 100.0;
-                            let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
-                            let noise_var = if pressure_stable { 1e-4 } else { 1e-2 };
-                            ekf_15d.zero_vertical_velocity(noise_var);
+                // Only apply when moving; at rest this can inject noise
+                if args.enable_baro {
+                    if let Some(baro) = sensor_state.latest_baro.read().await.as_ref().cloned() {
+                        let is_new = last_baro
+                            .as_ref()
+                            .map(|b| (b.timestamp - baro.timestamp).abs() > 1e-6)
+                            .unwrap_or(true);
+                        if is_new {
+                            if let Some(prev) = last_baro.as_ref() {
+                                let dt = (baro.timestamp - prev.timestamp).max(1e-3);
+                                let dp_dt_hpa = (baro.pressure_hpa - prev.pressure_hpa) / dt;
+                                let dp_dt_pa = dp_dt_hpa * 100.0;
+                                let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
+                                // Gate by speed: only constrain while moving
+                                if ekf_15d.get_speed() > 3.0 {
+                                    let noise_var = if pressure_stable { 1e-2 } else { 1e-1 }; // relaxed to reduce over-constraint at rest
+                                    ekf_15d.zero_vertical_velocity(noise_var);
+                                }
+                            }
+                            last_baro = Some(baro);
                         }
-                        last_baro = Some(baro);
                     }
                 }
 
@@ -1282,17 +1296,20 @@ async fn main() -> Result<()> {
                     last_nhc_ts = accel.timestamp;
                 }
 
-                if gps_gap > 3.0 {
-                    if let Some(mag) = sensor_state.latest_mag.read().await.as_ref() {
-                        if let Some(innov) = ekf_15d.update_mag_heading(
-                            mag,
-                            0.157, // approx 9° declination in radians (Tucson)
-                        ) {
-                            eprintln!(
-                                "[MAG] gap {:.1}s yaw correction: {:.1}°",
-                                gps_gap,
-                                innov.to_degrees()
-                            );
+                if gps_gap > 3.0 && args.enable_mag {
+                    // Only trust mag heading when moving; otherwise heading noise can rotate the body frame at rest
+                    if ekf_15d.get_speed() > 5.0 {
+                        if let Some(mag) = sensor_state.latest_mag.read().await.as_ref() {
+                            if let Some(innov) = ekf_15d.update_mag_heading(
+                                mag,
+                                0.157, // approx 9° declination in radians (Tucson)
+                            ) {
+                                eprintln!(
+                                    "[MAG] gap {:.1}s yaw correction: {:.1}°",
+                                    gps_gap,
+                                    innov.to_degrees()
+                                );
+                            }
                         }
                     }
                 }

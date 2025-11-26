@@ -40,6 +40,14 @@ struct Args {
     /// Minimum seconds between clamps
     #[arg(long, default_value = "0.5")]
     clamp_interval: f64,
+
+    /// Enable magnetometer yaw assist during replay (A/B testing)
+    #[arg(long, default_value_t = false)]
+    enable_mag: bool,
+
+    /// Enable barometer-assisted zero vertical velocity during replay (A/B testing)
+    #[arg(long, default_value_t = false)]
+    enable_baro: bool,
 }
 
 #[derive(Deserialize)]
@@ -215,50 +223,66 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
         }
-        if let Some(m) = r.mag.as_ref() {
-            _latest_mag = Some(m.clone());
-            // Mag yaw assist during GPS gaps (>3s)
-            if let Some(last) = last_gps_ts {
-                let gap = (r.timestamp - last).max(0.0);
-                if gap > 3.0 {
-                    // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
-                    if let Some(yaw_correction) = ekf.update_mag_heading(
-                        &crate::types::MagData {
-                            timestamp: m.timestamp,
-                            x: m.x,
-                            y: m.y,
-                            z: m.z,
-                        },
-                        0.157, // ~9° declination (Tucson)
-                    ) {
-                        println!(
-                            "[MAG] gap {:.1}s yaw correction: {:.1}°",
-                            gap,
-                            yaw_correction.to_degrees()
-                        );
+        if args.enable_mag {
+            if let Some(m) = r.mag.as_ref() {
+                _latest_mag = Some(m.clone());
+                // Mag yaw assist during GPS gaps (>3s)
+                if let Some(last) = last_gps_ts {
+                    let gap = (r.timestamp - last).max(0.0);
+                    if gap > 3.0 {
+                        // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
+                        if let Some(yaw_correction) = ekf.update_mag_heading(
+                            &crate::types::MagData {
+                                timestamp: m.timestamp,
+                                x: m.x,
+                                y: m.y,
+                                z: m.z,
+                            },
+                            0.157, // ~9° declination (Tucson)
+                        ) {
+                            println!(
+                                "[MAG] gap {:.1}s yaw correction: {:.1}°",
+                                gap,
+                                yaw_correction.to_degrees()
+                            );
+                        }
                     }
                 }
             }
         }
-        if let Some(baro_val) = r.baro.as_ref() {
-            // Extract pressure and timestamp (fallback to reading timestamp)
-            if let Some(pressure_hpa) = baro_val
-                .get("pressure_hpa")
-                .and_then(|v| v.as_f64())
-            {
-                let ts = baro_val
-                    .get("timestamp")
+        if args.enable_baro {
+            if let Some(baro_val) = r.baro.as_ref() {
+                // Extract pressure and timestamp (fallback to reading timestamp)
+                if let Some(pressure_hpa) = baro_val
+                    .get("pressure_hpa")
                     .and_then(|v| v.as_f64())
-                    .unwrap_or(r.timestamp);
-                if let Some((prev_ts, prev_p)) = last_baro {
-                    let dt = (ts - prev_ts).max(1e-3);
-                    let dp_dt_hpa = (pressure_hpa - prev_p) / dt;
-                    let dp_dt_pa = dp_dt_hpa * 100.0;
-                    let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
-                    let z_noise = if pressure_stable { 0.01 } else { 1.0 };
-                    ekf.zero_vertical_velocity(z_noise);
+                {
+                    let ts = baro_val
+                        .get("timestamp")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(r.timestamp);
+                    if let Some((prev_ts, prev_p)) = last_baro {
+                        let dt = (ts - prev_ts).max(1e-3);
+                        let dp_dt_hpa = (pressure_hpa - prev_p) / dt;
+                        let dp_dt_pa = dp_dt_hpa * 100.0;
+                        let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
+                        // Gate by speed: only constrain while moving, to mirror runtime
+                        let ekf_speed = ekf.get_speed();
+                        if ekf_speed > 3.0 {
+                            let z_noise = if pressure_stable { 0.01 } else { 1.0 };
+                            println!(
+                                "[BARO] t={:.2}s speed={:.2} stable={} noise={:.3}",
+                                r.timestamp,
+                                ekf_speed,
+                                pressure_stable,
+                                z_noise
+                            );
+                            // Temporarily disable baro fusion in replay to isolate RMSE impact
+                            // ekf.zero_vertical_velocity(z_noise);
+                        }
+                    }
+                    last_baro = Some((ts, pressure_hpa));
                 }
-                last_baro = Some((ts, pressure_hpa));
             }
         }
         if let Some(gps) = r.gps.as_ref() {

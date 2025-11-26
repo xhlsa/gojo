@@ -695,21 +695,14 @@ impl Ekf15d {
             return None;
         }
 
-        // Extract roll/pitch from quaternion
-        let qw = self.state[6];
-        let qx = self.state[7];
-        let qy = self.state[8];
-        let qz = self.state[9];
-        let sinr_cosp = 2.0 * (qw * qx + qy * qz);
-        let cosr_cosp = 1.0 - 2.0 * (qx * qx + qy * qy);
-        let roll = sinr_cosp.atan2(cosr_cosp);
-
-        let sinp = 2.0 * (qw * qy - qz * qx);
-        let pitch = if sinp.abs() >= 1.0 {
-            sinp.signum() * std::f64::consts::FRAC_PI_2
-        } else {
-            sinp.asin()
-        };
+        // Extract roll/pitch/yaw from quaternion
+        let q = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.state[6],
+            self.state[7],
+            self.state[8],
+            self.state[9],
+        ));
+        let (roll, pitch, current_yaw) = q.euler_angles();
 
         // Tilt compensation
         let (sin_r, cos_r) = (roll.sin(), roll.cos());
@@ -717,11 +710,6 @@ impl Ekf15d {
         let mag_x_h = mag.x * cos_p + mag.y * sin_r * sin_p + mag.z * cos_r * sin_p;
         let mag_y_h = mag.y * cos_r - mag.z * sin_r;
         let mag_yaw = mag_y_h.atan2(mag_x_h) + declination_rad; // ENU yaw (CCW from East)
-
-        // Extract current yaw
-        let siny_cosp = 2.0 * (qw * qz + qx * qy);
-        let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-        let current_yaw = siny_cosp.atan2(cosy_cosp);
 
         // Innovation with wrap
         let mut innov = mag_yaw - current_yaw;
@@ -737,16 +725,15 @@ impl Ekf15d {
             return None;
         }
 
-        // Apply partial correction (poor-man's gain)
+        // Apply partial correction (poor-man's gain) preserving roll/pitch
         let gain = 0.3;
         let new_yaw = current_yaw + gain * innov;
-        let half = new_yaw * 0.5;
-        let qw_new = half.cos();
-        let qz_new = half.sin();
-        self.state[6] = qw_new;
-        self.state[7] = 0.0;
-        self.state[8] = 0.0;
-        self.state[9] = qz_new;
+        let new_q = nalgebra::UnitQuaternion::from_euler_angles(roll, pitch, new_yaw);
+        let normalized_q = new_q.normalize();
+        self.state[6] = normalized_q.w;
+        self.state[7] = normalized_q.i;
+        self.state[8] = normalized_q.j;
+        self.state[9] = normalized_q.k;
 
         Some(innov)
     }
