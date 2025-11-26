@@ -167,6 +167,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut last_baro: Option<(f64, f64)> = None; // (timestamp, pressure_hpa)
     let mut peak_mem_mb = get_memory_mb();
     let mut sample_counter = 0u32;
+    let mut mag_fires: u64 = 0;
+    let mut baro_fires: u64 = 0;
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
@@ -226,10 +228,10 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         if args.enable_mag {
             if let Some(m) = r.mag.as_ref() {
                 _latest_mag = Some(m.clone());
-                // Mag yaw assist during GPS gaps (>3s)
+                // Mag yaw assist during GPS gaps (>5s) and when moving
                 if let Some(last) = last_gps_ts {
                     let gap = (r.timestamp - last).max(0.0);
-                    if gap > 3.0 {
+                    if gap > 5.0 && ekf.get_speed() > 2.0 {
                         // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
                         if let Some(yaw_correction) = ekf.update_mag_heading(
                             &crate::types::MagData {
@@ -245,6 +247,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                                 gap,
                                 yaw_correction.to_degrees()
                             );
+                            mag_fires += 1;
                         }
                     }
                 }
@@ -268,8 +271,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                         let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
                         // Gate by speed: only constrain while moving, to mirror runtime
                         let gate_speed = last_gps_speed; // use last GPS speed, not drifting EKF speed
-                        if gate_speed > 3.0 {
-                            let z_noise = if pressure_stable { 0.01 } else { 1.0 };
+                        if gate_speed > 1.0 {
+                            let z_noise = if pressure_stable { 0.005 } else { 1.0 };
                             println!(
                                 "[BARO] t={:.2}s gps_speed={:.2} stable={} noise={:.3}",
                                 r.timestamp,
@@ -278,6 +281,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                                 z_noise
                             );
                             ekf.zero_vertical_velocity(z_noise);
+                            baro_fires += 1;
                         }
                     }
                     last_baro = Some((ts, pressure_hpa));
@@ -462,6 +466,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "max_speed_ts": max_speed_ts,
         "clamp_count": clamp_count,
         "max_gps_gap": max_gps_gap,
+        "mag_fires": mag_fires,
+        "baro_fires": baro_fires,
         "peak_memory_mb": peak_mem_mb,
         "final_memory_mb": get_memory_mb()
     }))

@@ -7,7 +7,7 @@ use nalgebra::Vector3;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use std::fs::{File, OpenOptions};
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::panic;
 use std::process::Stdio;
 use std::sync::Arc;
@@ -764,15 +764,31 @@ fn build_track_path(readings: &[SensorReading]) -> Vec<[f64; 2]> {
     track_path
 }
 
+/// Append a SensorReading as JSONL to the session logger (if enabled)
+fn log_jsonl_reading(
+    logger: &mut Option<GzEncoder<BufWriter<File>>>,
+    reading: &SensorReading,
+    counter: &mut usize,
+) -> Result<()> {
+    if let Some(enc) = logger.as_mut() {
+        let line = serde_json::to_string(reading)?;
+        enc.write_all(line.as_bytes())?;
+        enc.write_all(b"\n")?;
+        *counter += 1;
+        if *counter % 500 == 0 {
+            enc.flush()?; // keep buffered JSONL from growing without bound
+        }
+    }
+    Ok(())
+}
+
 /// Save JSON with gzip compression, returning the actual filename written
 fn save_json_compressed(
     output: &ComparisonOutput,
     output_dir: &str,
-    _is_final: bool,
+    session_id: &str,
 ) -> Result<String> {
-    // Generate timestamped filename (unique for each run)
-    let timestamp = ts_now_clean();
-    let session_path = format!("{}/comparison_{}.json.gz", output_dir, timestamp);
+    let session_path = format!("{}/comparison_{}.json.gz", output_dir, session_id);
     let temp_path = format!("{}.tmp", session_path);
 
     // Serialize to JSON
@@ -825,6 +841,19 @@ async fn main() -> Result<()> {
     println!("  Output Dir: {}", args.output_dir);
 
     std::fs::create_dir_all(&args.output_dir)?;
+
+    // Single-session identifiers/paths
+    let session_id = ts_now_clean();
+    let session_json_path = format!("{}/session_{}.jsonl.gz", args.output_dir, session_id);
+    let session_json_file = File::create(&session_json_path)?;
+    let session_json_writer = BufWriter::new(session_json_file);
+    let mut session_logger = Some(GzEncoder::new(session_json_writer, Compression::fast()));
+    let mut jsonl_count: usize = 0;
+    println!(
+        "[{}] JSONL logging to {} (one file per session)",
+        ts_now(),
+        session_json_path
+    );
 
     // Shared sensor state
     let sensor_state = SensorState::new();
@@ -1270,8 +1299,8 @@ async fn main() -> Result<()> {
                                 let dp_dt_pa = dp_dt_hpa * 100.0;
                                 let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
                                 // Gate by speed: only constrain while moving (use last GPS speed)
-                                if last_gps_speed > 3.0 {
-                                    let noise_var = if pressure_stable { 1e-2 } else { 1e-1 }; // relaxed to reduce over-constraint at rest
+                                if last_gps_speed > 1.0 {
+                                    let noise_var = if pressure_stable { 5e-3 } else { 1e-1 }; // gentle damping when stable
                                     ekf_15d.zero_vertical_velocity(noise_var);
                                 }
                             }
@@ -1296,9 +1325,9 @@ async fn main() -> Result<()> {
                     last_nhc_ts = accel.timestamp;
                 }
 
-                if gps_gap > 3.0 && args.enable_mag {
+                if gps_gap > 5.0 && args.enable_mag {
                     // Only trust mag heading when moving; otherwise heading noise can rotate the body frame at rest
-                    if ekf_15d.get_speed() > 5.0 {
+                    if ekf_15d.get_speed() > 2.0 {
                         if let Some(mag) = sensor_state.latest_mag.read().await.as_ref() {
                             if let Some(innov) = ekf_15d.update_mag_heading(
                                 mag,
@@ -1321,7 +1350,7 @@ async fn main() -> Result<()> {
                 fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, accel.timestamp);
 
                 // We'll update this reading with 13D/15D data later if gyro arrives
-                readings.push(SensorReading {
+                let reading = SensorReading {
                     timestamp: accel.timestamp,
                     accel: Some(accel.clone()),
                     gyro: None,
@@ -1334,7 +1363,10 @@ async fn main() -> Result<()> {
                     experimental_15d: Some(ekf_15d.get_state()),
                     mag: sensor_state.latest_mag.read().await.clone(),
                     fgo: None, // Will be updated on GPS fix
-                });
+                };
+
+                log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
+                readings.push(reading);
 
                 // ===== INCIDENT DETECTION =====
                 // Sustained maneuvers (filtered, gravity-removed) gated by EKF speed
@@ -1748,6 +1780,7 @@ async fn main() -> Result<()> {
                         experimental_15d: Some(ekf_15d.get_state()),
                         fgo: Some(fgo.get_current_state()), // FGO shadow mode output
                     };
+                    log_jsonl_reading(&mut session_logger, &gps_reading, &mut jsonl_count)?;
                     readings.push(gps_reading);
                 }
             }
@@ -2008,7 +2041,7 @@ async fn main() -> Result<()> {
                 track_path,
             };
 
-            let filename = save_json_compressed(&output, &args.output_dir, false)?;
+            let filename = save_json_compressed(&output, &args.output_dir, &session_id)?;
 
             println!(
                 "[{}] Auto-saved {} samples to {}",
@@ -2062,6 +2095,7 @@ async fn main() -> Result<()> {
                     fgo: None,
                 };
 
+                log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
                 readings.push(reading);
 
                 if args.filter == "ekf" || args.filter == "both" {
@@ -2221,7 +2255,7 @@ async fn main() -> Result<()> {
         track_path,
     };
 
-    let filename = save_json_compressed(&output, &args.output_dir, true)?;
+    let filename = save_json_compressed(&output, &args.output_dir, &session_id)?;
 
     println!(
         "[{}] Final save: {} samples to {}",
@@ -2229,6 +2263,15 @@ async fn main() -> Result<()> {
         readings.len(),
         filename
     );
+
+    if let Some(logger) = session_logger {
+        logger.finish()?;
+        println!(
+            "[{}] Session JSONL closed: {}",
+            ts_now(),
+            session_json_path
+        );
+    }
 
     println!("\n=== Final Stats ===");
     println!("Total accel samples: {}", accel_count);
