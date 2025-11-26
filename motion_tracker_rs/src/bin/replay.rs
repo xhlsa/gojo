@@ -225,13 +225,18 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
         }
-        if args.enable_mag {
+        // Gap detection once per reading
+        let in_gps_gap = last_gps_ts
+            .map(|ts| (r.timestamp - ts).max(0.0) > 3.0)
+            .unwrap_or(true);
+
+        if args.enable_mag && in_gps_gap {
             if let Some(m) = r.mag.as_ref() {
                 _latest_mag = Some(m.clone());
-                // Mag yaw assist during GPS gaps (>5s) and when moving
+                // Mag yaw assist during GPS gaps when moving
                 if let Some(last) = last_gps_ts {
                     let gap = (r.timestamp - last).max(0.0);
-                    if gap > 5.0 && ekf.get_speed() > 2.0 {
+                    if gap > 3.0 && ekf.get_speed() > 2.0 && last_gps_speed > 2.0 {
                         // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
                         if let Some(yaw_correction) = ekf.update_mag_heading(
                             &crate::types::MagData {
@@ -253,7 +258,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                 }
             }
         }
-        if args.enable_baro {
+        if args.enable_baro && in_gps_gap {
             if let Some(baro_val) = r.baro.as_ref() {
                 // Extract pressure and timestamp (fallback to reading timestamp)
                 if let Some(pressure_hpa) = baro_val
@@ -273,13 +278,6 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                         let gate_speed = last_gps_speed; // use last GPS speed, not drifting EKF speed
                         if gate_speed > 1.0 {
                             let z_noise = if pressure_stable { 0.005 } else { 1.0 };
-                            println!(
-                                "[BARO] t={:.2}s gps_speed={:.2} stable={} noise={:.3}",
-                                r.timestamp,
-                                gate_speed,
-                                pressure_stable,
-                                z_noise
-                            );
                             ekf.zero_vertical_velocity(z_noise);
                             baro_fires += 1;
                         }

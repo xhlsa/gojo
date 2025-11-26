@@ -1284,9 +1284,12 @@ async fn main() -> Result<()> {
                     in_gap_mode = false;
                 }
 
-                // Barometer: adjust vertical velocity prior based on pressure stability
+                // Consider GPS gap once per accel tick
+                let in_gps_gap = gps_gap > 3.0;
+
+                // Barometer: adjust vertical velocity prior based on pressure stability during GPS gaps
                 // Only apply when moving; at rest this can inject noise
-                if args.enable_baro {
+                if args.enable_baro && in_gps_gap {
                     if let Some(baro) = sensor_state.latest_baro.read().await.as_ref().cloned() {
                         let is_new = last_baro
                             .as_ref()
@@ -1325,9 +1328,9 @@ async fn main() -> Result<()> {
                     last_nhc_ts = accel.timestamp;
                 }
 
-                if gps_gap > 5.0 && args.enable_mag {
+                if args.enable_mag && in_gps_gap {
                     // Only trust mag heading when moving; otherwise heading noise can rotate the body frame at rest
-                    if ekf_15d.get_speed() > 2.0 {
+                    if last_gps_speed > 2.0 && ekf_15d.get_speed() > 2.0 {
                         if let Some(mag) = sensor_state.latest_mag.read().await.as_ref() {
                             if let Some(innov) = ekf_15d.update_mag_heading(
                                 mag,
