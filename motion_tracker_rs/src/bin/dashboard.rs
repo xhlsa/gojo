@@ -65,10 +65,23 @@ async fn index_handler() -> Html<&'static str> {
     Html(include_str!("../dashboard_static.html"))
 }
 
+fn resolve_data_dir(base: &PathBuf, variant: &Option<String>) -> PathBuf {
+    if let Some(v) = variant {
+        if v == "rough" {
+            let candidate = base.join("golden/roughness_updated");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    base.clone()
+}
+
 #[derive(Deserialize)]
 struct PaginationParams {
     limit: Option<u32>,
     offset: Option<u32>,
+    variant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -253,12 +266,13 @@ async fn list_drives_handler(
 ) -> Result<Json<DrivesResponse>, (StatusCode, String)> {
     let limit = params.limit.unwrap_or(20).min(100) as usize;
     let offset = params.offset.unwrap_or(0) as usize;
+    let base_dir = resolve_data_dir(&state.data_dir, &params.variant);
 
     // Scan directory for drive files (compressed gzip JSON)
     // Collect (path, is_golden)
     let mut filepaths: Vec<(std::path::PathBuf, bool)> = Vec::new();
 
-    match std::fs::read_dir(&state.data_dir) {
+    match std::fs::read_dir(&base_dir) {
         Ok(entries) => {
             for entry in entries {
                 if let Ok(entry) = entry {
@@ -276,7 +290,7 @@ async fn list_drives_handler(
     }
 
     // Also include curated golden drives if present (comparison_*.json.gz in golden/)
-    let golden_dir = state.data_dir.join("golden");
+    let golden_dir = base_dir.join("golden");
     if let Ok(entries) = std::fs::read_dir(&golden_dir) {
         for entry in entries.flatten() {
             let path = entry.path();
@@ -374,12 +388,13 @@ async fn list_drives_handler(
 async fn drive_details_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Json<DriveDetailsResponse>, (StatusCode, String)> {
     // Find the file (gzipped format). Try root, then golden/.
-    let mut json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
+    let base_dir = resolve_data_dir(&state.data_dir, &params.variant);
+    let mut json_path = base_dir.join(format!("{}.json.gz", drive_id));
     if !json_path.exists() {
-        let golden_candidate = state
-            .data_dir
+        let golden_candidate = base_dir
             .join("golden")
             .join(format!("{}.json.gz", drive_id));
         if golden_candidate.exists() {
@@ -422,11 +437,12 @@ async fn drive_details_handler(
 async fn drive_gpx_handler(
     State(state): State<AppState>,
     Path(drive_id): Path<String>,
+    Query(params): Query<PaginationParams>,
 ) -> Result<Response, (StatusCode, String)> {
-    let mut json_path = state.data_dir.join(format!("{}.json.gz", drive_id));
+    let base_dir = resolve_data_dir(&state.data_dir, &params.variant);
+    let mut json_path = base_dir.join(format!("{}.json.gz", drive_id));
     if !json_path.exists() {
-        let golden_candidate = state
-            .data_dir
+        let golden_candidate = base_dir
             .join("golden")
             .join(format!("{}.json.gz", drive_id));
         if golden_candidate.exists() {

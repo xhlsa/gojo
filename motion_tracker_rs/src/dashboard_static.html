@@ -459,6 +459,13 @@
                     <input type="checkbox" id="gps-filter-checkbox" checked>
                     <label for="gps-filter-checkbox">Show GPS only</label>
                 </div>
+                <div class="filter-select">
+                    <label for="data-source-select">Data source:</label>
+                    <select id="data-source-select">
+                        <option value="">Default</option>
+                        <option value="rough">Golden (roughness updated)</option>
+                    </select>
+                </div>
                 <div class="filter-info">
                     <span id="filter-count-text">84 drives with GPS</span> |
                     <span id="filter-hidden-text">Hiding 1,361 files without GPS data</span>
@@ -546,6 +553,7 @@
         let currentDriveId = null;
         let allDrives = [];
         let showGpsOnly = true;
+        let currentVariant = '';
 
         // View management
         function switchView(viewName) {
@@ -640,7 +648,7 @@
 
             // Fetch all drives if we haven't already
             if (allDrives.length === 0) {
-                const response = await fetch(`/api/drives?limit=10000&offset=0`);
+                const response = await fetch(`/api/drives?limit=10000&offset=0&variant=${encodeURIComponent(currentVariant)}`);
                 const result = await response.json();
                 allDrives = result.drives || [];
                 totalDrives = result.total;
@@ -703,10 +711,18 @@
             loadDrives(0);
         });
 
+        // Data source selector
+        document.getElementById('data-source-select').addEventListener('change', (e) => {
+            currentVariant = e.target.value;
+            currentPage = 0;
+            allDrives = []; // force refetch from new source
+            loadDrives(0);
+        });
+
         // Drive details
         async function viewDrive(driveId) {
             currentDriveId = driveId;
-            const response = await fetch(`/api/drive/${driveId}`);
+            const response = await fetch(`/api/drive/${driveId}?variant=${encodeURIComponent(currentVariant)}`);
             const result = await response.json();
 
             document.getElementById('detail-datetime').textContent = result.datetime;
@@ -723,7 +739,7 @@
         }
 
         async function loadMapData(driveId) {
-            const response = await fetch(`/api/drive/${driveId}`);
+            const response = await fetch(`/api/drive/${driveId}?variant=${encodeURIComponent(currentVariant)}`);
             const result = await response.json();
 
             if (!result.readings || result.readings.length === 0) {
@@ -1227,7 +1243,7 @@
         }
 
         function downloadGPX(driveId) {
-            window.location.href = `/api/drive/${driveId}/gpx`;
+            window.location.href = `/api/drive/${driveId}/gpx?variant=${encodeURIComponent(currentVariant)}`;
         }
 
         // Metric selector functionality
