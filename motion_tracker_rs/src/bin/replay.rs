@@ -191,6 +191,23 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
             .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
     }
 
+    // Backfill early GPS rows with the first non-zero roughness so maps get color immediately.
+    if let Some(first_nonzero_idx) = readings
+        .iter()
+        .position(|r| r.get("roughness").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0)
+    {
+        if let Some(first_val) = readings[first_nonzero_idx]
+            .get("roughness")
+            .and_then(|v| v.as_f64())
+        {
+            for r in readings.iter_mut().take(first_nonzero_idx) {
+                r.as_object_mut()
+                    .expect("reading should be object")
+                    .insert("roughness".to_string(), serde_json::Value::from(first_val));
+            }
+        }
+    }
+
     let parent = output_dir
         .map(|p| p.to_path_buf())
         .unwrap_or_else(|| {
