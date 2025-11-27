@@ -32,6 +32,28 @@ cargo run --bin replay -- --log ../motion_tracker_sessions/comparison_YYYYMMDD_H
 - `test_ekf.sh` — legacy harness; use `motion_tracker_rs.sh` for current runs.
 - `replay` (Rust bin) — offline EKF replay with RMSE/clamp stats.
 
+### Termux widget shortcuts (optional)
+Create these in `~/.shortcuts/` for one-tap control (Termux:Widget):
+
+`~/.shortcuts/Start`
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+export HOME="/data/data/com.termux/files/home"
+export PATH="/data/data/com.termux/files/usr/bin:$PATH"
+exec >"$HOME/mt_widget.log" 2>&1
+pkill -f "motion_tracker_rs/target/release/motion_tracker" 2>/dev/null
+cd "$HOME/gojo/motion_tracker_rs" || exit 1
+nohup /data/data/com.termux/files/usr/bin/cargo run --release --bin motion_tracker -- 7200 >/dev/null 2>&1 &
+termux-toast "Tracking started"
+```
+
+`~/.shortcuts/Stop_Tracking`
+```bash
+#!/data/data/com.termux/files/usr/bin/bash
+pkill -f "target/release/motion_tracker"
+termux-toast "Tracking stopped"
+```
+
 ## Output
 - Stored in `motion_tracker_sessions/` (git-ignored).
 - Each log includes raw sensors, EKF states, incidents, metrics, and optional mag/baro samples.
