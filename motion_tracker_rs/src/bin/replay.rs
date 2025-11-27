@@ -156,11 +156,7 @@ fn write_gz_json(value: &Value, path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn recompute_and_write_roughness(
-    path: &Path,
-    output_dir: Option<&Path>,
-    speed_gate: f64,
-) -> anyhow::Result<()> {
+fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyhow::Result<()> {
     let mut value = load_log_value(path)?;
     let readings = value
         .get_mut("readings")
@@ -168,12 +164,14 @@ fn recompute_and_write_roughness(
         .ok_or_else(|| anyhow::anyhow!("missing readings"))?;
 
     let mut est = RoughnessEstimator::new(50, 0.1);
-    let mut last_gps_speed = 0.0;
+    let mut _last_gps_speed = 0.0;
+    let mut current_rough = 0.0;
 
     for r in readings.iter_mut() {
+        // Compute roughness from accel if present, otherwise carry forward last value.
         if let Some(gps) = r.get("gps").and_then(|g| g.as_object()) {
             if let Some(spd) = gps.get("speed").and_then(|v| v.as_f64()) {
-                last_gps_speed = spd;
+                _last_gps_speed = spd;
             }
         }
         if let Some(accel) = r.get("accel").and_then(|a| a.as_object()) {
@@ -182,13 +180,15 @@ fn recompute_and_write_roughness(
                 accel.get("y").and_then(|v| v.as_f64()),
                 accel.get("z").and_then(|v| v.as_f64()),
             ) {
-                let rough = est.update(ax, ay, az);
-                let value_to_store = if last_gps_speed > speed_gate { rough } else { 0.0 };
-                r.as_object_mut()
-                    .expect("reading should be object")
-                    .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
+                current_rough = est.update(ax, ay, az);
             }
         }
+
+        // Assign the latest roughness to every reading (propagate to GPS rows).
+        let value_to_store = current_rough;
+        r.as_object_mut()
+            .expect("reading should be object")
+            .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
     }
 
     let parent = output_dir
@@ -679,8 +679,7 @@ fn main() -> anyhow::Result<()> {
                 Ok(res) => {
                     if args.write_roughness {
                         let out_dir = args.output_dir.as_deref();
-                        // Recompute roughness and write to _rough file using driving gate
-                        if let Err(e) = recompute_and_write_roughness(&path, out_dir, 5.0) {
+                        if let Err(e) = recompute_and_write_roughness(&path, out_dir) {
                             eprintln!("Failed to write roughness for {}: {}", path.display(), e);
                         }
                     }
@@ -693,7 +692,7 @@ fn main() -> anyhow::Result<()> {
         let res = run_once(log, &args)?;
         if args.write_roughness {
             let out_dir = args.output_dir.as_deref();
-            recompute_and_write_roughness(log, out_dir, 5.0)?;
+            recompute_and_write_roughness(log, out_dir)?;
         }
         results.push(res);
     } else {
