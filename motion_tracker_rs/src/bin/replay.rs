@@ -166,8 +166,9 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
     let mut est = RoughnessEstimator::new(50, 0.1);
     let mut _last_gps_speed = 0.0;
     let mut current_rough = 0.0;
+    let mut first_accel_idx: Option<usize> = None;
 
-    for r in readings.iter_mut() {
+    for (idx, r) in readings.iter_mut().enumerate() {
         // Compute roughness from accel if present, otherwise carry forward last value.
         if let Some(gps) = r.get("gps").and_then(|g| g.as_object()) {
             if let Some(spd) = gps.get("speed").and_then(|v| v.as_f64()) {
@@ -180,6 +181,9 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
                 accel.get("y").and_then(|v| v.as_f64()),
                 accel.get("z").and_then(|v| v.as_f64()),
             ) {
+                if first_accel_idx.is_none() {
+                    first_accel_idx = Some(idx);
+                }
                 current_rough = est.update(ax, ay, az);
             }
         }
@@ -191,16 +195,14 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
             .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
     }
 
-    // Backfill early GPS rows with the first non-zero roughness so maps get color immediately.
-    if let Some(first_nonzero_idx) = readings
-        .iter()
-        .position(|r| r.get("roughness").and_then(|v| v.as_f64()).unwrap_or(0.0) > 0.0)
-    {
-        if let Some(first_val) = readings[first_nonzero_idx]
-            .get("roughness")
+    // Backfill only the rows before the first accelerometer sample so early GPS points get color.
+    if let Some(accel_idx) = first_accel_idx {
+        if let Some(first_val) = readings
+            .get(accel_idx)
+            .and_then(|r| r.get("roughness"))
             .and_then(|v| v.as_f64())
         {
-            for r in readings.iter_mut().take(first_nonzero_idx) {
+            for r in readings.iter_mut().take(accel_idx) {
                 r.as_object_mut()
                     .expect("reading should be object")
                     .insert("roughness".to_string(), serde_json::Value::from(first_val));
