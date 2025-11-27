@@ -70,6 +70,10 @@ async fn main() {
         .route("/api/drives", get(list_drives_handler))
         .route("/api/drive/:drive_id", get(drive_details_handler))
         .route("/api/drive/:drive_id/gpx", get(drive_gpx_handler))
+        .route(
+            "/api/debug/roughness/:drive_id",
+            get(debug_roughness_handler),
+        )
         .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], args.port));
@@ -587,6 +591,70 @@ async fn drive_gpx_handler(
         gpx,
     )
         .into_response())
+}
+
+async fn debug_roughness_handler(
+    State(state): State<AppState>,
+    Path(drive_id): Path<String>,
+    Query(params): Query<PaginationParams>,
+) -> Result<String, (StatusCode, String)> {
+    let base_dir = resolve_data_dir(&state.data_dir, &params.variant);
+    let mut json_path = base_dir.join(format!("{}.json.gz", drive_id));
+    if !json_path.exists() {
+        let golden_candidate = base_dir
+            .join("golden")
+            .join(format!("{}.json.gz", drive_id));
+        if golden_candidate.exists() {
+            json_path = golden_candidate;
+        } else {
+            return Err((StatusCode::NOT_FOUND, "Drive not found".to_string()));
+        }
+    }
+
+    let data =
+        read_gzipped_json(&json_path).map_err(|e| (StatusCode::BAD_REQUEST, e.to_string()))?;
+
+    let readings = data
+        .get("readings")
+        .and_then(|r| r.as_array())
+        .ok_or_else(|| (StatusCode::BAD_REQUEST, "Missing readings".to_string()))?;
+
+    let mut gps_count = 0usize;
+    let mut rough_values: Vec<f64> = Vec::new();
+    let mut undefined = 0usize;
+
+    for r in readings {
+        if let Some(gps) = r.get("gps") {
+            if gps.is_null() {
+                continue;
+            }
+            gps_count += 1;
+            match r.get("roughness").and_then(|v| v.as_f64()) {
+                Some(val) => rough_values.push(val),
+                None => undefined += 1,
+            }
+        }
+    }
+
+    if gps_count == 0 {
+        return Ok("No GPS points in this drive".to_string());
+    }
+
+    let zeros = rough_values.iter().filter(|&&v| v == 0.0).count();
+    let min = rough_values
+        .iter()
+        .copied()
+        .fold(f64::INFINITY, f64::min);
+    let max = rough_values
+        .iter()
+        .copied()
+        .fold(f64::NEG_INFINITY, f64::max);
+    let first_n: Vec<f64> = rough_values.iter().copied().take(10).collect();
+
+    Ok(format!(
+        "Drive: {}\nGPS points: {}\nMin: {:.3}\nMax: {:.3}\nZeros: {}\nUndefined: {}\nFirst 10: {:?}",
+        drive_id, gps_count, min, max, zeros, undefined, first_n
+    ))
 }
 
 fn generate_gpx_from_json(data: &Value) -> Result<String, (StatusCode, String)> {
