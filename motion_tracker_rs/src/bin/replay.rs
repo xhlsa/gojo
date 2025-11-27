@@ -1,4 +1,3 @@
-use std::collections::VecDeque;
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
@@ -10,6 +9,7 @@ use serde::Deserialize;
 use serde_json::Value;
 use motion_tracker_rs::types;
 use serde_json::json;
+use std::collections::VecDeque;
 
 #[derive(Parser, Debug)]
 struct Args {
@@ -48,6 +48,14 @@ struct Args {
     /// Enable barometer-assisted zero vertical velocity during replay (A/B testing)
     #[arg(long, default_value_t = false)]
     enable_baro: bool,
+
+    /// Recompute roughness from raw accel using high-pass RMS (ignores logged roughness)
+    #[arg(long, default_value_t = false)]
+    recompute_roughness: bool,
+
+    /// Dump recomputed roughness as CSV (timestamp,roughness) for tuning
+    #[arg(long, default_value_t = false)]
+    dump_roughness: bool,
 }
 
 #[derive(Deserialize)]
@@ -122,6 +130,85 @@ fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
     (sum_sq / pairs.len() as f64).sqrt()
 }
 
+// 2nd-order high-pass filter (Butterworth 3 Hz @ 50 Hz sample rate) for road roughness
+struct HighPassFilter {
+    x1: f64,
+    x2: f64,
+    y1: f64,
+    y2: f64,
+}
+
+impl HighPassFilter {
+    fn new() -> Self {
+        Self {
+            x1: 0.0,
+            x2: 0.0,
+            y1: 0.0,
+            y2: 0.0,
+        }
+    }
+
+    fn filter(&mut self, x: f64) -> f64 {
+        // Coefficients from scipy.signal.butter(2, 3, 'high', fs=50)
+        const B: [f64; 3] = [0.8371, -1.6742, 0.8371];
+        const A: [f64; 3] = [1.0, -1.6475, 0.7009];
+
+        let y = B[0] * x + B[1] * self.x1 + B[2] * self.x2 - A[1] * self.y1 - A[2] * self.y2;
+
+        self.x2 = self.x1;
+        self.x1 = x;
+        self.y2 = self.y1;
+        self.y1 = y;
+
+        y
+    }
+}
+
+struct RoughnessEstimator {
+    hp_x: HighPassFilter,
+    hp_y: HighPassFilter,
+    hp_z: HighPassFilter,
+    window: VecDeque<f64>,
+    window_size: usize,
+    ewma: f64,
+    alpha: f64,
+}
+
+impl RoughnessEstimator {
+    fn new(window_size: usize, alpha: f64) -> Self {
+        Self {
+            hp_x: HighPassFilter::new(),
+            hp_y: HighPassFilter::new(),
+            hp_z: HighPassFilter::new(),
+            window: VecDeque::with_capacity(window_size),
+            window_size,
+            ewma: 0.0,
+            alpha,
+        }
+    }
+
+    fn update(&mut self, ax: f64, ay: f64, az: f64) -> f64 {
+        // High-pass each axis to isolate vibration content
+        let hx = self.hp_x.filter(ax);
+        let hy = self.hp_y.filter(ay);
+        let hz = self.hp_z.filter(az);
+
+        // Accumulate squared magnitude into a sliding window
+        let vib_sq = hx * hx + hy * hy + hz * hz;
+        self.window.push_back(vib_sq);
+        if self.window.len() > self.window_size {
+            self.window.pop_front();
+        }
+
+        // RMS of the high-passed magnitude
+        let rms = (self.window.iter().sum::<f64>() / self.window.len().max(1) as f64).sqrt();
+
+        // Smooth for stability
+        self.ewma = self.alpha * rms + (1.0 - self.alpha) * self.ewma;
+        self.ewma
+    }
+}
+
 fn get_memory_mb() -> f64 {
     if let Ok(content) = fs::read_to_string("/proc/self/status") {
         for line in content.lines() {
@@ -159,6 +246,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut max_speed_ts = 0.0;
     let mut max_speed_val = 0.0;
     let mut clamp_count = 0u64;
+    let mut roughness_estimator = RoughnessEstimator::new(50, 0.1); // 1s window @50Hz, light EWMA
     let mut last_gps_ts: Option<f64> = None;
     let mut last_gps_speed: f64 = 0.0;
     let mut _latest_mag: Option<MagData> = None;
@@ -219,6 +307,14 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             let cur_mem = get_memory_mb();
             if cur_mem > peak_mem_mb {
                 peak_mem_mb = cur_mem;
+            }
+        }
+        if args.recompute_roughness {
+            if let Some(acc) = r.accel.as_ref() {
+                let rough = roughness_estimator.update(acc.x, acc.y, acc.z);
+                if args.dump_roughness {
+                    println!("ROUGHNESS,{:.3},{:.6}", r.timestamp, rough);
+                }
             }
         }
         if let Some(g) = r.gyro.as_ref() {
