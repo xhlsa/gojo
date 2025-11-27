@@ -82,6 +82,7 @@ struct PaginationParams {
     limit: Option<u32>,
     offset: Option<u32>,
     variant: Option<String>,
+    gps_only: Option<bool>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -317,12 +318,9 @@ async fn list_drives_handler(
         mtime_b.cmp(&mtime_a)
     });
 
-    let total = filepaths.len();
-    let paginated: Vec<_> = filepaths.into_iter().skip(offset).take(limit).collect();
-
     let mut drives = Vec::new();
 
-    for (filepath, is_golden) in paginated {
+    for (filepath, is_golden) in filepaths {
         if let Ok(data) = read_gzipped_json(&filepath) {
             if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
                 let drive_id = filename.replace(".json.gz", "");
@@ -378,8 +376,15 @@ async fn list_drives_handler(
         }
     }
 
+    if params.gps_only.unwrap_or(false) {
+        drives.retain(|d| d.has_gps);
+    }
+
+    let total = drives.len();
+    let paginated: Vec<_> = drives.into_iter().skip(offset).take(limit).collect();
+
     Ok(Json(DrivesResponse {
-        drives,
+        drives: paginated,
         total,
         offset: offset as u32,
         limit: limit as u32,

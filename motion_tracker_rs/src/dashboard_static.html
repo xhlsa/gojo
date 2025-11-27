@@ -551,7 +551,6 @@
         const pageSize = 20;
         let totalDrives = 0;
         let currentDriveId = null;
-        let allDrives = [];
         let showGpsOnly = true;
         let currentVariant = '';
 
@@ -620,45 +619,27 @@
             document.getElementById('heading').textContent = (data.gps_bearing || 0).toFixed(0);
         }
 
-        // Filter drives based on GPS availability
-        function getFilteredDrives() {
-            if (!showGpsOnly) {
-                return allDrives;
-            }
-            return allDrives.filter(drive => drive.has_gps === true);
-        }
-
         // Update filter UI text
         function updateFilterUI() {
-            const filtered = getFilteredDrives();
-            const gpsCount = allDrives.filter(d => d.has_gps).length;
-            const noGpsCount = allDrives.length - gpsCount;
-
-            document.getElementById('filter-count-text').textContent = `${gpsCount} drive${gpsCount === 1 ? '' : 's'} with GPS`;
-            if (showGpsOnly) {
-                document.getElementById('filter-hidden-text').textContent = `Hiding ${noGpsCount.toLocaleString()} file${noGpsCount === 1 ? '' : 's'} without GPS data`;
-            } else {
-                document.getElementById('filter-hidden-text').textContent = `Showing all ${allDrives.length} drive${allDrives.length === 1 ? '' : 's'}`;
-            }
+            document.getElementById('filter-count-text').textContent = `${totalDrives} drive${totalDrives === 1 ? '' : 's'}`;
+            document.getElementById('filter-hidden-text').textContent = showGpsOnly ? 'GPS-only filter on' : 'Showing all drives';
         }
 
         // Drives list
         async function loadDrives(page) {
             currentPage = page;
 
-            // Fetch all drives if we haven't already
-            if (allDrives.length === 0) {
-                const response = await fetch(`/api/drives?limit=10000&offset=0&variant=${encodeURIComponent(currentVariant)}`);
-                const result = await response.json();
-                allDrives = result.drives || [];
-                totalDrives = result.total;
-                updateFilterUI();
-            }
+            const params = new URLSearchParams();
+            params.set('limit', pageSize);
+            params.set('offset', page * pageSize);
+            if (currentVariant) params.set('variant', currentVariant);
+            if (showGpsOnly) params.set('gps_only', 'true');
 
-            // Filter drives based on GPS toggle
-            const filtered = getFilteredDrives();
-            const offset = page * pageSize;
-            const paginatedDrives = filtered.slice(offset, offset + pageSize);
+            const response = await fetch(`/api/drives?${params.toString()}`);
+            const result = await response.json();
+            const paginatedDrives = result.drives || [];
+            totalDrives = result.total || paginatedDrives.length;
+            updateFilterUI();
 
             const tbody = document.getElementById('drives-tbody');
             tbody.innerHTML = '';
@@ -689,14 +670,13 @@
                     tbody.appendChild(row);
                 });
 
-                const hasMore = offset + pageSize < filtered.length;
+                const hasMore = result.hasMore || (page + 1) * pageSize < totalDrives;
                 document.getElementById('next-btn').disabled = !hasMore;
                 document.getElementById('prev-btn').disabled = page === 0;
 
-                const totalShown = filtered.length;
-                const startIdx = offset + 1;
-                const endIdx = Math.min(offset + pageSize, totalShown);
-                document.getElementById('page-info').textContent = `Showing ${startIdx}-${endIdx} of ${totalShown}`;
+                const startIdx = page * pageSize + 1;
+                const endIdx = Math.min(startIdx + paginatedDrives.length - 1, totalDrives);
+                document.getElementById('page-info').textContent = `Showing ${startIdx}-${endIdx} of ${totalDrives}`;
             }
         }
 
