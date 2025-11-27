@@ -868,9 +868,11 @@
         }
 
         function getRoughnessColor(roughness) {
-            if (roughness < 0.5) return '#4caf50';      // Green - smooth
-            if (roughness < 1.5) return '#ffeb3b';      // Yellow - bumpy
-            return '#f44336';                            // Red - rough/potholes
+            // Thresholds from recomputed roughness percentiles (q50≈0.39, q75≈0.77, q90≈2.32, q95≈2.89)
+            if (roughness < 0.4) return '#4caf50';      // Green - smooth
+            if (roughness < 0.8) return '#ffeb3b';      // Yellow - normal
+            if (roughness < 2.3) return '#ff9800';      // Orange - rough
+            return '#f44336';                            // Red - harsh/potholes
         }
 
         function getPowerColor(power) {
@@ -890,9 +892,9 @@
                 ['linear'],
                 ['get', 'roughness'],
                 0, getRoughnessColor(0),
-                0.5, getRoughnessColor(0.5),
-                1.5, getRoughnessColor(1.5),
-                2.0, getRoughnessColor(2.0)
+                0.4, getRoughnessColor(0.4),
+                0.8, getRoughnessColor(0.8),
+                2.3, getRoughnessColor(2.3)
             ];
         }
 
@@ -917,15 +919,19 @@
                 html = `
                     <div class="legend-item">
                         <span class="legend-color" style="background-color: #4caf50;"></span>
-                        <span>Smooth (&lt;0.5)</span>
+                        <span>Smooth (&lt;0.4)</span>
                     </div>
                     <div class="legend-item">
                         <span class="legend-color" style="background-color: #ffeb3b;"></span>
-                        <span>Bumpy (0.5-1.5)</span>
+                        <span>Normal (0.4-0.8)</span>
+                    </div>
+                    <div class="legend-item">
+                        <span class="legend-color" style="background-color: #ff9800;"></span>
+                        <span>Rough (0.8-2.3)</span>
                     </div>
                     <div class="legend-item">
                         <span class="legend-color" style="background-color: #f44336;"></span>
-                        <span>Rough (&gt;1.5)</span>
+                        <span>Harsh (&gt;2.3)</span>
                     </div>
                 `;
             } else {
