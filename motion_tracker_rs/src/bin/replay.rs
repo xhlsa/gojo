@@ -1,9 +1,11 @@
 use std::fs::{self, File};
-use std::io::BufReader;
+use std::io::{BufReader, Write};
 use std::path::{Path, PathBuf};
 
 use clap::Parser;
 use flate2::read::GzDecoder;
+use flate2::write::GzEncoder;
+use flate2::Compression;
 use motion_tracker_rs::filters::ekf_15d::Ekf15d;
 use serde::Deserialize;
 use serde_json::Value;
@@ -56,6 +58,14 @@ struct Args {
     /// Dump recomputed roughness as CSV (timestamp,roughness) for tuning
     #[arg(long, default_value_t = false)]
     dump_roughness: bool,
+
+    /// Write recomputed roughness back out to files (_rough.json.gz)
+    #[arg(long, default_value_t = false)]
+    write_roughness: bool,
+
+    /// Output directory for written roughness files (defaults to golden/roughness_updated)
+    #[arg(long)]
+    output_dir: Option<PathBuf>,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +130,84 @@ fn load_log(path: &Path) -> anyhow::Result<LogFile> {
         let reader = BufReader::new(file);
         Ok(serde_json::from_reader(reader)?)
     }
+}
+
+fn load_log_value(path: &Path) -> anyhow::Result<Value> {
+    let file = File::open(path)?;
+    if path.extension().map(|e| e == "gz").unwrap_or(false) {
+        let gz = GzDecoder::new(file);
+        let reader = BufReader::new(gz);
+        Ok(serde_json::from_reader(reader)?)
+    } else {
+        let reader = BufReader::new(file);
+        Ok(serde_json::from_reader(reader)?)
+    }
+}
+
+fn write_gz_json(value: &Value, path: &Path) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file = File::create(path)?;
+    let mut encoder = GzEncoder::new(file, Compression::default());
+    let data = serde_json::to_vec(value)?;
+    encoder.write_all(&data)?;
+    encoder.finish()?;
+    Ok(())
+}
+
+fn recompute_and_write_roughness(
+    path: &Path,
+    output_dir: Option<&Path>,
+    speed_gate: f64,
+) -> anyhow::Result<()> {
+    let mut value = load_log_value(path)?;
+    let readings = value
+        .get_mut("readings")
+        .and_then(|r| r.as_array_mut())
+        .ok_or_else(|| anyhow::anyhow!("missing readings"))?;
+
+    let mut est = RoughnessEstimator::new(50, 0.1);
+    let mut last_gps_speed = 0.0;
+
+    for r in readings.iter_mut() {
+        if let Some(gps) = r.get("gps").and_then(|g| g.as_object()) {
+            if let Some(spd) = gps.get("speed").and_then(|v| v.as_f64()) {
+                last_gps_speed = spd;
+            }
+        }
+        if let Some(accel) = r.get("accel").and_then(|a| a.as_object()) {
+            if let (Some(ax), Some(ay), Some(az)) = (
+                accel.get("x").and_then(|v| v.as_f64()),
+                accel.get("y").and_then(|v| v.as_f64()),
+                accel.get("z").and_then(|v| v.as_f64()),
+            ) {
+                let rough = est.update(ax, ay, az);
+                let value_to_store = if last_gps_speed > speed_gate { rough } else { 0.0 };
+                r.as_object_mut()
+                    .expect("reading should be object")
+                    .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
+            }
+        }
+    }
+
+    let parent = output_dir
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| {
+            path.parent()
+                .map(|p| p.join("roughness_updated"))
+                .unwrap_or_else(|| PathBuf::from("roughness_updated"))
+        });
+    let stem = path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("output");
+    let out_name = format!("{}_rough.json.gz", stem.trim_end_matches(".json"));
+    let out_path = parent.join(out_name);
+
+    write_gz_json(&value, &out_path)?;
+    println!("[WRITE] {}", out_path.display());
+    Ok(())
 }
 
 fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
@@ -572,6 +660,10 @@ fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     let mut results = Vec::new();
 
+    if args.write_roughness && !args.recompute_roughness {
+        println!("Note: --write-roughness implies --recompute-roughness");
+    }
+
     if let Some(dir) = args.golden_dir.as_ref() {
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
@@ -584,12 +676,26 @@ fn main() -> anyhow::Result<()> {
                 continue;
             }
             match run_once(&path, &args) {
-                Ok(res) => results.push(res),
+                Ok(res) => {
+                    if args.write_roughness {
+                        let out_dir = args.output_dir.as_deref();
+                        // Recompute roughness and write to _rough file using driving gate
+                        if let Err(e) = recompute_and_write_roughness(&path, out_dir, 5.0) {
+                            eprintln!("Failed to write roughness for {}: {}", path.display(), e);
+                        }
+                    }
+                    results.push(res);
+                }
                 Err(e) => eprintln!("Failed {}: {}", path.display(), e),
             }
         }
     } else if let Some(log) = args.log.as_ref() {
-        results.push(run_once(log, &args)?);
+        let res = run_once(log, &args)?;
+        if args.write_roughness {
+            let out_dir = args.output_dir.as_deref();
+            recompute_and_write_roughness(log, out_dir, 5.0)?;
+        }
+        results.push(res);
     } else {
         anyhow::bail!("Provide --log or --golden-dir");
     }
