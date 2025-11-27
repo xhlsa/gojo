@@ -312,7 +312,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         if args.recompute_roughness {
             if let Some(acc) = r.accel.as_ref() {
                 let rough = roughness_estimator.update(acc.x, acc.y, acc.z);
-                if args.dump_roughness {
+                // Only log roughness during clear driving (filter out walking/stationary)
+                if args.dump_roughness && last_gps_speed > 5.0 {
                     println!("ROUGHNESS,{:.3},{:.6}", r.timestamp, rough);
                 }
             }

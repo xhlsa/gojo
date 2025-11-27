@@ -701,10 +701,13 @@
         });
 
         // Drive details
+        let lastDriveData = null;
+
         async function viewDrive(driveId) {
             currentDriveId = driveId;
             const response = await fetch(`/api/drive/${driveId}?variant=${encodeURIComponent(currentVariant)}`);
             const result = await response.json();
+            lastDriveData = result;
 
             document.getElementById('detail-datetime').textContent = result.datetime;
             document.getElementById('detail-duration').textContent = '0m';
@@ -716,12 +719,15 @@
             switchView('detail');
 
             // Small delay to let DOM settle before loading map
-            setTimeout(() => loadMapData(driveId), 100);
+            setTimeout(() => loadMapDataFromCache(), 100);
         }
 
-        async function loadMapData(driveId) {
-            const response = await fetch(`/api/drive/${driveId}?variant=${encodeURIComponent(currentVariant)}`);
-            const result = await response.json();
+        async function loadMapDataFromCache() {
+            const result = lastDriveData;
+            if (!result) {
+                renderNoGPSMessage();
+                return;
+            }
 
             if (!result.readings || result.readings.length === 0) {
                 renderNoGPSMessage();
@@ -786,6 +792,7 @@
                         lat: r.gps.latitude,
                         roughness: r.roughness ?? 0,
                         power: r.specific_power ?? r.specific_power_w_per_kg ?? 0,
+                        speed: r.gps.speed ?? 0,
                         timestamp: r.timestamp
                     };
                 })
@@ -811,6 +818,7 @@
                     },
                     properties: {
                         roughness: props.roughness ?? 0,
+                        speed: props.speed ?? 0,
                         power: props.power ?? 0,
                         index: i
                     }
@@ -865,10 +873,10 @@
         }
 
         function getRoughnessColor(roughness) {
-            // Thresholds from recomputed roughness percentiles (q50≈0.39, q75≈0.77, q90≈2.32, q95≈2.89)
-            if (roughness < 0.4) return '#4caf50';      // Green - smooth
-            if (roughness < 0.8) return '#ffeb3b';      // Yellow - normal
-            if (roughness < 2.3) return '#ff9800';      // Orange - rough
+            // Driving-only percentiles (q50≈0.53, q75≈0.68, q90≈0.89, q95≈1.01)
+            if (roughness < 0.5) return '#4caf50';      // Green - smooth
+            if (roughness < 0.7) return '#ffeb3b';      // Yellow - normal
+            if (roughness < 0.9) return '#ff9800';      // Orange - rough
             return '#f44336';                            // Red - harsh/potholes
         }
 
@@ -883,15 +891,20 @@
         }
 
         function buildRoughnessExpression() {
-            // Data-driven expression for roughness property
+            // Data-driven expression for roughness property; gray out when speed < 5 m/s
             return [
-                'interpolate',
-                ['linear'],
-                ['get', 'roughness'],
-                0, getRoughnessColor(0),
-                0.4, getRoughnessColor(0.4),
-                0.8, getRoughnessColor(0.8),
-                2.3, getRoughnessColor(2.3)
+                'case',
+                ['<', ['get', 'speed'], 5],
+                '#9e9e9e',
+                [
+                    'interpolate',
+                    ['linear'],
+                    ['get', 'roughness'],
+                    0, getRoughnessColor(0),
+                    0.5, getRoughnessColor(0.5),
+                    0.7, getRoughnessColor(0.7),
+                    0.9, getRoughnessColor(0.9)
+                ]
             ];
         }
 

@@ -12,7 +12,13 @@ use clap::Parser;
 use flate2::read::GzDecoder;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use std::{io::Read, net::SocketAddr, path::PathBuf, time::Duration};
+use std::{
+    fs::{File, OpenOptions},
+    io::{BufRead, BufReader, Read, Write},
+    net::SocketAddr,
+    path::{Path as StdPath, PathBuf},
+    time::Duration,
+};
 use tokio::net::TcpListener;
 use tokio::time::sleep;
 
@@ -22,6 +28,10 @@ struct Args {
     /// Path to motion tracker output directory
     #[arg(long, default_value = "motion_tracker_sessions")]
     data_dir: PathBuf,
+
+    /// Rebuild drive index JSONL files and exit
+    #[arg(long, default_value_t = false)]
+    build_index: bool,
 
     /// Port to serve on
     #[arg(long, default_value = "8081")]
@@ -39,6 +49,15 @@ async fn main() {
 
     if !args.data_dir.exists() {
         eprintln!("Warning: Data directory {:?} does not exist", args.data_dir);
+    }
+
+    if args.build_index {
+        if let Err(e) = rebuild_indices(&args.data_dir) {
+            eprintln!("Failed to rebuild index: {}", e);
+            std::process::exit(1);
+        }
+        println!("Index rebuilt for {:?}", args.data_dir);
+        return;
     }
 
     let state = AppState {
@@ -96,6 +115,7 @@ struct DriveMetadata {
     distance_meters: f64,
     has_gps: bool,
     file_size_mb: f64,
+    #[serde(default)]
     is_golden: bool,
 }
 
@@ -158,6 +178,130 @@ fn parse_timestamp_from_filename(filename: &str) -> Option<chrono::DateTime<chro
         }
     }
     None
+}
+
+fn rebuild_indices(base_dir: &StdPath) -> Result<(), Box<dyn std::error::Error>> {
+    // Build index for the resolved base dir and common curated subdirs.
+    rebuild_single_index(base_dir, false)?;
+
+    let golden_dir = base_dir.join("golden");
+    if golden_dir.exists() {
+        rebuild_single_index(&golden_dir, true)?;
+    }
+
+    let rough_dir = golden_dir.join("roughness_updated");
+    if rough_dir.exists() {
+        rebuild_single_index(&rough_dir, true)?;
+    }
+
+    Ok(())
+}
+
+fn rebuild_single_index(dir: &StdPath, mark_golden: bool) -> Result<(), Box<dyn std::error::Error>> {
+    let mut entries: Vec<DriveMetadata> = Vec::new();
+
+    if let Ok(read_dir) = std::fs::read_dir(dir) {
+        for entry in read_dir.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if (name.starts_with("drive_") || name.starts_with("comparison_"))
+                    && name.ends_with(".json.gz")
+                {
+                    if let Ok(data) = read_gzipped_json(&path) {
+                        if let Some(meta) = extract_drive_metadata(&path, &data, mark_golden) {
+                            entries.push(meta);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+
+    let index_path = dir.join("index.jsonl");
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&index_path)?;
+
+    for entry in entries {
+        let line = serde_json::to_string(&entry)?;
+        writeln!(file, "{}", line)?;
+    }
+
+    println!("Indexed {} entries -> {:?}", dir.display(), index_path);
+    Ok(())
+}
+
+fn load_index(dir: &StdPath) -> Option<Vec<DriveMetadata>> {
+    let index_path = dir.join("index.jsonl");
+    let file = File::open(index_path).ok()?;
+    let reader = BufReader::new(file);
+    let mut entries = Vec::new();
+    for line in reader.lines().flatten() {
+        if let Ok(entry) = serde_json::from_str::<DriveMetadata>(&line) {
+            entries.push(entry);
+        }
+    }
+    Some(entries)
+}
+
+fn extract_drive_metadata(
+    filepath: &StdPath,
+    data: &Value,
+    is_golden: bool,
+) -> Option<DriveMetadata> {
+    let filename = filepath.file_name()?.to_str()?;
+    let drive_id = filename.replace(".json.gz", "");
+
+    let timestamp = parse_timestamp_from_filename(filename)
+        .map(|dt| dt.to_rfc3339())
+        .unwrap_or_default();
+    let datetime = parse_timestamp_from_filename(filename)
+        .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
+        .unwrap_or_default();
+
+    let stats = extract_drive_stats(data);
+    let has_gps = has_gps_data(data);
+
+    let file_size = std::fs::metadata(filepath)
+        .ok()
+        .map(|m| m.len() as f64 / (1024.0 * 1024.0))
+        .unwrap_or(0.0);
+
+    let duration_seconds = if let Some(readings) = data.get("readings").and_then(|r| r.as_array())
+    {
+        if readings.len() > 1 {
+            let first_ts = readings[0]
+                .get("timestamp")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            let last_ts = readings[readings.len() - 1]
+                .get("timestamp")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            (last_ts - first_ts).max(0.0) as u64
+        } else {
+            0
+        }
+    } else {
+        0
+    };
+
+    Some(DriveMetadata {
+        id: drive_id,
+        timestamp,
+        datetime,
+        duration_seconds,
+        accel_samples: stats.accel_samples,
+        gps_fixes: stats.gps_samples,
+        distance_meters: stats.distance_km * 1000.0,
+        has_gps,
+        file_size_mb: file_size,
+        is_golden,
+    })
 }
 
 /// Read and decompress a gzip JSON file
@@ -265,116 +409,90 @@ async fn list_drives_handler(
     State(state): State<AppState>,
     Query(params): Query<PaginationParams>,
 ) -> Result<Json<DrivesResponse>, (StatusCode, String)> {
+    // Keep the list endpoint responsive even when the data dir contains thousands
+    // of historical/no-GPS runs.
+    const MAX_RECENT_FILES: usize = 300;
+
     let limit = params.limit.unwrap_or(20).min(100) as usize;
     let offset = params.offset.unwrap_or(0) as usize;
     let base_dir = resolve_data_dir(&state.data_dir, &params.variant);
 
-    // Scan directory for drive files (compressed gzip JSON)
-    // Collect (path, is_golden)
-    let mut filepaths: Vec<(std::path::PathBuf, bool)> = Vec::new();
+    // Prefer cached index for speed; fallback to bounded scan/parse.
+    let mut drives: Vec<DriveMetadata> = Vec::new();
+    if let Some(mut idx) = load_index(&base_dir) {
+        drives.append(&mut idx);
+    } else {
+        // Scan directory for drive files (compressed gzip JSON)
+        // Collect (path, is_golden=false)
+        let mut filepaths: Vec<(std::path::PathBuf, bool)> = Vec::new();
 
-    match std::fs::read_dir(&base_dir) {
-        Ok(entries) => {
-            for entry in entries {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // List finalized drive files (drive_*.json.gz) and comparison logs (comparison_*.json.gz)
-                        if (name.starts_with("drive_") || name.starts_with("comparison_"))
-                            && name.ends_with(".json.gz")
-                        {
-                            filepaths.push((path, false));
+        match std::fs::read_dir(&base_dir) {
+            Ok(entries) => {
+                for entry in entries {
+                    if let Ok(entry) = entry {
+                        let path = entry.path();
+                        if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                            // List finalized drive files (drive_*.json.gz) and comparison logs (comparison_*.json.gz)
+                            if (name.starts_with("drive_") || name.starts_with("comparison_"))
+                                && name.ends_with(".json.gz")
+                            {
+                                filepaths.push((path, false));
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
+        }
+
+        // Only keep the most recent N root files; golden files are added separately.
+        if filepaths.len() > MAX_RECENT_FILES {
+            filepaths.truncate(MAX_RECENT_FILES);
+        }
+
+        // Sort by modification time descending (newest first)
+        filepaths.sort_by(|a, b| {
+            let mtime_a = std::fs::metadata(&a.0)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            let mtime_b = std::fs::metadata(&b.0)
+                .ok()
+                .and_then(|m| m.modified().ok())
+                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+            mtime_b.cmp(&mtime_a)
+        });
+
+        for (filepath, is_golden) in filepaths {
+            if let Ok(data) = read_gzipped_json(&filepath) {
+                if let Some(meta) = extract_drive_metadata(&filepath, &data, is_golden) {
+                    drives.push(meta);
+                }
+            }
+        }
+    }
+
+    // Merge curated golden drives (small set)
+    let golden_dir = base_dir.join("golden");
+    if let Some(mut golden_idx) = load_index(&golden_dir) {
+        drives.append(&mut golden_idx);
+    } else if let Ok(entries) = std::fs::read_dir(&golden_dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with("comparison_") && name.ends_with(".json.gz") {
+                    if let Ok(data) = read_gzipped_json(&path) {
+                        if let Some(meta) = extract_drive_metadata(&path, &data, true) {
+                            drives.push(meta);
                         }
                     }
                 }
             }
         }
-        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string())),
     }
 
-    // Also include curated golden drives if present (comparison_*.json.gz in golden/)
-    let golden_dir = base_dir.join("golden");
-    if let Ok(entries) = std::fs::read_dir(&golden_dir) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with("comparison_") && name.ends_with(".json.gz") {
-                    filepaths.push((path, true));
-                }
-            }
-        }
-    }
-
-    // Sort by modification time descending (newest first)
-    filepaths.sort_by(|a, b| {
-        let mtime_a = std::fs::metadata(&a.0)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        let mtime_b = std::fs::metadata(&b.0)
-            .ok()
-            .and_then(|m| m.modified().ok())
-            .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        mtime_b.cmp(&mtime_a)
-    });
-
-    let mut drives = Vec::new();
-
-    for (filepath, is_golden) in filepaths {
-        if let Ok(data) = read_gzipped_json(&filepath) {
-            if let Some(filename) = filepath.file_name().and_then(|n| n.to_str()) {
-                let drive_id = filename.replace(".json.gz", "");
-
-                let timestamp = parse_timestamp_from_filename(filename)
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_default();
-                let datetime = parse_timestamp_from_filename(filename)
-                    .map(|dt| dt.format("%Y-%m-%d %H:%M:%S").to_string())
-                    .unwrap_or_default();
-
-                let stats = extract_drive_stats(&data);
-                let has_gps = has_gps_data(&data);
-
-                let file_size = std::fs::metadata(&filepath)
-                    .ok()
-                    .map(|m| m.len() as f64 / (1024.0 * 1024.0))
-                    .unwrap_or(0.0);
-
-                // Calculate duration from first and last reading timestamps
-                let duration_seconds =
-                    if let Some(readings) = data.get("readings").and_then(|r| r.as_array()) {
-                        if readings.len() > 1 {
-                            let first_ts = readings[0]
-                                .get("timestamp")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0);
-                            let last_ts = readings[readings.len() - 1]
-                                .get("timestamp")
-                                .and_then(|v| v.as_f64())
-                                .unwrap_or(0.0);
-                            (last_ts - first_ts).max(0.0) as u64
-                        } else {
-                            0
-                        }
-                    } else {
-                        0
-                    };
-
-                drives.push(DriveMetadata {
-                    id: drive_id,
-                    timestamp,
-                    datetime,
-                    duration_seconds,
-                    accel_samples: stats.accel_samples,
-                    gps_fixes: stats.gps_samples,
-                    distance_meters: stats.distance_km * 1000.0,
-                    has_gps,
-                    file_size_mb: file_size,
-                    is_golden,
-                });
-            }
-        }
-    }
+    // Sort newest first by timestamp string (rfc3339 if available)
+    drives.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
 
     if params.gps_only.unwrap_or(false) {
         drives.retain(|d| d.has_gps);
