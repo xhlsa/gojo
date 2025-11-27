@@ -278,8 +278,10 @@ async fn list_drives_handler(
                 if let Ok(entry) = entry {
                     let path = entry.path();
                     if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                        // Only list finalized drive files (drive_*.json.gz), ignore current_session
-                        if name.starts_with("drive_") && name.ends_with(".json.gz") {
+                        // List finalized drive files (drive_*.json.gz) and comparison logs (comparison_*.json.gz)
+                        if (name.starts_with("drive_") || name.starts_with("comparison_"))
+                            && name.ends_with(".json.gz")
+                        {
                             filepaths.push((path, false));
                         }
                     }
