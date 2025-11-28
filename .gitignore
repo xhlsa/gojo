@@ -53,3 +53,7 @@ crash_logs/
 *.json.gz
 *.gpx
 target_exp/
+
+# Generated data and reports
+*.csv
+*.png
