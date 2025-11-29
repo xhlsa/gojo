@@ -72,7 +72,7 @@ def process_file(file_path, output_prefix="report_"):
             raw_lat = np.nan
             raw_lon = np.nan
             
-        ekf_data = r.get('experimental_13d', {}) or {}
+        ekf_data = r.get('experimental_15d', {}) or {}
         ekf_pos = ekf_data.get('position', [0,0,0]) or [0,0,0]
         ekf_vel = ekf_data.get('velocity', [0,0,0]) or [0,0,0]
         

@@ -63,8 +63,8 @@ for r in readings:
     raw_acc_x = 0.0
     raw_acc_y = 0.0
     
-    # EKF DATA (Experimental 13d)
-    ekf_data = r.get('experimental_13d', {})
+    # EKF DATA (Experimental 15d)
+    ekf_data = r.get('experimental_15d', {})
     if ekf_data is None:
         ekf_data = {}
         

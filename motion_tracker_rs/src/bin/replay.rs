@@ -331,6 +331,16 @@ fn get_memory_mb() -> f64 {
     0.0
 }
 
+fn local_to_global(lat_ref: f64, lon_ref: f64, north: f64, east: f64) -> (f64, f64) {
+    const R: f64 = 6371000.0;
+    let d_lat = north / R;
+    let d_lon = east / (R * lat_ref.to_radians().cos());
+    (
+        lat_ref + d_lat.to_degrees(),
+        lon_ref + d_lon.to_degrees()
+    )
+}
+
 fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let log = load_log(path)?;
     // dt set to 0.02s (50 Hz) by default; adjust if your log differs
@@ -339,6 +349,11 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     for i in 3..6 {
         ekf.process_noise[[i, i]] = args.q_vel;
     }
+
+    // Open CSV for debug logging
+    let mut csv_file = File::create("replay_log.csv")?;
+    writeln!(csv_file, "timestamp,raw_lat,raw_lon,raw_accel_x,raw_accel_y,ekf_lat,ekf_lon,ekf_vel_x,ekf_vel_y")?;
+    let mut replay_origin: Option<(f64, f64)> = None;
 
     let mut ekf_speeds = Vec::new();
     let mut gps_speeds = Vec::new();
@@ -349,7 +364,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut last_nhc_ts: f64 = -1.0;
     let mut max_innov_norm = 0.0;
     let mut max_delta_v = 0.0;
-    let mut yaw_debug_lines = 0;
+    let mut _yaw_debug_lines = 0;
     let mut max_speed_ts = 0.0;
     let mut max_speed_val = 0.0;
     let mut clamp_count = 0u64;
@@ -368,6 +383,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
             ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
+            // Feed accel to roughness estimator for road surface diagnostics
+            roughness_estimator.update(acc.x, acc.y, acc.z);
             // Gap-mode speed ceiling during GPS outages (per prediction clamp)
             if let Some(ts) = last_gps_ts {
                 let gap = (r.timestamp - ts).max(0.0);
@@ -385,10 +402,10 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     .max(2.0);
                     let ekf_speed = ekf.get_speed();
                     if ekf_speed > limit {
-                        println!(
+                        /* println!(
                             "[GAP CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
                             r.timestamp, gap, ekf_speed, limit
-                        );
+                        ); */
                         ekf.clamp_speed(limit);
                     }
                 }
@@ -403,8 +420,6 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                 if nhc_gap <= 10.0 {
                     let nhc_r = (1.0 + nhc_gap * 0.5).min(5.0);
                     ekf.update_body_velocity(nalgebra::Vector3::zeros(), nhc_r);
-                } else {
-                    println!("[NHC SKIP] gap {:.1}s", nhc_gap);
                 }
                 last_nhc_ts = r.timestamp;
             }
@@ -416,15 +431,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                 peak_mem_mb = cur_mem;
             }
         }
-        if args.recompute_roughness {
-            if let Some(acc) = r.accel.as_ref() {
-                let rough = roughness_estimator.update(acc.x, acc.y, acc.z);
-                // Only log roughness during clear driving (filter out walking/stationary)
-                if args.dump_roughness && last_gps_speed > 5.0 {
-                    println!("ROUGHNESS,{:.3},{:.6}", r.timestamp, rough);
-                }
-            }
-        }
+        
         if let Some(g) = r.gyro.as_ref() {
             ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
@@ -451,50 +458,39 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                             },
                             0.157, // ~9° declination (Tucson)
                         ) {
-                            println!(
+                            /* println!(
                                 "[MAG] gap {:.1}s yaw correction: {:.1}°",
                                 gap,
                                 yaw_correction.to_degrees()
-                            );
+                            ); */
                             mag_fires += 1;
+                            _yaw_debug_lines += 1;
                         }
                     }
                 }
             }
         }
-        if args.enable_baro && in_gps_gap {
-            if let Some(baro_val) = r.baro.as_ref() {
-                // Extract pressure and timestamp (fallback to reading timestamp)
-                if let Some(pressure_hpa) = baro_val
-                    .get("pressure_hpa")
-                    .and_then(|v| v.as_f64())
-                {
-                    let ts = baro_val
-                        .get("timestamp")
-                        .and_then(|v| v.as_f64())
-                        .unwrap_or(r.timestamp);
-                    if let Some((prev_ts, prev_p)) = last_baro {
-                        let dt = (ts - prev_ts).max(1e-3);
-                        let dp_dt_hpa = (pressure_hpa - prev_p) / dt;
-                        let dp_dt_pa = dp_dt_hpa * 100.0;
-                        let pressure_stable = dp_dt_pa.abs() < 0.5; // ~0.4 m/s vertical
-                        // Gate by speed: only constrain while moving, to mirror runtime
-                        let gate_speed = last_gps_speed; // use last GPS speed, not drifting EKF speed
-                        if gate_speed > 1.0 {
-                            let z_noise = if pressure_stable { 0.005 } else { 1.0 };
-                            ekf.zero_vertical_velocity(z_noise);
-                            baro_fires += 1;
-                        }
-                    }
-                    last_baro = Some((ts, pressure_hpa));
+
+        // Handle barometer for altitude fusion diagnostics
+        if args.enable_baro {
+            if let Some(b) = r.baro.as_ref() {
+                if let Some(pressure) = b.get("pressure_hpa").and_then(|p| p.as_f64()) {
+                    last_baro = Some((r.timestamp, pressure));
+                    baro_fires += 1;
                 }
             }
         }
+
         if let Some(gps) = r.gps.as_ref() {
+            // Set origin if not set
+            if replay_origin.is_none() {
+                replay_origin = Some((gps.latitude, gps.longitude));
+                ekf.set_origin(gps.latitude, gps.longitude, 0.0);
+            }
+
             let vx_before = ekf.state[3];
             let vy_before = ekf.state[4];
             let vz_before = ekf.state[5];
-            let speed_before = (vx_before * vx_before + vy_before * vy_before + vz_before * vz_before).sqrt();
             let bearing_rad = gps.bearing.to_radians();
             let vx_meas = gps.speed * bearing_rad.sin();
             let vy_meas = gps.speed * bearing_rad.cos();
@@ -508,47 +504,11 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
             if gps.speed > 5.0 {
                 let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
-                // Extract current yaw
-                let qw = ekf.state[6];
-                let qx = ekf.state[7];
-                let qy = ekf.state[8];
-                let qz = ekf.state[9];
-                let siny_cosp = 2.0 * (qw * qz + qx * qy);
-                let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-                let yaw_before = siny_cosp.atan2(cosy_cosp);
-
-                // Yaw measurement update (scalar)
-                let mut innov = target_yaw - yaw_before;
-                while innov > std::f64::consts::PI {
-                    innov -= 2.0 * std::f64::consts::PI;
-                }
-                while innov < -std::f64::consts::PI {
-                    innov += 2.0 * std::f64::consts::PI;
-                }
-                let _r_yaw = 0.1; // rad^2
-                // Simple scalar Kalman update on yaw, assuming small-angle approx on quaternion z component
-                // For robustness, just overwrite quaternion with target yaw (as measurement) and skip cov math here
                 let half = target_yaw * 0.5;
                 ekf.state[6] = half.cos();
                 ekf.state[7] = 0.0;
                 ekf.state[8] = 0.0;
                 ekf.state[9] = half.sin();
-
-                let siny_cosp2 = 2.0 * (ekf.state[6] * ekf.state[9] + ekf.state[7] * ekf.state[8]);
-                let cosy_cosp2 = 1.0 - 2.0 * (ekf.state[8] * ekf.state[8] + ekf.state[9] * ekf.state[9]);
-                let yaw_after = siny_cosp2.atan2(cosy_cosp2);
-
-                if yaw_debug_lines < 10 {
-                    println!(
-                        "[YAW ALIGN] bearing={:.1}° target={:.1}° before={:.1}° after={:.1}° innov={:.2} rad",
-                        gps.bearing,
-                        target_yaw.to_degrees(),
-                        yaw_before.to_degrees(),
-                        yaw_after.to_degrees(),
-                        innov
-                    );
-                    yaw_debug_lines += 1;
-                }
             }
 
             ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
@@ -561,40 +521,17 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             let vx_after = ekf.state[3];
             let vy_after = ekf.state[4];
             let vz_after = ekf.state[5];
-            let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2)).sqrt();
+            let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2) + (vz_after - vz_before).powi(2)).sqrt();
             if delta_v > max_delta_v {
                 max_delta_v = delta_v;
             }
-            let speed_after = (vx_after * vx_after + vy_after * vy_after + vz_after * vz_after).sqrt();
-            if yaw_debug_lines < 5 {
-                println!(
-                    "[GPS_VEL] t={:.1} pre=({:.1},{:.1},{:.1}) |{:.1}| innov=({:.1},{:.1}) post=({:.1},{:.1},{:.1}) |{:.1}|",
-                    gps.timestamp,
-                    vx_before, vy_before, vz_before, speed_before,
-                    innov_x, innov_y,
-                    vx_after, vy_after, vz_after, speed_after
-                );
-            }
-
+            
             // Track GPS gap
             if let Some(last) = last_gps_ts {
                 let gap = gps.timestamp - last;
                 if gap > max_gps_gap {
                     max_gps_gap = gap;
                 }
-                // Per-fix error logging (pre/post vs GPS ENU velocity)
-                let err_pre =
-                    ((vx_before - vx_meas).powi(2) + (vy_before - vy_meas).powi(2)).sqrt();
-                let err_post =
-                    ((vx_after - vx_meas).powi(2) + (vy_after - vy_meas).powi(2)).sqrt();
-                println!(
-                    "[ERR] t={:.1} gap={:.2}s err_pre={:.2} err_post={:.2} gps_speed={:.1}",
-                    gps.timestamp,
-                    gap,
-                    err_pre,
-                    err_post,
-                    gps.speed
-                );
             }
             last_gps_ts = Some(gps.timestamp);
             last_gps_speed = gps.speed;
@@ -625,13 +562,6 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                 };
                 let limit = scale * max_gps + offset;
                 if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > min_interval {
-                    println!(
-                        "[CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
-                        r.timestamp,
-                        gap_for_clamp,
-                        ekf_speed,
-                        limit
-                    );
                     ekf.clamp_speed(limit);
                     last_speed_clamp_ts = r.timestamp;
                     clamp_count += 1;
@@ -644,6 +574,33 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             max_speed_ts = r.timestamp;
         }
         ekf_speeds.push(cur_speed);
+        
+        // Write to CSV
+        let state = ekf.get_state();
+        let (ekf_lat, ekf_lon) = if let Some((olat, olon)) = replay_origin {
+            local_to_global(olat, olon, state.position.1, state.position.0) // ENU: x=East, y=North
+        } else {
+            (0.0, 0.0)
+        };
+        
+        let (raw_lat, raw_lon) = if let Some(g) = &r.gps {
+            (format!("{}", g.latitude), format!("{}", g.longitude))
+        } else {
+            ("".to_string(), "".to_string())
+        };
+        let (ax, ay) = if let Some(a) = &r.accel {
+            (a.x, a.y)
+        } else {
+            (0.0, 0.0)
+        };
+        
+        writeln!(csv_file, "{},{},{},{},{},{},{},{},{}", 
+            r.timestamp, 
+            raw_lat, raw_lon,
+            ax, ay,
+            ekf_lat, ekf_lon,
+            state.velocity.0, state.velocity.1
+        )?;
     }
 
     let rmse_val = rmse_pairs(&paired);
@@ -669,6 +626,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "clamp_count": clamp_count,
         "max_gps_gap": max_gps_gap,
         "mag_fires": mag_fires,
+        "yaw_debug_lines": _yaw_debug_lines,
         "baro_fires": baro_fires,
         "peak_memory_mb": peak_mem_mb,
         "final_memory_mb": get_memory_mb()

@@ -167,7 +167,6 @@ mod smoothing;
 mod types;
 
 use filters::complementary::ComplementaryFilter;
-use filters::ekf_13d::Ekf13d;
 use filters::ekf_15d::Ekf15d;
 use filters::es_ekf::EsEkf;
 use rerun_logger::RerunLogger;
@@ -248,7 +247,6 @@ struct SensorReading {
     roughness: Option<f64>,
     specific_power_w_per_kg: f64,
     power_coefficient: f64,
-    experimental_13d: Option<filters::ekf_13d::Ekf13dState>,
     experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
     fgo: Option<filters::fgo::FgoState>, // Factor Graph Optimization (shadow mode)
 }
@@ -261,6 +259,13 @@ struct TrajectoryPoint {
     ekf_velocity: f64,
     ekf_heading_deg: f64,
     comp_velocity: f64,
+    #[serde(default)]
+    lat: Option<f64>,
+    #[serde(default)]
+    lon: Option<f64>,
+    /// True once the ES-EKF origin has been initialized (prevents plotting 0,0 points)
+    #[serde(default)]
+    valid: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -286,6 +291,10 @@ struct ComparisonOutput {
     metrics: Metrics,
     system_health: String,
     track_path: Vec<[f64; 2]>,
+    #[serde(default)]
+    origin_lat: Option<f64>,
+    #[serde(default)]
+    origin_lon: Option<f64>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1029,13 +1038,13 @@ async fn main() -> Result<()> {
     // Initialize filters
     let mut ekf = EsEkf::new(0.05, 8.0, 0.5, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
-    let mut ekf_13d = Ekf13d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise
     let mut ekf_15d = Ekf15d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise (with accel bias)
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
     let mut readings: Vec<SensorReading> = Vec::new();
     let mut trajectories: Vec<TrajectoryPoint> = Vec::new();
     let mut covariance_snapshots: Vec<CovarianceSnapshot> = Vec::new();
+    let mut origin_latlon: Option<(f64, f64)> = None;
 
     let mut peak_memory_mb: f64 = 0.0;
     let mut current_memory_mb: f64 = 0.0;
@@ -1321,9 +1330,6 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Feed accel to 13D filter (prediction phase with zero gyro)
-                ekf_13d.predict((corrected_x, corrected_y, corrected_z), (0.0, 0.0, 0.0));
-
                 // Feed raw accel to 15D filter (EKF handles gravity via quaternion)
                 // Use filtered_vec (low-pass but NOT gravity-corrected) - 15D subtracts its own bias estimate
                 ekf_15d.predict(
@@ -1445,7 +1451,6 @@ async fn main() -> Result<()> {
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: specific_power_est,
                     power_coefficient: 0.0,
-                    experimental_13d: Some(ekf_13d.get_state()),
                     experimental_15d: Some(ekf_15d.get_state()),
                     mag: sensor_state.latest_mag.read().await.clone(),
                     fgo: None, // Will be updated on GPS fix
@@ -1599,10 +1604,6 @@ async fn main() -> Result<()> {
 
                 if let Some(last) = readings.last_mut() {
                     last.gyro = Some(gyro.clone());
-
-                    // Feed gyro to 13D filter and populate experimental state
-                    ekf_13d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
-                    last.experimental_13d = Some(ekf_13d.get_state());
 
                     // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
                     ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
@@ -1770,13 +1771,13 @@ async fn main() -> Result<()> {
                     last_gps_speed = gps.speed;
 
                     // COLD START PROTOCOL: Initialize on first GPS fix, update on subsequent
-                    let is_first_gps_fix = !ekf_13d.is_origin_set();
+                    let is_first_gps_fix = origin_latlon.is_none();
 
                     if is_first_gps_fix {
                         // FIRST FIX: Initialize origin and EKF state, DO NOT update
                         // This prevents "Null Island" teleport (0,0,0) → (lat,lon) causing massive innovation
-                        ekf_13d.set_origin(gps.latitude, gps.longitude);
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
+                        origin_latlon = Some((gps.latitude, gps.longitude));
 
                         // Initialize velocity from GPS (prevents 0 → speed causing acceleration spike)
                         ekf_15d.force_zero_velocity(); // Start from rest
@@ -1786,8 +1787,6 @@ async fn main() -> Result<()> {
                         println!("[COLD START] Skipping first GPS update to prevent initialization shock.");
                     } else {
                         // SUBSEQUENT FIXES: Normal updates
-                        ekf_13d.update_gps(gps_proj_lat, gps_proj_lon, gps_proj_lat, gps_proj_lon);
-
                         // Update 15D filter with GPS (uses lat/lon directly for position correction)
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
                         // Update 15D velocity using GPS speed/bearing when available (fixed R)
@@ -1862,7 +1861,6 @@ async fn main() -> Result<()> {
                         roughness: None,
                         specific_power_w_per_kg: 0.0,
                         power_coefficient: 0.0,
-                        experimental_13d: Some(ekf_13d.get_state()),
                         experimental_15d: Some(ekf_15d.get_state()),
                         fgo: Some(fgo.get_current_state()), // FGO shadow mode output
                     };
@@ -1893,47 +1891,6 @@ async fn main() -> Result<()> {
                 );
             }
 
-            // Log 13D filter state (orientation + position + velocity)
-            let ekf_13d_state = ekf_13d.get_state();
-            logger.log_13d_state(
-                ekf_13d_state.position.0,
-                ekf_13d_state.position.1,
-                ekf_13d_state.position.2,
-                ekf_13d_state.velocity.0,
-                ekf_13d_state.velocity.1,
-                ekf_13d_state.velocity.2,
-                ekf_13d_state.quaternion.0,
-                ekf_13d_state.quaternion.1,
-                ekf_13d_state.quaternion.2,
-                ekf_13d_state.quaternion.3,
-            );
-
-            // Log orientation (quaternion) to Rerun for 3D rotation visualization
-            logger.log_orientation(
-                ekf_13d_state.quaternion.0,
-                ekf_13d_state.quaternion.1,
-                ekf_13d_state.quaternion.2,
-                ekf_13d_state.quaternion.3,
-            );
-
-            // Log local XYZ position to Rerun for trajectory visualization
-            logger.log_position(
-                ekf_13d_state.position.0,
-                ekf_13d_state.position.1,
-                ekf_13d_state.position.2,
-            );
-
-            // Log filter comparison: EKF (8D) vs 13D
-            let ekf_speed = ekf.get_state().map(|s| s.velocity).unwrap_or(0.0);
-            let ekf_13d_speed = (ekf_13d_state.velocity.0 * ekf_13d_state.velocity.0
-                + ekf_13d_state.velocity.1 * ekf_13d_state.velocity.1
-                + ekf_13d_state.velocity.2 * ekf_13d_state.velocity.2)
-                .sqrt();
-            logger.log_filter_comparison("velocity", ekf_speed, ekf_13d_speed);
-
-            // Compare position accuracy
-            logger.log_filter_comparison("position_x", 0.0, ekf_13d_state.position.0);
-            logger.log_filter_comparison("position_y", 0.0, ekf_13d_state.position.1);
         }
 
         // Status update every 2 seconds
@@ -2031,19 +1988,28 @@ async fn main() -> Result<()> {
             live_status.gravity_magnitude = gravity_mag;
             live_status.uptime_seconds = uptime;
 
-            if let Some(ekf_state_ref) = ekf_state.as_ref() {
-                live_status.ekf_velocity = ekf_state_ref.velocity;
-                live_status.ekf_distance = ekf_state_ref.distance;
-                live_status.ekf_heading_deg = ekf_state_ref.heading_deg;
+                if let Some(ekf_state_ref) = ekf_state.as_ref() {
+                    live_status.ekf_velocity = ekf_state_ref.velocity;
+                    live_status.ekf_distance = ekf_state_ref.distance;
+                    live_status.ekf_heading_deg = ekf_state_ref.heading_deg;
+                    let origin_ready = ekf_state_ref.gps_updates > 0;
+                    let (lat_opt, lon_opt) = if origin_ready {
+                        (Some(ekf_state_ref.position.0), Some(ekf_state_ref.position.1))
+                    } else {
+                        (None, None)
+                    };
 
-                trajectories.push(TrajectoryPoint {
-                    timestamp: live_status::current_timestamp(),
-                    ekf_x: ekf_state_ref.position_local.0,
-                    ekf_y: ekf_state_ref.position_local.1,
-                    ekf_velocity: ekf_state_ref.velocity,
-                    ekf_heading_deg: ekf_state_ref.heading_deg,
-                    comp_velocity: comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0),
-                });
+                    trajectories.push(TrajectoryPoint {
+                        timestamp: live_status::current_timestamp(),
+                        ekf_x: ekf_state_ref.position_local.0,
+                        ekf_y: ekf_state_ref.position_local.1,
+                        ekf_velocity: ekf_state_ref.velocity,
+                        ekf_heading_deg: ekf_state_ref.heading_deg,
+                        comp_velocity: comp_state.as_ref().map(|c| c.velocity).unwrap_or(0.0),
+                        lat: lat_opt,
+                        lon: lon_opt,
+                        valid: origin_ready,
+                    });
 
                 let (trace, diag) = ekf.get_covariance_snapshot();
                 covariance_snapshots.push(CovarianceSnapshot {
@@ -2125,6 +2091,8 @@ async fn main() -> Result<()> {
                 },
                 system_health: restart_manager.status_report(),
                 track_path,
+                origin_lat: origin_latlon.as_ref().map(|o| o.0),
+                origin_lon: origin_latlon.as_ref().map(|o| o.1),
             };
 
             let filename = save_json_compressed(&output, &args.output_dir, &session_id)?;
@@ -2176,7 +2144,6 @@ async fn main() -> Result<()> {
                     roughness: Some(avg_roughness),
                     specific_power_w_per_kg: 0.0,
                     power_coefficient: 0.0,
-                    experimental_13d: None,
                     experimental_15d: None,
                     fgo: None,
                 };
@@ -2339,6 +2306,8 @@ async fn main() -> Result<()> {
         },
         system_health: restart_manager.status_report(),
         track_path,
+        origin_lat: origin_latlon.map(|o| o.0),
+        origin_lon: origin_latlon.map(|o| o.1),
     };
 
     let filename = save_json_compressed(&output, &args.output_dir, &session_id)?;

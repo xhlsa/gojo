@@ -11,6 +11,10 @@ path = "src/main.rs"
 name = "dashboard"
 path = "src/bin/dashboard.rs"
 
+[[bin]]
+name = "ekf_gps_demo"
+path = "src/bin/ekf_gps_demo.rs"
+
 [lib]
 name = "motion_tracker_rs"
 path = "src/lib.rs"

@@ -59,13 +59,15 @@ plt.title("Sensor Fusion: GPS vs. 15-State EKF (Full Log)")
 
 # Plot Raw GPS as noisy dots
 df_gps_plot = df.dropna(subset=['raw_lat', 'raw_lon'])
+print(f"Plotting {len(df_gps_plot)} GPS points")
 plt.scatter(df_gps_plot['raw_lon'], df_gps_plot['raw_lat'],
-            c='red', alpha=0.3, s=2, label='Raw GPS Input')
+            c='red', alpha=0.2, s=2, label='Raw GPS Input', zorder=5)
 
 # Plot EKF as a smooth path
 df_ekf_plot = df.dropna(subset=['ekf_lat', 'ekf_lon'])
+print(f"Plotting {len(df_ekf_plot)} EKF points")
 plt.plot(df_ekf_plot['ekf_lon'], df_ekf_plot['ekf_lat'],
-         c='blue', linewidth=2, label='Fused Estimate (EKF)')
+         c='blue', linewidth=3, label='Fused Estimate (EKF)', zorder=10)
 
 plt.xlabel("Longitude")
 plt.ylabel("Latitude")
@@ -120,8 +122,8 @@ df_clean_ekf = df_clean.dropna(subset=['ekf_lat', 'ekf_lon'])
 
 plt.figure(figsize=(10, 10))
 plt.title("Sensor Fusion: GPS vs. EKF (Valid Data < 60m/s)")
-plt.scatter(df_clean_gps['raw_lon'], df_clean_gps['raw_lat'], c='red', alpha=0.3, s=2, label='Raw GPS')
-plt.plot(df_clean_ekf['ekf_lon'], df_clean_ekf['ekf_lat'], c='blue', linewidth=2, label='EKF (Clipped)')
+plt.scatter(df_clean_gps['raw_lon'], df_clean_gps['raw_lat'], c='red', alpha=0.2, s=2, label='Raw GPS', zorder=5)
+plt.plot(df_clean_ekf['ekf_lon'], df_clean_ekf['ekf_lat'], c='blue', linewidth=3, label='EKF (Clipped)', zorder=10)
 plt.xlabel("Longitude")
 plt.ylabel("Latitude")
 plt.legend()

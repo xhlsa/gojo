@@ -285,11 +285,15 @@ impl Ekf15d {
         self.covariance = (&self.covariance + &p_t) * 0.5;
     }
 
-    /// GPS update: correct position with accuracy-based gating
+    /// GPS update: correct position with full Kalman update (FIXED)
+    /// 
+    /// This replaces the broken scalar-only update with proper cross-covariance propagation.
+    /// GPS position corrections now also adjust velocity estimates through P_pv.
     pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64) {
-        // STEP 3: Enforce GPS accuracy floor (minimum 5m)
+        // Enforce GPS accuracy floor (minimum 5m)
         let gps_noise = (accuracy * accuracy).max(5.0 * 5.0);
 
+        // Convert lat/lon to local meters if origin is set
         let (mut pos_x, mut pos_y, pos_z) = gps_pos;
         if let Some((origin_lat, origin_lon)) = self.origin {
             let (x, y) = latlon_to_meters(pos_x, pos_y, origin_lat, origin_lon);
@@ -297,43 +301,103 @@ impl Ekf15d {
             pos_y = y;
         }
 
-        // Simple measurement update for position [0-2]
-        let innovation = [
+        // Innovation: z - H*x
+        let innovation = arr1(&[
             pos_x - self.state[0],
             pos_y - self.state[1],
             pos_z - self.state[2],
-        ];
+        ]);
 
-        // Measurement matrix H (identity for position)
-        let mut h = Array2::<f64>::zeros((3, 15));
+        // Optional: gate extreme innovations to reject GPS jumps
+        let max_innovation = 100.0; // meters
         for i in 0..3 {
-            h[[i, i]] = 1.0;
-        }
-
-        // Innovation covariance: S = H*P*H^T + R
-        let mut s = Array2::<f64>::zeros((3, 3));
-        for i in 0..3 {
-            for j in 0..3 {
-                s[[i, j]] = self.covariance[[i, j]];
-                if i == j {
-                    s[[i, j]] += gps_noise;
-                }
+            if innovation[i].abs() > max_innovation {
+                // GPS jumped too far - skip update or handle specially
+                return;
             }
         }
 
-        // STEP 1: Tikhonov regularization
+        // Measurement matrix H (3x15): observes position states [0,1,2]
+        let mut h = Array2::<f64>::zeros((3, 15));
+        h[[0, 0]] = 1.0;
+        h[[1, 1]] = 1.0;
+        h[[2, 2]] = 1.0;
+
+        // Measurement noise R (3x3)
+        // Altitude typically has 2-4x worse accuracy than horizontal
+        let mut r = Array2::<f64>::zeros((3, 3));
+        r[[0, 0]] = gps_noise;
+        r[[1, 1]] = gps_noise;
+        r[[2, 2]] = gps_noise * 4.0; // vertical uncertainty higher
+
+        // Innovation covariance: S = H*P*H^T + R
+        let p = &self.covariance;
+        let h_t = h.t();
+        let s = h.dot(p).dot(&h_t) + r.clone();
+
+        // Invert S (3x3) using nalgebra for numerical stability
+        use nalgebra::Matrix3;
+        let s_mat = Matrix3::new(
+            s[[0, 0]], s[[0, 1]], s[[0, 2]],
+            s[[1, 0]], s[[1, 1]], s[[1, 2]],
+            s[[2, 0]], s[[2, 1]], s[[2, 2]],
+        );
+
+        let Some(s_inv_na) = s_mat.try_inverse() else {
+            // Singular innovation covariance - skip update
+            return;
+        };
+
+        // Convert back to ndarray
+        let mut s_inv = Array2::<f64>::zeros((3, 3));
         for i in 0..3 {
-            s[[i, i]] += 1e-6;
+            for j in 0..3 {
+                s_inv[[i, j]] = s_inv_na[(i, j)];
+            }
         }
 
-        // Kalman gain: K = P*H^T*S^-1 (simplified for diagonal S)
-        for i in 0..3 {
-            if s[[i, i]].abs() > 1e-6 {
-                let gain = self.covariance[[i, i]] / s[[i, i]];
-                self.state[i] += gain * innovation[i];
+        // Kalman gain: K = P*H^T*S^-1 (15x3)
+        // This is the KEY difference - full 15x3 gain matrix
+        let k = p.dot(&h_t).dot(&s_inv);
 
-                // Update covariance: P = (I - K*H)*P
-                self.covariance[[i, i]] *= 1.0 - gain;
+        // State update: x = x + K*innovation
+        // ALL 15 states are updated, including velocity through cross-covariance!
+        let dx = k.dot(&innovation);
+        for i in 0..15 {
+            self.state[i] += dx[i];
+        }
+
+        // Re-normalize quaternion after update
+        let q_norm = (
+            self.state[6].powi(2) + 
+            self.state[7].powi(2) + 
+            self.state[8].powi(2) + 
+            self.state[9].powi(2)
+        ).sqrt();
+        if q_norm > 1e-6 {
+            self.state[6] /= q_norm;
+            self.state[7] /= q_norm;
+            self.state[8] /= q_norm;
+            self.state[9] /= q_norm;
+        }
+
+        // Joseph form covariance update: P = (I-KH)*P*(I-KH)^T + K*R*K^T
+        // More numerically stable than standard form
+        let i_mat = Array2::<f64>::eye(15);
+        let kh = k.dot(&h);
+        let i_minus_kh = &i_mat - &kh;
+        let term1 = i_minus_kh.dot(p).dot(&i_minus_kh.t());
+        let term2 = k.dot(&r).dot(&k.t());
+        self.covariance = term1 + term2;
+
+        // Symmetrize to prevent numerical drift
+        let p_t = self.covariance.t().to_owned();
+        self.covariance = (&self.covariance + &p_t) / 2.0;
+
+        // Ensure positive definiteness (floor small variances)
+        for i in 0..15 {
+            if self.covariance[[i, i]] < 1e-9 {
+                self.covariance[[i, i]] = 1e-9;
             }
         }
 
