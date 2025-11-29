@@ -450,6 +450,73 @@ impl SensorState {
     }
 }
 
+/// Continuous mounting yaw offset calibration
+/// Tracks phone orientation relative to vehicle via GPS bearing comparison
+struct MountingCalibration {
+    /// Accumulated offset samples (GPS_heading - EKF_heading) during straight driving
+    heading_offset_accumulator: Vec<f64>,
+
+    /// Current yaw offset estimate [radians] (phone frame to vehicle frame)
+    yaw_offset: f64,
+
+    /// EMA smoothing factor (0.1 = 10% new, 90% old)
+    ema_alpha: f64,
+
+    /// Minimum samples before applying first offset
+    min_samples: usize,
+
+    /// Total refinement count
+    refinement_count: u64,
+}
+
+impl MountingCalibration {
+    fn new() -> Self {
+        Self {
+            heading_offset_accumulator: Vec::new(),
+            yaw_offset: 0.0,  // Assume aligned initially
+            ema_alpha: 0.1,
+            min_samples: 20,
+            refinement_count: 0,
+        }
+    }
+
+    /// Accumulate offset sample during stable straight driving
+    fn accumulate(&mut self, offset_rad: f64) {
+        self.heading_offset_accumulator.push(offset_rad);
+    }
+
+    /// Calculate mean offset from accumulated samples
+    fn calculate_offset(&mut self) -> Option<f64> {
+        if self.heading_offset_accumulator.len() < self.min_samples {
+            return None;
+        }
+
+        let sum: f64 = self.heading_offset_accumulator.iter().sum();
+        let mean = sum / self.heading_offset_accumulator.len() as f64;
+
+        self.heading_offset_accumulator.clear();
+        Some(mean)
+    }
+
+    /// Apply EMA update to offset estimate
+    fn update_with_ema(&mut self, new_offset: f64) {
+        if self.refinement_count == 0 {
+            // First update: use raw value
+            self.yaw_offset = new_offset;
+        } else {
+            // EMA blend: 10% new, 90% old
+            self.yaw_offset = self.ema_alpha * new_offset + (1.0 - self.ema_alpha) * self.yaw_offset;
+        }
+        self.refinement_count += 1;
+    }
+
+    /// Get confidence metric (0-1) based on refinement count
+    fn get_confidence(&self) -> f64 {
+        // Saturates at 1.0 after 10 refinements
+        (self.refinement_count as f64 / 10.0).min(1.0)
+    }
+}
+
 /// Calculate gravity and gyro bias from stationary samples
 /// Returns (gravity_bias as (x,y,z), gyro_bias as (x,y,z))
 fn calculate_biases(
@@ -1147,6 +1214,10 @@ async fn main() -> Result<()> {
     let mut dyn_calib = DynamicCalibration::new(gravity_bias);
     eprintln!("[CALIB-DYN] Dynamic calibration initialized, will refine gravity during stillness");
 
+    // Initialize mounting yaw offset calibration for continuous phone orientation tracking
+    let mut mounting_cal = MountingCalibration::new();
+    eprintln!("[MOUNT-CAL] Mounting calibration initialized, will track phone-to-vehicle yaw offset");
+
     // Initialize Factor Graph Optimization (FGO) in shadow mode
     let start_pos = (0.0, 0.0, 0.0); // Will be updated by first GPS fix
     let start_vel = (0.0, 0.0, 0.0);
@@ -1401,20 +1472,58 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Non-holonomic constraint: clamp lateral/vertical body velocity at reduced rate.
-                // Disable after very long GPS gaps to avoid constraining with stale heading.
+                // ===== NON-HOLONOMIC CONSTRAINT: Constrain lateral/vertical velocity in vehicle frame =====
+                // Only apply when GPS-aligned (gap < 3s) and moving (speed > 2.5 m/s)
                 if last_nhc_ts < 0.0 || (accel.timestamp - last_nhc_ts) >= 1.0 {
                     let nhc_gap = last_gps_fix_ts
                         .map(|ts| (accel.timestamp - ts).max(0.0))
-                        .unwrap_or(0.0);
-                    // Soften with gap; after 10s gap, skip NHC entirely.
-                    if nhc_gap <= 10.0 {
-                        let nhc_r = (1.0 + nhc_gap * 0.5).min(5.0);
-                        ekf_15d.update_body_velocity(Vector3::zeros(), nhc_r);
-                    } else {
-                        eprintln!("[NHC SKIP] gap {:.1}s", nhc_gap);
+                        .unwrap_or(999.0);
+                    let current_speed = ekf_15d.get_speed();
+
+                    // Gate on GPS freshness (< 3s) and vehicle motion (> 2.5 m/s)
+                    if nhc_gap < 3.0 && current_speed > 2.5 {
+                        let nhc_r = 0.1;  // Tight constraint when GPS-aligned
+                        ekf_15d.update_body_velocity_with_offset(
+                            current_speed,           // Pure EKF speed (no GPS blend)
+                            mounting_cal.yaw_offset, // Continuous calibration offset
+                            nhc_r
+                        );
                     }
                     last_nhc_ts = accel.timestamp;
+                }
+
+                // ===== MOUNTING CALIBRATION: Accumulate offset during straight GPS-covered driving =====
+                if let Some(gps) = sensor_state.latest_gps.read().await.as_ref() {
+                    // Only accumulate when GPS is accurate, moving fast, and driving straight
+                    if gps.accuracy < 20.0 && gps.speed > 5.0 && !gps.bearing.is_nan() {
+                        if let Some(gyro) = sensor_state.latest_gyro.read().await.as_ref() {
+                            let gyro_mag = (gyro.x * gyro.x + gyro.y * gyro.y + gyro.z * gyro.z).sqrt();
+
+                            // Gyro < 0.05 rad/s = straight driving (no turning)
+                            if gyro_mag < 0.05 {
+                                // GPS bearing: 0° = North, clockwise (standard GPS convention)
+                                // EKF heading: 0 = East, CCW (ENU frame)
+                                // Convert GPS to ENU: GPS_ENU = π/2 - GPS_bearing
+                                let gps_heading_enu = std::f64::consts::FRAC_PI_2 - gps.bearing.to_radians();
+                                let ekf_heading_enu = ekf_15d.get_heading();
+
+                                // Offset: rotation needed to align phone frame with vehicle frame
+                                let offset = normalize_angle(gps_heading_enu - ekf_heading_enu);
+                                mounting_cal.accumulate(offset);
+
+                                // Apply EMA update when enough samples collected
+                                if let Some(new_offset) = mounting_cal.calculate_offset() {
+                                    mounting_cal.update_with_ema(new_offset);
+                                    eprintln!(
+                                        "[MOUNT-CAL] Refinement #{}: offset={:.1}°, confidence={:.2}",
+                                        mounting_cal.refinement_count,
+                                        mounting_cal.yaw_offset.to_degrees(),
+                                        mounting_cal.get_confidence()
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
 
                 if args.enable_mag && in_gps_gap {
@@ -2345,4 +2454,16 @@ fn ts_now() -> String {
 
 fn ts_now_clean() -> String {
     Utc::now().format("%Y%m%d_%H%M%S").to_string()
+}
+
+/// Normalize angle to [-π, π]
+fn normalize_angle(angle: f64) -> f64 {
+    let mut a = angle;
+    while a > std::f64::consts::PI {
+        a -= 2.0 * std::f64::consts::PI;
+    }
+    while a < -std::f64::consts::PI {
+        a += 2.0 * std::f64::consts::PI;
+    }
+    a
 }

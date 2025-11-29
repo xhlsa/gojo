@@ -1,4 +1,4 @@
-use nalgebra::{Matrix3, SMatrix, Vector3};
+use nalgebra::{Matrix3, SMatrix};
 use ndarray::{arr1, s, Array1, Array2};
 use serde::{Deserialize, Serialize};
 
@@ -835,15 +835,24 @@ impl Ekf15d {
         self.covariance = (&self.covariance + &p_t) / 2.0;
     }
 
-    /// Non-holonomic body-frame velocity constraint (constrains lateral/vertical drift)
-    pub fn update_body_velocity(&mut self, measurement: Vector3<f64>, lateral_vertical_noise: f64) {
-        // Rotation matrix from body to world (transpose used to project world velocity into body frame)
+    /// Non-holonomic constraint with mounting yaw offset compensation
+    ///
+    /// Constrains vehicle-frame lateral and vertical velocity to zero.
+    /// `forward_speed`: expected forward speed in vehicle frame
+    /// `mounting_yaw_offset`: rotation from phone body frame to vehicle frame (radians)
+    /// `lateral_vertical_noise`: measurement noise for Y/Z constraints
+    pub fn update_body_velocity_with_offset(
+        &mut self,
+        forward_speed: f64,
+        mounting_yaw_offset: f64,
+        lateral_vertical_noise: f64,
+    ) {
+        // === 1. Build phone body-to-world rotation from quaternion ===
         let mut qw = self.state[6];
         let mut qx = self.state[7];
         let mut qy = self.state[8];
         let mut qz = self.state[9];
 
-        // Normalize quaternion to avoid scaling artifacts
         let q_norm = (qw * qw + qx * qx + qy * qy + qz * qz).sqrt();
         if q_norm > 1e-9 {
             qw /= q_norm;
@@ -857,131 +866,124 @@ impl Ekf15d {
             qz = 0.0;
         }
 
+        // R_body_to_world (phone frame)
         let r00 = 1.0 - 2.0 * (qy * qy + qz * qz);
         let r01 = 2.0 * (qx * qy - qw * qz);
         let r02 = 2.0 * (qx * qz + qw * qy);
-
         let r10 = 2.0 * (qx * qy + qw * qz);
         let r11 = 1.0 - 2.0 * (qx * qx + qz * qz);
         let r12 = 2.0 * (qy * qz - qw * qx);
-
         let r20 = 2.0 * (qx * qz - qw * qy);
         let r21 = 2.0 * (qy * qz + qw * qx);
         let r22 = 1.0 - 2.0 * (qx * qx + qy * qy);
 
-        // R_body_from_world = R^T
-        let h_vel =
-            Array2::from_shape_vec((3, 3), vec![r00, r10, r20, r01, r11, r21, r02, r12, r22])
-                .unwrap();
+        // R_phone_body_from_world = R^T
+        let r_phone_t = Matrix3::new(
+            r00, r10, r20,
+            r01, r11, r21,
+            r02, r12, r22,
+        );
 
-        // Predicted body-frame velocity
+        // === 2. Build mounting offset rotation (yaw only, around Z) ===
+        // R_vehicle_from_phone: rotates phone body frame to vehicle frame
+        let cos_m = mounting_yaw_offset.cos();
+        let sin_m = mounting_yaw_offset.sin();
+        let r_mount = Matrix3::new(
+            cos_m, -sin_m, 0.0,
+            sin_m,  cos_m, 0.0,
+            0.0,    0.0,   1.0,
+        );
+
+        // === 3. Combined H_vel: world velocity -> vehicle body velocity ===
+        // v_vehicle = R_mount * R_phone^T * v_world
+        let h_vel_na = r_mount * r_phone_t;
+
+        // Convert to ndarray for compatibility
+        let h_vel = Array2::from_shape_vec(
+            (3, 3),
+            vec![
+                h_vel_na[(0, 0)], h_vel_na[(0, 1)], h_vel_na[(0, 2)],
+                h_vel_na[(1, 0)], h_vel_na[(1, 1)], h_vel_na[(1, 2)],
+                h_vel_na[(2, 0)], h_vel_na[(2, 1)], h_vel_na[(2, 2)],
+            ],
+        ).unwrap();
+
+        // === 4. Predicted vehicle-frame velocity ===
         let v_world = arr1(&[self.state[3], self.state[4], self.state[5]]);
-        let v_body_pred = h_vel.dot(&v_world);
+        let v_vehicle_pred = h_vel.dot(&v_world);
 
-        // Innovation y = z - H * x
-        let meas = arr1(&[measurement.x, measurement.y, measurement.z]);
-        let innovation = &meas - &v_body_pred;
+        // === 5. Measurement: [forward_speed, 0, 0] in vehicle frame ===
+        let meas = arr1(&[forward_speed, 0.0, 0.0]);
+        let innovation = &meas - &v_vehicle_pred;
 
-        // Measurement noise (ignore X, constrain Y/Z)
+        // === 6. Measurement noise (ignore forward, constrain lateral/vertical) ===
         let mut r = Matrix3::zeros();
         let r_yz = lateral_vertical_noise.max(1e-6);
-        r[(0, 0)] = 999.0;
-        r[(1, 1)] = r_yz;
-        r[(2, 2)] = r_yz;
+        r[(0, 0)] = 999.0;  // Don't constrain forward speed
+        r[(1, 1)] = r_yz;   // Constrain lateral (no sideslip)
+        r[(2, 2)] = r_yz;   // Constrain vertical (ground vehicle)
+
+        // === 7. Standard Kalman update with full cross-covariance ===
 
         // Extract velocity covariance block P_vv (3x3)
         let p_vv = self.covariance.slice(s![3..6, 3..6]).to_owned();
         let p_vv_mat = Matrix3::from_row_slice(p_vv.as_slice().unwrap());
 
-        // Compute S = H * P_vv * H^T + R
-        let h_mat = Matrix3::from_row_slice(h_vel.as_slice().unwrap());
-        let s_mat = h_mat * p_vv_mat * h_mat.transpose() + r;
+        // S = H * P_vv * H^T + R
+        let s_mat = h_vel_na * p_vv_mat * h_vel_na.transpose() + r;
 
-        if let Some(s_inv) = s_mat.try_inverse() {
-            // P[:, vel] (15 x 3)
-            let p_vel = self.covariance.slice(s![.., 3..6]).to_owned();
-            // K = P * H^T * S^-1
-            let h_t = h_mat.transpose();
-            let mut h_t_arr = Array2::<f64>::zeros((3, 3));
-            for i in 0..3 {
-                for j in 0..3 {
-                    h_t_arr[[i, j]] = h_t[(i, j)];
-                }
+        let Some(s_inv) = s_mat.try_inverse() else {
+            return; // Singular, skip update
+        };
+
+        // Full cross-covariance: P[:, vel] (15 x 3)
+        let p_vel = self.covariance.slice(s![.., 3..6]).to_owned();
+
+        // K = P[:, vel] * H^T * S^-1
+        let h_t = h_vel_na.transpose();
+        let mut h_t_arr = Array2::<f64>::zeros((3, 3));
+        let mut s_inv_arr = Array2::<f64>::zeros((3, 3));
+        for i in 0..3 {
+            for j in 0..3 {
+                h_t_arr[[i, j]] = h_t[(i, j)];
+                s_inv_arr[[i, j]] = s_inv[(i, j)];
             }
-            let mut s_inv_arr = Array2::<f64>::zeros((3, 3));
-            for r in 0..3 {
-                for c in 0..3 {
-                    s_inv_arr[[r, c]] = s_inv[(r, c)];
-                }
+        }
+        let k = p_vel.dot(&h_t_arr).dot(&s_inv_arr); // (15 x 3)
+
+        // State update
+        let dx = k.dot(&innovation);
+        for i in 0..15 {
+            self.state[i] += dx[i];
+        }
+
+        // === 8. Joseph form covariance update ===
+        let mut h_full = Array2::<f64>::zeros((3, 15));
+        for row in 0..3 {
+            for col in 0..3 {
+                h_full[[row, 3 + col]] = h_vel[[row, col]];
             }
-            let k_mat = p_vel.dot(&h_t_arr);
-            let k = k_mat.dot(&s_inv_arr); // (15 x 3)
+        }
 
-            // State update: x = x + K * innovation
-            let dx = k.dot(&innovation);
-            for i in 0..self.state.len() {
-                self.state[i] += dx[i];
+        let k_na = SMatrix::<f64, 15, 3>::from_row_slice(k.as_slice().unwrap());
+        let h_na = SMatrix::<f64, 3, 15>::from_row_slice(h_full.as_slice().unwrap());
+        let p_na = SMatrix::<f64, 15, 15>::from_row_slice(self.covariance.as_slice().unwrap());
+
+        let identity = SMatrix::<f64, 15, 15>::identity();
+        let i_minus_kh = identity - k_na.clone() * h_na.clone();
+        let term1 = &i_minus_kh * p_na * i_minus_kh.transpose();
+        let term2 = k_na.clone() * r * k_na.transpose();
+        let joseph = term1 + term2;
+
+        // Copy back and symmetrize
+        for i in 0..15 {
+            for j in 0..15 {
+                self.covariance[[i, j]] = 0.5 * (joseph[(i, j)] + joseph[(j, i)]);
             }
-
-            // Covariance update (Joseph form)
-            let mut h_full = Array2::<f64>::zeros((3, self.state.len()));
-            // place H in velocity columns
-            for row in 0..3 {
-                for col in 0..3 {
-                    h_full[[row, 3 + col]] = h_vel[[row, col]];
-                }
+            // Floor diagonal
+            if self.covariance[[i, i]] < 1e-6 {
+                self.covariance[[i, i]] = 1e-6;
             }
-
-            // Build nalgebra representations
-            let k_na = SMatrix::<f64, 15, 3>::from_row_slice(
-                k.as_slice().expect("Kalman gain slice should exist"),
-            );
-            let h_na = SMatrix::<f64, 3, 15>::from_row_slice(
-                h_full.as_slice().expect("H slice should exist"),
-            );
-            let r_na = r;
-            let p_na = SMatrix::<f64, 15, 15>::from_row_slice(
-                self.covariance
-                    .as_slice()
-                    .expect("Covariance slice should exist"),
-            );
-            let identity = SMatrix::<f64, 15, 15>::identity();
-            let i_minus_kh = identity - k_na.clone() * h_na.clone();
-
-            // FIXED: Joseph form P = (I-KH)*P*(I-KH)^T + K*R*K^T
-            // Explicit parentheses to ensure correct order
-            let i_minus_kh_t = i_minus_kh.transpose();
-            let term1_a = &i_minus_kh * p_na; // (I-KH) * P
-            let term1 = term1_a * i_minus_kh_t; // ((I-KH)*P) * (I-KH)^T
-
-            let term2_a = k_na.clone() * r_na; // K * R
-            let term2 = term2_a * k_na.transpose(); // (K*R) * K^T
-
-            let joseph = term1 + term2;
-
-            // copy back to ndarray and symmetrize
-            let mut new_p = Array2::<f64>::zeros((self.state.len(), self.state.len()));
-            for r in 0..self.state.len() {
-                for c in 0..self.state.len() {
-                    new_p[[r, c]] = joseph[(r, c)];
-                }
-            }
-            // Symmetrize
-            let mut sym_p = new_p.clone();
-            for r in 0..self.state.len() {
-                for c in 0..self.state.len() {
-                    sym_p[[r, c]] = 0.5 * (new_p[[r, c]] + new_p[[c, r]]);
-                }
-            }
-
-            // Ensure positive definiteness: clamp any negative variances to a small floor
-            for i in 0..self.state.len() {
-                if sym_p[[i, i]] < 1e-6 {
-                    sym_p[[i, i]] = 1e-6;
-                }
-            }
-
-            self.covariance = sym_p;
         }
     }
 
@@ -992,6 +994,22 @@ impl Ekf15d {
         let vz = self.state[5];
         (vx * vx + vy * vy + vz * vz).sqrt()
     }
+
+    /// Extract yaw (heading) from quaternion state
+    /// Returns radians in ENU frame (0 = East, π/2 = North, counter-clockwise)
+    pub fn get_heading(&self) -> f64 {
+        let q = nalgebra::UnitQuaternion::from_quaternion(
+            nalgebra::Quaternion::new(
+                self.state[6],  // qw
+                self.state[7],  // qx
+                self.state[8],  // qy
+                self.state[9],  // qz
+            )
+        );
+        let (_, _, yaw) = q.euler_angles();
+        yaw
+    }
+
     /// Align orientation to gravity while preserving yaw (ENU frame)
     pub fn align_orientation_to_gravity(&mut self, current_accel: &nalgebra::Vector3<f64>) {
         let accel_norm = current_accel.norm();

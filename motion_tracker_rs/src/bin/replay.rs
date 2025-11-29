@@ -66,6 +66,10 @@ struct Args {
     /// Output directory for written roughness files (defaults to golden/roughness_updated)
     #[arg(long)]
     output_dir: Option<PathBuf>,
+
+    /// GPS decimation for simulated denial testing (1=all, 10=10% coverage, 20=5% coverage)
+    #[arg(long, default_value = "1")]
+    gps_decimation: u32,
 }
 
 #[derive(Deserialize)]
@@ -379,6 +383,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut sample_counter = 0u32;
     let mut mag_fires: u64 = 0;
     let mut baro_fires: u64 = 0;
+    let mut gps_counter = 0u32; // Decimation counter for GPS denial simulation
+    let mut ground_truth_gps: Vec<(f64, f64, f64)> = Vec::new(); // (timestamp, lat, lon) for all GPS samples
 
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
@@ -412,14 +418,18 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             } else {
                 in_gap_mode = false;
             }
-            // Apply NHC at reduced rate (1s) with gap-aware noise; disable after long gaps
+            // Apply NHC at reduced rate (1s) with tight constraint when GPS-aligned
             if last_nhc_ts < 0.0 || (r.timestamp - last_nhc_ts) >= 1.0 {
                 let nhc_gap = last_gps_ts
                     .map(|ts| (r.timestamp - ts).max(0.0))
-                    .unwrap_or(0.0);
-                if nhc_gap <= 10.0 {
-                    let nhc_r = (1.0 + nhc_gap * 0.5).min(5.0);
-                    ekf.update_body_velocity(nalgebra::Vector3::zeros(), nhc_r);
+                    .unwrap_or(999.0);
+                let current_speed = ekf.get_speed();
+
+                // Gate on GPS freshness (< 3s) and vehicle motion (> 2.5 m/s)
+                if nhc_gap < 3.0 && current_speed > 2.5 {
+                    let nhc_r = 0.1;  // Tight constraint when GPS-aligned
+                    let mounting_offset = 0.0;  // Assume phone aligned for replay (no calibration in offline mode)
+                    ekf.update_body_velocity_with_offset(current_speed, mounting_offset, nhc_r);
                 }
                 last_nhc_ts = r.timestamp;
             }
@@ -449,7 +459,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     let gap = (r.timestamp - last).max(0.0);
                     if gap > 3.0 && ekf.get_speed() > 2.0 && last_gps_speed > 2.0 {
                         // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
-                        if let Some(yaw_correction) = ekf.update_mag_heading(
+                        if let Some(_yaw_correction) = ekf.update_mag_heading(
                             &crate::types::MagData {
                                 timestamp: m.timestamp,
                                 x: m.x,
@@ -458,11 +468,6 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                             },
                             0.157, // ~9° declination (Tucson)
                         ) {
-                            /* println!(
-                                "[MAG] gap {:.1}s yaw correction: {:.1}°",
-                                gap,
-                                yaw_correction.to_degrees()
-                            ); */
                             mag_fires += 1;
                             _yaw_debug_lines += 1;
                         }
@@ -482,72 +487,82 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         }
 
         if let Some(gps) = r.gps.as_ref() {
-            // Set origin if not set
+            // Always track ground truth GPS (regardless of decimation)
+            ground_truth_gps.push((r.timestamp, gps.latitude, gps.longitude));
+
+            // Decimation gate: only apply GPS updates at decimated rate
+            gps_counter += 1;
+            let gps_decimated = args.gps_decimation == 1 || (gps_counter % args.gps_decimation == 0);
+
+            // Set origin if not set (only on first GPS fix)
             if replay_origin.is_none() {
                 replay_origin = Some((gps.latitude, gps.longitude));
                 ekf.set_origin(gps.latitude, gps.longitude, 0.0);
             }
 
-            let vx_before = ekf.state[3];
-            let vy_before = ekf.state[4];
-            let vz_before = ekf.state[5];
-            let bearing_rad = gps.bearing.to_radians();
-            let vx_meas = gps.speed * bearing_rad.sin();
-            let vy_meas = gps.speed * bearing_rad.cos();
-            let innov_x = vx_meas - vx_before;
-            let innov_y = vy_meas - vy_before;
-            let innov_norm = (innov_x * innov_x + innov_y * innov_y).sqrt();
-            if innov_norm > max_innov_norm {
-                max_innov_norm = innov_norm;
-            }
-
-            // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
-            if gps.speed > 5.0 {
-                let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
-                let half = target_yaw * 0.5;
-                ekf.state[6] = half.cos();
-                ekf.state[7] = 0.0;
-                ekf.state[8] = 0.0;
-                ekf.state[9] = half.sin();
-            }
-
-            ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
-            // Fixed GPS velocity std
-            ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
-            // Clamp vertical velocity aggressively for land vehicle
-            ekf.zero_vertical_velocity(1e-4);
-
-            // Track GPS gap and log errors after post-update velocity is available
-            let vx_after = ekf.state[3];
-            let vy_after = ekf.state[4];
-            let vz_after = ekf.state[5];
-            let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2) + (vz_after - vz_before).powi(2)).sqrt();
-            if delta_v > max_delta_v {
-                max_delta_v = delta_v;
-            }
-            
-            // Track GPS gap
-            if let Some(last) = last_gps_ts {
-                let gap = gps.timestamp - last;
-                if gap > max_gps_gap {
-                    max_gps_gap = gap;
+            // Only update EKF if GPS passes decimation gate
+            if gps_decimated {
+                let vx_before = ekf.state[3];
+                let vy_before = ekf.state[4];
+                let vz_before = ekf.state[5];
+                let bearing_rad = gps.bearing.to_radians();
+                let vx_meas = gps.speed * bearing_rad.sin();
+                let vy_meas = gps.speed * bearing_rad.cos();
+                let innov_x = vx_meas - vx_before;
+                let innov_y = vy_meas - vy_before;
+                let innov_norm = (innov_x * innov_x + innov_y * innov_y).sqrt();
+                if innov_norm > max_innov_norm {
+                    max_innov_norm = innov_norm;
                 }
-            }
-            last_gps_ts = Some(gps.timestamp);
-            last_gps_speed = gps.speed;
 
-            // Track recent GPS speeds for sanity gate
-            recent_gps.push_back((gps.timestamp, gps.speed));
-            while let Some((ts, _)) = recent_gps.front() {
-                if gps.timestamp - *ts > window_sec {
-                    recent_gps.pop_front();
-                } else {
-                    break;
+                // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
+                if gps.speed > 5.0 {
+                    let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
+                    let half = target_yaw * 0.5;
+                    ekf.state[6] = half.cos();
+                    ekf.state[7] = 0.0;
+                    ekf.state[8] = 0.0;
+                    ekf.state[9] = half.sin();
                 }
-            }
 
-            gps_speeds.push(gps.speed);
-            paired.push((ekf.get_speed(), gps.speed));
+                ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
+                // Fixed GPS velocity std
+                ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
+                // Clamp vertical velocity aggressively for land vehicle
+                ekf.zero_vertical_velocity(1e-4);
+
+                // Track GPS gap and log errors after post-update velocity is available
+                let vx_after = ekf.state[3];
+                let vy_after = ekf.state[4];
+                let vz_after = ekf.state[5];
+                let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2) + (vz_after - vz_before).powi(2)).sqrt();
+                if delta_v > max_delta_v {
+                    max_delta_v = delta_v;
+                }
+
+                // Track GPS gap (only for decimated updates)
+                if let Some(last) = last_gps_ts {
+                    let gap = gps.timestamp - last;
+                    if gap > max_gps_gap {
+                        max_gps_gap = gap;
+                    }
+                }
+                last_gps_ts = Some(gps.timestamp);
+                last_gps_speed = gps.speed;
+
+                // Track recent GPS speeds for sanity gate
+                recent_gps.push_back((gps.timestamp, gps.speed));
+                while let Some((ts, _)) = recent_gps.front() {
+                    if gps.timestamp - *ts > window_sec {
+                        recent_gps.pop_front();
+                    } else {
+                        break;
+                    }
+                }
+
+                gps_speeds.push(gps.speed);
+                paired.push((ekf.get_speed(), gps.speed));
+            }
         }
 
         // Velocity sanity gate based on recent GPS envelope; tighten during long GPS gaps
@@ -614,6 +629,9 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "clamp_scale": args.clamp_scale,
         "clamp_offset": args.clamp_offset,
         "clamp_interval": args.clamp_interval,
+        "gps_decimation": args.gps_decimation,
+        "ground_truth_gps_count": ground_truth_gps.len(),
+        "decimated_gps_count": gps_speeds.len(),
         "rmse": rmse_val,
         "max_ekf": max_ekf,
         "max_gps": max_gps,
@@ -628,6 +646,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "mag_fires": mag_fires,
         "yaw_debug_lines": _yaw_debug_lines,
         "baro_fires": baro_fires,
+        "last_baro_pressure_hpa": last_baro.map(|(_, p)| p),
         "peak_memory_mb": peak_mem_mb,
         "final_memory_mb": get_memory_mb()
     }))
