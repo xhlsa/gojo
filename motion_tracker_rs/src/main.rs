@@ -2263,7 +2263,7 @@ async fn main() -> Result<()> {
     // Final save
     let accel_count = *sensor_state.accel_count.read().await;
     let gyro_count = *sensor_state.gyro_count.read().await;
-    let gps_count = *sensor_state.gps_count.read().await;
+    let gps_count = readings.iter().filter(|r| r.gps.is_some()).count() as u64;
     let ekf_state = ekf.get_state();
     let uptime = Utc::now().signed_duration_since(start).num_seconds().max(0) as u64;
 
