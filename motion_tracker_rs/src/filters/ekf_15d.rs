@@ -1010,6 +1010,103 @@ impl Ekf15d {
         yaw
     }
 
+    /// Get current gyro bias estimates
+    pub fn get_gyro_bias(&self) -> (f64, f64, f64) {
+        (self.state[10], self.state[11], self.state[12])
+    }
+
+    /// Heading-aided gyro Z-axis bias update
+    ///
+    /// Uses GPS bearing rate vs integrated gyro to observe Z-axis bias.
+    /// Only valid during straight, fast driving with good GPS.
+    ///
+    /// `gps_heading_rate`: rad/s, from GPS bearing differencing
+    /// `gyro_z_raw`: rad/s, current Z-axis gyro reading
+    /// `noise_std`: measurement noise (rad/s)
+    pub fn update_gyro_bias_from_heading(
+        &mut self,
+        gps_heading_rate: f64,
+        gyro_z_raw: f64,
+        noise_std: f64,
+    ) {
+        // Predicted heading rate = gyro_z - bias_z
+        let bias_z = self.state[12];
+        let predicted_rate = gyro_z_raw - bias_z;
+
+        // Innovation: GPS says this, gyro says that
+        let innovation = gps_heading_rate - predicted_rate;
+
+        // Measurement noise covariance (scalar)
+        let r = noise_std * noise_std;
+
+        // S = H * P * H^T + R
+        // H = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, -1, 0, 0] (sparse)
+        // H * P * H^T = P[12,12]
+        let p_bias_z = self.covariance[[12, 12]];
+        let s = p_bias_z + r;
+
+        if s.abs() < 1e-12 {
+            return; // Singular, skip update
+        }
+
+        // K = P * H^T / S
+        // K[i] = P[i, 12] * (-1) / S = -P[i, 12] / S
+        let mut k = Array1::<f64>::zeros(15);
+        for i in 0..15 {
+            k[i] = -self.covariance[[i, 12]] / s;
+        }
+
+        // State update: x = x + K * innovation
+        for i in 0..15 {
+            self.state[i] += k[i] * innovation;
+        }
+
+        // Covariance update: P = (I - K*H) * P
+        // (I - K*H)[i,j] = I[i,j] - K[i]*H[j]
+        // H[j] = -1 if j==12, else 0
+        // So: (I - K*H)[i,j] = I[i,j] - K[i]*(-1) = I[i,j] + K[i]*1 if j==12
+        //                       I[i,j] if j != 12
+        let mut new_p = self.covariance.clone();
+
+        // Update all elements
+        for i in 0..15 {
+            for j in 0..15 {
+                if j == 12 {
+                    // (I - K*H)[i,12] = I[i,12] + K[i]
+                    new_p[[i, j]] = self.covariance[[i, j]] + k[i];
+                } else {
+                    // (I - K*H)[i,j] = I[i,j]
+                    new_p[[i, j]] = self.covariance[[i, j]];
+                }
+            }
+        }
+
+        // Apply Kalman gain to all rows
+        for i in 0..15 {
+            for j in 0..15 {
+                new_p[[i, j]] -= k[i] * self.covariance[[12, j]];
+            }
+        }
+
+        // Symmetrize to maintain PSD
+        for i in 0..15 {
+            for j in i + 1..15 {
+                let avg = 0.5 * (new_p[[i, j]] + new_p[[j, i]]);
+                new_p[[i, j]] = avg;
+                new_p[[j, i]] = avg;
+            }
+        }
+
+        // Ensure diagonal stays positive
+        for i in 0..15 {
+            if new_p[[i, i]] < 1e-6 {
+                new_p[[i, i]] = 1e-6;
+            }
+        }
+
+        self.covariance = new_p;
+    }
+
     /// Align orientation to gravity while preserving yaw (ENU frame)
     pub fn align_orientation_to_gravity(&mut self, current_accel: &nalgebra::Vector3<f64>) {
         let accel_norm = current_accel.norm();

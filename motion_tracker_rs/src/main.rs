@@ -249,6 +249,10 @@ struct SensorReading {
     power_coefficient: f64,
     experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
     fgo: Option<filters::fgo::FgoState>, // Factor Graph Optimization (shadow mode)
+    #[serde(default)]
+    gyro_bias_z_deg_per_s: Option<f64>, // Z-axis gyro bias estimate in °/s
+    #[serde(default)]
+    heading_rate_update_count: u64, // Count of heading-aided bias updates
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -1218,6 +1222,10 @@ async fn main() -> Result<()> {
     let mut mounting_cal = MountingCalibration::new();
     eprintln!("[MOUNT-CAL] Mounting calibration initialized, will track phone-to-vehicle yaw offset");
 
+    // Initialize heading rate estimator for gyro bias observation
+    let mut heading_rate_est = HeadingRateEstimator::new();
+    eprintln!("[GYRO-BIAS] Heading-aided gyro bias estimator initialized");
+
     // Initialize Factor Graph Optimization (FGO) in shadow mode
     let start_pos = (0.0, 0.0, 0.0); // Will be updated by first GPS fix
     let start_vel = (0.0, 0.0, 0.0);
@@ -1278,6 +1286,7 @@ async fn main() -> Result<()> {
     let mut is_heading_initialized = false;
     let mut last_accel_ts: Option<f64> = None;
     let mut last_gyro_ts: Option<f64> = None;
+    let mut last_gyro_z: f64 = 0.0; // Latest Z-axis gyro reading (for bias updates)
     let mut recent_gps_speeds: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
     let gps_speed_window = 10.0;
     let mut last_speed_clamp_ts: f64 = -1.0;
@@ -1551,6 +1560,9 @@ async fn main() -> Result<()> {
                 fgo.enqueue_imu(accel_vec_fgo, gyro_vec_fgo, accel.timestamp);
 
                 // We'll update this reading with 13D/15D data later if gyro arrives
+                // Get gyro bias telemetry
+                let (_, _, gyro_bias_z) = ekf_15d.get_gyro_bias();
+
                 let reading = SensorReading {
                     timestamp: accel.timestamp,
                     accel: Some(accel.clone()),
@@ -1563,6 +1575,8 @@ async fn main() -> Result<()> {
                     experimental_15d: Some(ekf_15d.get_state()),
                     mag: sensor_state.latest_mag.read().await.clone(),
                     fgo: None, // Will be updated on GPS fix
+                    gyro_bias_z_deg_per_s: Some(gyro_bias_z.to_degrees()),
+                    heading_rate_update_count: heading_rate_est.update_count,
                 };
 
                 log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
@@ -1697,6 +1711,9 @@ async fn main() -> Result<()> {
                 let corrected_gx = gyro.x - gyro_bias.0;
                 let corrected_gy = gyro.y - gyro_bias.1;
                 let mut corrected_gz = gyro.z - gyro_bias.2;
+
+                // Store raw Z-axis gyro for heading-aided bias updates
+                last_gyro_z = gyro.z;
 
                 // Straight-road clamp: freeze yaw drift when wheel is effectively straight
                 let ekf15_speed = ekf_15d.get_speed();
@@ -1900,11 +1917,31 @@ async fn main() -> Result<()> {
                         ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
                         // Update 15D velocity using GPS speed/bearing when available (fixed R)
                         ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+
+                        // ===== HEADING-AIDED GYRO BIAS UPDATE =====
+                        // Uses GPS bearing rate vs integrated gyro to observe Z-axis bias
+                        if let Some(heading_rate) = heading_rate_est.update(
+                            gps.bearing.to_radians(),
+                            gps.timestamp,
+                            gps.speed,
+                            gps.accuracy,
+                        ) {
+                            // Only update if driving fairly straight (low heading rate)
+                            if heading_rate.abs() < 0.1 {  // < ~5.7°/s
+                                ekf_15d.update_gyro_bias_from_heading(
+                                    heading_rate,
+                                    last_gyro_z,
+                                    0.02,  // ~1.1°/s measurement noise std
+                                );
+                            }
+                        }
                     }
 
                     // If GPS indicates near-zero speed, clamp 15D velocity to zero
                     if gps.speed < 0.5 {
                         ekf_15d.update_velocity((0.0, 0.0, 0.0), 1e-3);
+                        // Reset heading rate estimator when near stationary
+                        heading_rate_est.reset();
                     } else {
                         // GPS Velocity Update (fixed R)
                         ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
@@ -1972,6 +2009,11 @@ async fn main() -> Result<()> {
                         power_coefficient: 0.0,
                         experimental_15d: Some(ekf_15d.get_state()),
                         fgo: Some(fgo.get_current_state()), // FGO shadow mode output
+                        gyro_bias_z_deg_per_s: {
+                            let (_, _, bias_z) = ekf_15d.get_gyro_bias();
+                            Some(bias_z.to_degrees())
+                        },
+                        heading_rate_update_count: heading_rate_est.update_count,
                     };
                     log_jsonl_reading(&mut session_logger, &gps_reading, &mut jsonl_count)?;
                     readings.push(gps_reading);
@@ -2255,6 +2297,8 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_15d: None,
                     fgo: None,
+                    gyro_bias_z_deg_per_s: None,
+                    heading_rate_update_count: 0,
                 };
 
                 log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
@@ -2466,4 +2510,68 @@ fn normalize_angle(angle: f64) -> f64 {
         a += 2.0 * std::f64::consts::PI;
     }
     a
+}
+
+/// Heading rate estimator for gyro bias observation
+/// Computes GPS bearing rate and validates it for bias updates
+struct HeadingRateEstimator {
+    last_bearing: Option<f64>,
+    last_time: Option<f64>,
+    update_count: u64,
+}
+
+impl HeadingRateEstimator {
+    fn new() -> Self {
+        Self {
+            last_bearing: None,
+            last_time: None,
+            update_count: 0,
+        }
+    }
+
+    /// Compute heading rate from GPS bearing, returns None if unreliable
+    fn update(&mut self, bearing: f64, timestamp: f64, speed: f64, accuracy: f64) -> Option<f64> {
+        let result = if let (Some(last_b), Some(last_t)) = (self.last_bearing, self.last_time) {
+            let dt = timestamp - last_t;
+
+            // Only valid if:
+            // - Reasonable time gap (0.5s - 5s)
+            // - Moving fast (GPS bearing reliable) [8 m/s ≈ 29 km/h]
+            // - Good accuracy (< 10m)
+            if dt > 0.5 && dt < 5.0 && speed > 8.0 && accuracy < 10.0 {
+                let mut delta = bearing - last_b;
+                // Wrap to [-π, π]
+                while delta > std::f64::consts::PI {
+                    delta -= 2.0 * std::f64::consts::PI;
+                }
+                while delta < -std::f64::consts::PI {
+                    delta += 2.0 * std::f64::consts::PI;
+                }
+
+                let rate = delta / dt;
+
+                // Reject extreme rates (> 30°/s ≈ 0.52 rad/s suggests GPS jump)
+                if rate.abs() < 0.52 {
+                    self.update_count += 1;
+                    Some(rate)
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.last_bearing = Some(bearing);
+        self.last_time = Some(timestamp);
+
+        result
+    }
+
+    fn reset(&mut self) {
+        self.last_bearing = None;
+        self.last_time = None;
+    }
 }
