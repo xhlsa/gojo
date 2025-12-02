@@ -1,9 +1,3 @@
-# Project Gojo - Updated README Section
-
-Replace the current README with these updates to reflect validated performance and features:
-
----
-
 # Gojo - Android Phone Sensor Fusion
 
 A lean, on-device sensor-fusion logger for Android/Termux. It ingests your phone's accelerometer, gyroscope, GPS (and optional magnetometer/barometer), runs a **15D Extended Kalman Filter** in Rust, and spits out comparison logs you can replay offline. Built to be hackable, measurable, and friendly to low-power phones.
