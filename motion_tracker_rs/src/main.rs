@@ -253,6 +253,8 @@ struct SensorReading {
     gyro_bias_z_deg_per_s: Option<f64>, // Z-axis gyro bias estimate in °/s
     #[serde(default)]
     heading_rate_update_count: u64, // Count of heading-aided bias updates
+    #[serde(default)]
+    ekf_diagnostics: Option<EkfDiagnostics>, // Advanced diagnostics (only on GPS updates)
 }
 
 #[derive(Serialize, Deserialize, Clone)]
@@ -284,6 +286,40 @@ struct CovarianceSnapshot {
     p55: f64,
     p66: f64,
     p77: f64,
+}
+
+/// Advanced EKF diagnostics for AI-assisted post-drive analysis
+/// Logged only on GPS updates to enable failure mode detection
+#[derive(Serialize, Deserialize, Clone)]
+struct EkfDiagnostics {
+    /// Distance between GPS measurement and EKF prediction (meters)
+    innovation_magnitude: f64,
+    /// Prediction error: distance from predicted position to GPS measurement [m]
+    prediction_error: f64,
+    /// Normalized Innovation Squared - filter consistency metric (target: 2.0-4.0)
+    nis: f64,
+    /// Whether GPS was rejected as outlier (true = rejected)
+    gps_rejected: bool,
+    /// Whether divergence snap was triggered (distance > 30m)
+    snapped: bool,
+    /// Whether zero-velocity clamping is active (speed < 0.05 m/s)
+    zupt_active: bool,
+    /// Position uncertainty - X diagonal (m²)
+    p_pos_x: f64,
+    /// Position uncertainty - Y diagonal (m²)
+    p_pos_y: f64,
+    /// Position uncertainty - Z diagonal (m²)
+    p_pos_z: f64,
+    /// Velocity uncertainty - X diagonal (m²/s²)
+    p_vel_x: f64,
+    /// Velocity uncertainty - Y diagonal (m²/s²)
+    p_vel_y: f64,
+    /// Velocity uncertainty - Z diagonal (m²/s²)
+    p_vel_z: f64,
+    /// Total acceleration magnitude (m/s²)
+    linear_accel_norm: f64,
+    /// Corrected gyro Z rate (rad/s) - gyro_z_raw - bias_z
+    turn_rate: f64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -1595,6 +1631,7 @@ async fn main() -> Result<()> {
                     fgo: None, // Will be updated on GPS fix
                     gyro_bias_z_deg_per_s: Some(gyro_bias_z.to_degrees()),
                     heading_rate_update_count: heading_rate_est.update_count,
+                    ekf_diagnostics: None, // Only populated on GPS updates
                 };
 
                 log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
@@ -1920,6 +1957,13 @@ async fn main() -> Result<()> {
                     // COLD START PROTOCOL: Initialize on first GPS fix, update on subsequent
                     let is_first_gps_fix = origin_latlon.is_none();
 
+                    // Initialize diagnostic variables for GPS update (populated in subsequent fixes)
+                    let mut gps_innovation = 0.0;
+                    let mut gps_prediction_error = 0.0;
+                    let mut gps_nis = 0.0;
+                    let mut gps_was_rejected = false;
+                    let mut gps_was_snapped = false;
+
                     if is_first_gps_fix {
                         // FIRST FIX: Initialize origin and EKF state, DO NOT update
                         // This prevents "Null Island" teleport (0,0,0) → (lat,lon) causing massive innovation
@@ -1949,6 +1993,9 @@ async fn main() -> Result<()> {
                         if is_outlier {
                             consecutive_gps_rejections += 1;
                             total_gps_rejections += 1;
+                            gps_was_rejected = true;
+                            gps_innovation = distance;
+                            gps_prediction_error = distance;
                             eprintln!(
                                 "[GPS] ⚠️  REJECTED via prediction gating: {:.2}m deviation (acc={:.1}m, consecutive={})",
                                 distance, gps.accuracy, consecutive_gps_rejections
@@ -1961,39 +2008,43 @@ async fn main() -> Result<()> {
                                     consecutive_gps_rejections
                                 );
                                 // Force update with inflated uncertainty (2x accuracy)
-                                let nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy * 2.0, gps.timestamp);
+                                gps_nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy * 2.0, gps.timestamp);
+                                gps_was_snapped = distance > 30.0; // Detect snap recovery
                                 ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                                 consecutive_gps_rejections = 0;
                                 total_gps_accepted += 1;
+                                gps_was_rejected = false; // Now accepted via force
 
                                 // Track NIS (even for forced updates)
-                                if nis.is_finite() {
-                                    nis_sum += nis;
+                                if gps_nis.is_finite() {
+                                    nis_sum += gps_nis;
                                     nis_count += 1;
-                                    nis_min = nis_min.min(nis);
-                                    nis_max = nis_max.max(nis);
+                                    nis_min = nis_min.min(gps_nis);
+                                    nis_max = nis_max.max(gps_nis);
                                 }
                             }
                         } else {
                             // Accept GPS update
                             consecutive_gps_rejections = 0;
                             total_gps_accepted += 1;
-                            let nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
+                            gps_innovation = distance;
+                            gps_prediction_error = distance;
+                            gps_nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
                             ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
 
                             // Track NIS statistics for filter consistency monitoring
-                            if nis.is_finite() {
-                                nis_sum += nis;
+                            if gps_nis.is_finite() {
+                                nis_sum += gps_nis;
                                 nis_count += 1;
-                                nis_min = nis_min.min(nis);
-                                nis_max = nis_max.max(nis);
+                                nis_min = nis_min.min(gps_nis);
+                                nis_max = nis_max.max(gps_nis);
 
                                 // Log NIS for tuning (every 10th update)
                                 if nis_count % 10 == 0 {
                                     let nis_avg = nis_sum / (nis_count as f64);
                                     eprintln!(
                                         "[NIS] Current: {:.2}, Avg: {:.2}, Range: [{:.2}, {:.2}] (target: {:.1})",
-                                        nis, nis_avg, nis_min, nis_max, NIS_TARGET
+                                        gps_nis, nis_avg, nis_min, nis_max, NIS_TARGET
                                     );
                                 }
                             }
@@ -2069,6 +2120,34 @@ async fn main() -> Result<()> {
                         );
                     }
 
+                    // ===== CAPTURE EKF DIAGNOSTICS =====
+                    // Build diagnostic struct for AI-assisted post-drive analysis
+                    let ekf_diag = {
+                        let (p_pos_x, p_pos_y, p_pos_z, p_vel_x, p_vel_y, p_vel_z) = ekf_15d.get_covariance_diagonals();
+                        let (gyro_bias_x, gyro_bias_y, gyro_bias_z) = ekf_15d.get_gyro_bias();
+                        let ekf_speed = ekf_15d.get_speed();
+                        let zupt_active = ekf_speed < 0.05;
+                        let linear_accel_norm = (last_accel_raw.0.powi(2) + last_accel_raw.1.powi(2) + last_accel_raw.2.powi(2)).sqrt();
+                        let turn_rate = last_gyro_z - gyro_bias_z;
+
+                        EkfDiagnostics {
+                            innovation_magnitude: gps_innovation,
+                            prediction_error: gps_prediction_error,
+                            nis: gps_nis,
+                            gps_rejected: gps_was_rejected,
+                            snapped: gps_was_snapped,
+                            zupt_active,
+                            p_pos_x,
+                            p_pos_y,
+                            p_pos_z,
+                            p_vel_x,
+                            p_vel_y,
+                            p_vel_z,
+                            linear_accel_norm,
+                            turn_rate,
+                        }
+                    };
+
                     // ===== RECORD GPS TO READINGS FOR DASHBOARD =====
                     // Extract f64 fields directly to avoid cloning GpsData
                     let gps_reading = SensorReading {
@@ -2095,6 +2174,7 @@ async fn main() -> Result<()> {
                             Some(bias_z.to_degrees())
                         },
                         heading_rate_update_count: heading_rate_est.update_count,
+                        ekf_diagnostics: Some(ekf_diag), // Advanced diagnostics for post-drive analysis
                     };
                     log_jsonl_reading(&mut session_logger, &gps_reading, &mut jsonl_count)?;
                     readings.push(gps_reading);
@@ -2411,6 +2491,7 @@ async fn main() -> Result<()> {
                     fgo: None,
                     gyro_bias_z_deg_per_s: None,
                     heading_rate_update_count: 0,
+                    ekf_diagnostics: None, // Only populated on GPS updates
                 };
 
                 log_jsonl_reading(&mut session_logger, &reading, &mut jsonl_count)?;
