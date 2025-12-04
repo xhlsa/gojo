@@ -37,6 +37,11 @@ futures = "0.3"
 rerun = "0.15"
 glam = "0.24"
 flate2 = "1.0"
+geo = "0.28"
+rstar = "0.11"
+reqwest = { version = "0.11", features = ["json"] }
+log = "0.4"
 
 [dev-dependencies]
 approx = "0.5"
+env_logger = "0.11"

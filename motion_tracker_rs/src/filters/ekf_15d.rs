@@ -30,6 +30,15 @@ pub struct Ekf15dState {
     pub gyro_updates: u64,
 }
 
+/// Predicted trajectory point for visualization/analysis
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TrajectoryPoint {
+    pub time: f64,
+    pub position: (f64, f64, f64),
+    pub velocity: (f64, f64, f64),
+    pub quaternion: (f64, f64, f64, f64),
+}
+
 pub struct Ekf15d {
     /// Time step [seconds]
     pub dt: f64,
@@ -62,6 +71,10 @@ pub struct Ekf15d {
     gps_updates: u64,
     accel_updates: u64,
     gyro_updates: u64,
+
+    /// Last accepted GPS fix (time, position) for snap velocity inference
+    last_gps_time: Option<f64>,
+    last_gps_pos: Option<(f64, f64, f64)>,
 }
 
 impl Ekf15d {
@@ -90,14 +103,15 @@ impl Ekf15d {
         let gyro_var = gyro_noise_std * gyro_noise_std;
 
         // Position: constant velocity model (continuous white noise acceleration)
-        let q_pos = 0.25 * dt.powi(4) * accel_var;
+        // Apply a strong multiplier to counter tiny dt^4 and add a floor so S isn't microscopic
+        let q_pos = (1000.0 * 0.25 * dt.powi(4) * accel_var).max(1e-5); // minimal floor; let inertia dominate at low speed
         for i in 0..3 {
             process_noise[[i, i]] = q_pos;
         }
 
         // Velocity: driven by accel noise
         // Velocity process noise (tuned for responsiveness after ZUPT)
-        let q_vel = 2.0;
+        let q_vel = 1.0;
         for i in 3..6 {
             process_noise[[i, i]] = q_vel;
         }
@@ -132,6 +146,8 @@ impl Ekf15d {
             gps_updates: 0,
             accel_updates: 0,
             gyro_updates: 0,
+            last_gps_time: None,
+            last_gps_pos: None,
         }
     }
 
@@ -150,8 +166,64 @@ impl Ekf15d {
         }
     }
 
+    /// Set state manually (for testing/initialization)
+    pub fn set_state(
+        &mut self,
+        position: (f64, f64, f64),
+        velocity: (f64, f64, f64),
+        quaternion: (f64, f64, f64, f64),
+        gyro_bias: (f64, f64, f64),
+        accel_bias: (f64, f64),
+    ) {
+        self.state[0] = position.0;
+        self.state[1] = position.1;
+        self.state[2] = position.2;
+        self.state[3] = velocity.0;
+        self.state[4] = velocity.1;
+        self.state[5] = velocity.2;
+
+        // Normalize quaternion
+        let q_norm = (quaternion.0 * quaternion.0
+            + quaternion.1 * quaternion.1
+            + quaternion.2 * quaternion.2
+            + quaternion.3 * quaternion.3)
+            .sqrt();
+        if q_norm > 1e-9 {
+            self.state[6] = quaternion.0 / q_norm;
+            self.state[7] = quaternion.1 / q_norm;
+            self.state[8] = quaternion.2 / q_norm;
+            self.state[9] = quaternion.3 / q_norm;
+        } else {
+            self.state[6] = 1.0; // Default to identity
+            self.state[7] = 0.0;
+            self.state[8] = 0.0;
+            self.state[9] = 0.0;
+        }
+
+        self.state[10] = gyro_bias.0;
+        self.state[11] = gyro_bias.1;
+        self.state[12] = gyro_bias.2;
+        self.state[13] = accel_bias.0;
+        self.state[14] = accel_bias.1;
+    }
+
     /// Predict step: integrate kinematics with bias correction
     pub fn predict(&mut self, accel_raw: (f64, f64, f64), gyro_raw: (f64, f64, f64)) {
+        // Dynamic process noise: very stiff at low speed, modest at highway speeds
+        let speed = (self.state[3].powi(2) + self.state[4].powi(2) + self.state[5].powi(2)).sqrt();
+        let accel_std = if speed < 2.0 {
+            0.1
+        } else if speed < 10.0 {
+            0.1 + (speed - 2.0) * (1.4 / 8.0) // ramps to 1.5 at 10 m/s
+        } else {
+            1.5
+        };
+        let accel_var_dyn = accel_std * accel_std;
+        let q_pos_dyn = (1000.0 * 0.25 * self.dt.powi(4) * accel_var_dyn).max(1e-5);
+        for i in 0..3 {
+            self.process_noise[[i, i]] = q_pos_dyn;
+        }
+
         // Get biases from state
         let gyro_bias = [self.state[10], self.state[11], self.state[12]];
         let accel_bias = [self.state[13], self.state[14], 0.0]; // Z-axis accel bias placeholder
@@ -285,13 +357,263 @@ impl Ekf15d {
         self.covariance = (&self.covariance + &p_t) * 0.5;
     }
 
+    /// Multi-step trajectory prediction with proper second-order integration
+    ///
+    /// Uses current state and constant IMU readings to project future path.
+    /// Applies soft Z-constraint to prevent altitude drift from unestimated Z-bias.
+    ///
+    /// # Arguments
+    /// * `accel_raw` - Body frame acceleration (will be held constant)
+    /// * `gyro_raw` - Body frame angular velocity (will be held constant)
+    /// * `horizon_sec` - Total prediction time [seconds]
+    /// * `num_steps` - Number of prediction steps (resolution)
+    /// * `apply_z_constraint` - Apply soft Z-velocity damping for ground vehicles
+    ///
+    /// # Returns
+    /// Vector of predicted states at each time step (does NOT modify filter state)
+    pub fn predict_trajectory(
+        &self,
+        accel_raw: (f64, f64, f64),
+        gyro_raw: (f64, f64, f64),
+        horizon_sec: f64,
+        num_steps: usize,
+        apply_z_constraint: bool,
+    ) -> Vec<TrajectoryPoint> {
+        if num_steps == 0 || horizon_sec <= 0.0 {
+            return vec![];
+        }
+
+        let dt = horizon_sec / (num_steps as f64);
+        let mut trajectory = Vec::with_capacity(num_steps);
+
+        // Copy current state (don't modify filter)
+        let gyro_bias = [self.state[10], self.state[11], self.state[12]];
+        let accel_bias = [self.state[13], self.state[14], 0.0]; // Z-bias clamped to 0
+
+        // Correct measurements (constant for entire horizon)
+        let accel_corr = [
+            accel_raw.0 - accel_bias[0],
+            accel_raw.1 - accel_bias[1],
+            accel_raw.2 - accel_bias[2],
+        ];
+        let gyro_corr = [
+            gyro_raw.0 - gyro_bias[0],
+            gyro_raw.1 - gyro_bias[1],
+            gyro_raw.2 - gyro_bias[2],
+        ];
+
+        // Initialize from current state
+        let mut pos = [self.state[0], self.state[1], self.state[2]];
+        let mut vel = [self.state[3], self.state[4], self.state[5]];
+        let mut quat = [self.state[6], self.state[7], self.state[8], self.state[9]];
+
+        // Simulate forward
+        for i in 0..num_steps {
+            // === 1. Attitude Propagation (Quaternion Integration) ===
+            let gyro_mag = (gyro_corr[0] * gyro_corr[0]
+                + gyro_corr[1] * gyro_corr[1]
+                + gyro_corr[2] * gyro_corr[2])
+                .sqrt();
+
+            if gyro_mag > 1e-6 {
+                let half_angle = 0.5 * gyro_mag * dt;
+                let scale = half_angle.sin() / gyro_mag;
+
+                let dq = [
+                    half_angle.cos(),
+                    gyro_corr[0] * scale,
+                    gyro_corr[1] * scale,
+                    gyro_corr[2] * scale,
+                ];
+
+                // Quaternion multiplication: q_next = dq * q
+                let qw = dq[0] * quat[0] - dq[1] * quat[1] - dq[2] * quat[2] - dq[3] * quat[3];
+                let qx = dq[0] * quat[1] + dq[1] * quat[0] + dq[2] * quat[3] - dq[3] * quat[2];
+                let qy = dq[0] * quat[2] - dq[1] * quat[3] + dq[2] * quat[0] + dq[3] * quat[1];
+                let qz = dq[0] * quat[3] + dq[1] * quat[2] - dq[2] * quat[1] + dq[3] * quat[0];
+
+                quat = [qw, qx, qy, qz];
+
+                // Normalize quaternion
+                let quat_mag = (quat[0] * quat[0]
+                    + quat[1] * quat[1]
+                    + quat[2] * quat[2]
+                    + quat[3] * quat[3])
+                    .sqrt();
+                if quat_mag > 1e-6 {
+                    quat[0] /= quat_mag;
+                    quat[1] /= quat_mag;
+                    quat[2] /= quat_mag;
+                    quat[3] /= quat_mag;
+                }
+            }
+
+            // === 2. Rotate Accel to World Frame ===
+            let accel_world = rotate_accel_to_world(&quat, &accel_corr);
+
+            // Subtract gravity (world frame Z-axis)
+            let linear_accel = [
+                accel_world[0],
+                accel_world[1],
+                accel_world[2] - G,
+            ];
+
+            // === 3. Second-Order Position Integration (Gemini recommendation) ===
+            // p_next = p + v * dt + 0.5 * a * dt^2
+            pos[0] += vel[0] * dt + 0.5 * linear_accel[0] * dt * dt;
+            pos[1] += vel[1] * dt + 0.5 * linear_accel[1] * dt * dt;
+            pos[2] += vel[2] * dt + 0.5 * linear_accel[2] * dt * dt;
+
+            // === 4. Velocity Integration ===
+            // v_next = v + a * dt
+            vel[0] += linear_accel[0] * dt;
+            vel[1] += linear_accel[1] * dt;
+            vel[2] += linear_accel[2] * dt;
+
+            // === 5. "Gravity Well" Z-Constraint (Ground Vehicle Assumption) ===
+            if apply_z_constraint {
+                // Calculate lateral acceleration magnitude
+                let accel_mag_xy = (linear_accel[0] * linear_accel[0]
+                    + linear_accel[1] * linear_accel[1])
+                    .sqrt();
+
+                // Extract tilt angle from quaternion (roll/pitch deviation from level)
+                // Simplified: check if quaternion is close to identity (level orientation)
+                let qw = quat[0];
+                let tilt_magnitude = (1.0 - qw.abs()).acos(); // Deviation from identity
+
+                let vz_mag = vel[2].abs();
+
+                // "Gravity Well": Aggressive damping when stable, soft during dynamics
+                if accel_mag_xy < 2.0 && tilt_magnitude < 0.2 {
+                    // Stable conditions: hard decay (kill 20% of Z-velocity per step)
+                    vel[2] *= 0.80;
+
+                    // Optional: Spring force pulling Z-position back to initial altitude
+                    // Uncomment if you trust initial Z calibration:
+                    // let initial_z = self.state[2];
+                    // pos[2] += (initial_z - pos[2]) * 0.05;
+                } else {
+                    // Dynamic motion (speed bump, hill): soft 5% decay
+                    vel[2] *= 0.95;
+                }
+
+                // Hard limit on unrealistic Z-velocity (prevents "flying away")
+                if vz_mag > 5.0 {
+                    vel[2] *= 5.0 / vz_mag;
+                }
+            }
+
+            // === 6. Record Trajectory Point ===
+            trajectory.push(TrajectoryPoint {
+                time: (i + 1) as f64 * dt,
+                position: (pos[0], pos[1], pos[2]),
+                velocity: (vel[0], vel[1], vel[2]),
+                quaternion: (quat[0], quat[1], quat[2], quat[3]),
+            });
+        }
+
+        trajectory
+    }
+
+    /// Check if GPS measurement is an outlier using prediction-based gating
+    ///
+    /// Uses Mahalanobis distance to reject GPS measurements that deviate
+    /// significantly from the predicted trajectory.
+    ///
+    /// # Arguments
+    /// * `gps_pos` - GPS position measurement (local ENU meters)
+    /// * `accel_raw` - Latest IMU acceleration (for prediction)
+    /// * `gyro_raw` - Latest IMU gyro (for prediction)
+    /// * `dt_since_last` - Time since last filter update [seconds]
+    /// * `sigma_threshold` - Rejection threshold in standard deviations (typically 3.0)
+    ///
+    /// # Returns
+    /// (is_outlier, distance_meters)
+    pub fn is_gps_outlier(
+        &self,
+        gps_pos: (f64, f64, f64),
+        accel_raw: (f64, f64, f64),
+        gyro_raw: (f64, f64, f64),
+        dt_since_last: f64,
+        _sigma_threshold: f64,
+    ) -> (bool, f64) {
+        // Predict where we should be at GPS timestamp
+        let num_steps = (dt_since_last / self.dt).ceil().max(1.0) as usize;
+        let trajectory = self.predict_trajectory(accel_raw, gyro_raw, dt_since_last, num_steps, true);
+
+        let predicted_pos = if let Some(last_point) = trajectory.last() {
+            last_point.position
+        } else {
+            // Fallback to current state if prediction fails
+            (self.state[0], self.state[1], self.state[2])
+        };
+
+        // Calculate Euclidean distance (simplified Mahalanobis without full covariance)
+        let dx = gps_pos.0 - predicted_pos.0;
+        let dy = gps_pos.1 - predicted_pos.1;
+        let dz = gps_pos.2 - predicted_pos.2;
+        let distance = (dx * dx + dy * dy + dz * dz).sqrt();
+
+        // Estimate uncertainty: GPS noise + prediction uncertainty
+        // GPS noise floor: 5m std dev, plus 1m/sec of drift during prediction
+        let position_sigma = (5.0_f64.powi(2) + (dt_since_last * 1.0).powi(2)).sqrt();
+        let speed = (self.state[3].powi(2) + self.state[4].powi(2) + self.state[5].powi(2)).sqrt();
+        let sigma_threshold = 3.0; // consistent 3-sigma gating; rely on small K to smooth low-speed jitter
+        let threshold = sigma_threshold * position_sigma;
+
+        let is_outlier = distance > threshold;
+
+        (is_outlier, distance)
+    }
+
+    /// GPS update with outlier rejection (recommended for live tracking)
+    ///
+    /// Wrapper around update_gps() that uses prediction-based gating.
+    ///
+    /// # Returns
+    /// (accepted: bool, nis: f64) - Whether update was applied and NIS value
+    pub fn update_gps_with_gating(
+        &mut self,
+        gps_pos: (f64, f64, f64),
+        accuracy: f64,
+        accel_raw: (f64, f64, f64),
+        gyro_raw: (f64, f64, f64),
+        dt_since_last: f64,
+        timestamp: f64,
+    ) -> (bool, f64) {
+        let (is_outlier, distance) = self.is_gps_outlier(
+            gps_pos,
+            accel_raw,
+            gyro_raw,
+            dt_since_last,
+            3.0, // 3-sigma threshold
+        );
+
+        if is_outlier {
+            eprintln!(
+                "GPS outlier rejected: {:.2} m deviation (prediction-based gating)",
+                distance
+            );
+            (false, f64::INFINITY)
+        } else {
+            let nis = self.update_gps(gps_pos, accuracy, timestamp);
+            (true, nis)
+        }
+    }
+
     /// GPS update: correct position with full Kalman update (FIXED)
-    /// 
+    ///
     /// This replaces the broken scalar-only update with proper cross-covariance propagation.
     /// GPS position corrections now also adjust velocity estimates through P_pv.
-    pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64) {
-        // Enforce GPS accuracy floor (minimum 5m)
-        let gps_noise = (accuracy * accuracy).max(5.0 * 5.0);
+    ///
+    /// # Returns
+    /// NIS (Normalized Innovation Squared) for filter consistency monitoring.
+    /// Ideal average: ~3.0 for 3D position measurement.
+    pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64, timestamp: f64) -> f64 {
+        // Enforce GPS accuracy floor to avoid over-trusting optimistic reports
+        let safe_accuracy = accuracy.max(5.0); // meters
+        let gps_noise = safe_accuracy * safe_accuracy;
 
         // Convert lat/lon to local meters if origin is set
         let (mut pos_x, mut pos_y, pos_z) = gps_pos;
@@ -308,12 +630,85 @@ impl Ekf15d {
             pos_z - self.state[2],
         ]);
 
-        // Optional: gate extreme innovations to reject GPS jumps
-        let max_innovation = 100.0; // meters
-        for i in 0..3 {
-            if innovation[i].abs() > max_innovation {
-                // GPS jumped too far - skip update or handle specially
-                return;
+        // Divergence recovery: if we are very far from GPS but GPS accuracy is reasonable, snap to GPS
+        let dist = (innovation[0].powi(2) + innovation[1].powi(2) + innovation[2].powi(2)).sqrt();
+        if dist > 100.0 {
+            if safe_accuracy < 20.0 {
+                eprintln!(
+                    "[EKF15D] Divergence detected (dist {:.1} m). Snapping state to GPS.",
+                    dist
+                );
+
+                // Teleport position to GPS
+                self.state[0] = pos_x;
+                self.state[1] = pos_y;
+                self.state[2] = pos_z;
+
+                // Inferred velocity from drift over time since last accepted GPS (avoid rocket or zeroing)
+                let effective_dt = self
+                    .last_gps_time
+                    .map(|t| (timestamp - t).max(self.dt))
+                    .unwrap_or(self.dt); // default to one filter step if no history
+                let drift_vec = if let Some((lx, ly, lz)) = self.last_gps_pos {
+                    [
+                        pos_x - lx,
+                        pos_y - ly,
+                        pos_z - lz,
+                    ]
+                } else {
+                    [innovation[0], innovation[1], innovation[2]]
+                };
+                let inferred_v = if effective_dt > 1.0 && dist > 15.0 {
+                    let mut raw_v = [
+                        drift_vec[0] / effective_dt,
+                        drift_vec[1] / effective_dt,
+                        drift_vec[2] / effective_dt,
+                    ];
+                    // Clamp to plausible speeds (<= 35 m/s ~126 km/h)
+                    let speed = (raw_v[0].powi(2) + raw_v[1].powi(2) + raw_v[2].powi(2)).sqrt();
+                    if speed > 35.0 {
+                        let scale = 35.0 / speed;
+                        raw_v[0] *= scale;
+                        raw_v[1] *= scale;
+                        raw_v[2] *= scale;
+                    }
+                    raw_v
+                } else {
+                    // Small/short correction: keep velocity but damp it slightly
+                    [
+                        self.state[3] * 0.9,
+                        self.state[4] * 0.9,
+                        self.state[5] * 0.9,
+                    ]
+                };
+                self.state[3] = inferred_v[0];
+                self.state[4] = inferred_v[1];
+                self.state[5] = inferred_v[2];
+
+                // Reset covariance to soft trust on position and high uncertainty on velocity
+                let mut p_reset = Array2::<f64>::eye(15);
+                let pos_var = (safe_accuracy * 1.0).powi(2); // tighter trust on snap position
+                p_reset[[0, 0]] = pos_var;
+                p_reset[[1, 1]] = pos_var;
+                p_reset[[2, 2]] = pos_var;
+                p_reset[[3, 3]] = 400.0; // ~20 m/s std dev on vx
+                p_reset[[4, 4]] = 400.0; // ~20 m/s std dev on vy
+                p_reset[[5, 5]] = 100.0;  // ~10 m/s std dev on vz
+                // Inflate bias variances slightly to allow re-convergence
+                p_reset[[10, 10]] = p_reset[[10, 10]].max(0.01);
+                p_reset[[11, 11]] = p_reset[[11, 11]].max(0.01);
+                p_reset[[12, 12]] = p_reset[[12, 12]].max(0.01);
+                p_reset[[13, 13]] = p_reset[[13, 13]].max(0.1);
+                p_reset[[14, 14]] = p_reset[[14, 14]].max(0.1);
+                self.covariance = p_reset;
+
+                self.gps_updates += 1;
+                self.last_gps_time = Some(timestamp);
+                self.last_gps_pos = Some((pos_x, pos_y, pos_z));
+                return 0.0;
+            } else {
+                // GPS is low-quality and far away: skip
+                return f64::INFINITY;
             }
         }
 
@@ -345,7 +740,7 @@ impl Ekf15d {
 
         let Some(s_inv_na) = s_mat.try_inverse() else {
             // Singular innovation covariance - skip update
-            return;
+            return f64::INFINITY; // Signal rejected update
         };
 
         // Convert back to ndarray
@@ -355,6 +750,14 @@ impl Ekf15d {
                 s_inv[[i, j]] = s_inv_na[(i, j)];
             }
         }
+
+        // Calculate NIS (Normalized Innovation Squared) for filter consistency check
+        // NIS = innovation^T * S^-1 * innovation
+        // For 3D position measurement, NIS should average ~3.0 if filter is well-tuned
+        let nis = {
+            let temp = s_inv.dot(&innovation);
+            innovation.dot(&temp)
+        };
 
         // Kalman gain: K = P*H^T*S^-1 (15x3)
         // This is the KEY difference - full 15x3 gain matrix
@@ -402,6 +805,11 @@ impl Ekf15d {
         }
 
         self.gps_updates += 1;
+        self.last_gps_time = Some(timestamp);
+        self.last_gps_pos = Some((pos_x, pos_y, pos_z));
+
+        // Return NIS for filter consistency monitoring
+        nis
     }
 
     /// GPS velocity update: use speed + bearing to correct vx/vy

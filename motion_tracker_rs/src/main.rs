@@ -1107,9 +1107,9 @@ async fn main() -> Result<()> {
     });
 
     // Initialize filters
-    let mut ekf = EsEkf::new(0.05, 8.0, 0.5, args.enable_gyro, 0.0005);
+    let mut ekf = EsEkf::new(0.05, 8.0, 3.0, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
-    let mut ekf_15d = Ekf15d::new(0.05, 8.0, 0.3, 0.0005); // dt, gps_noise, accel_noise, gyro_noise (with accel bias)
+    let mut ekf_15d = Ekf15d::new(0.05, 8.0, 3.0, 0.0005); // dt, gps_noise, accel_noise, gyro_noise (with accel bias)
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
     let mut readings: Vec<SensorReading> = Vec::new();
@@ -1297,6 +1297,21 @@ async fn main() -> Result<()> {
     let mut last_baro: Option<types::BaroData> = None;
     let mut roughness_estimator = RoughnessEstimator::new(50, 0.1); // 1s RMS window @50Hz, light EWMA
 
+    // GPS outlier gating (prediction-based Mahalanobis distance)
+    let mut last_accel_raw: (f64, f64, f64) = (0.0, 0.0, 9.81); // Body frame raw readings for prediction
+    let mut last_gyro_raw: (f64, f64, f64) = (0.0, 0.0, 0.0);
+    let mut consecutive_gps_rejections: u32 = 0;
+    const MAX_GPS_REJECTIONS: u32 = 10; // Force update after 10 consecutive rejections (~10 sec @ 1Hz GPS)
+    let mut total_gps_rejections: u32 = 0;
+    let mut total_gps_accepted: u32 = 0;
+
+    // NIS (Normalized Innovation Squared) tracking for filter consistency
+    let mut nis_sum: f64 = 0.0;
+    let mut nis_count: u32 = 0;
+    let mut nis_min: f64 = f64::INFINITY;
+    let mut nis_max: f64 = 0.0;
+    const NIS_TARGET: f64 = 3.0; // Ideal average for 3D position measurement
+
     // Main loop: Consumer at fixed 20ms tick (50Hz)
     loop {
         // Check duration
@@ -1337,6 +1352,9 @@ async fn main() -> Result<()> {
                 let filtered_vec = accel_lpf.update(raw_vec);
                 let raw_accel_mag = filtered_vec.norm();
                 last_accel_mag_raw = raw_accel_mag;
+
+                // Store raw accel for GPS prediction gating
+                last_accel_raw = (accel.x, accel.y, accel.z);
 
                 // Apply calibration: subtract gravity bias to get true linear acceleration
                 let gravity_vec = Vector3::new(gravity_bias.0, gravity_bias.1, gravity_bias.2);
@@ -1715,6 +1733,9 @@ async fn main() -> Result<()> {
                 // Store raw Z-axis gyro for heading-aided bias updates
                 last_gyro_z = gyro.z;
 
+                // Store raw gyro for GPS prediction gating
+                last_gyro_raw = (gyro.x, gyro.y, gyro.z);
+
                 // Straight-road clamp: freeze yaw drift when wheel is effectively straight
                 let ekf15_speed = ekf_15d.get_speed();
                 if corrected_gz.abs() < 0.02 && ekf15_speed > 5.0 {
@@ -1912,11 +1933,71 @@ async fn main() -> Result<()> {
                                  gps.latitude, gps.longitude);
                         println!("[COLD START] Skipping first GPS update to prevent initialization shock.");
                     } else {
-                        // SUBSEQUENT FIXES: Normal updates
-                        // Update 15D filter with GPS (uses lat/lon directly for position correction)
-                        ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy);
-                        // Update 15D velocity using GPS speed/bearing when available (fixed R)
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                        // SUBSEQUENT FIXES: Normal updates with prediction-based outlier rejection
+                        let dt_since_last = last_accel_ts
+                            .map(|ts| (gps.timestamp - ts).max(0.0))
+                            .unwrap_or(0.1);
+
+                        let (is_outlier, distance) = ekf_15d.is_gps_outlier(
+                            (gps_proj_lat, gps_proj_lon, 0.0),
+                            last_accel_raw,
+                            last_gyro_raw,
+                            dt_since_last,
+                            3.0,  // 3-sigma threshold
+                        );
+
+                        if is_outlier {
+                            consecutive_gps_rejections += 1;
+                            total_gps_rejections += 1;
+                            eprintln!(
+                                "[GPS] ⚠️  REJECTED via prediction gating: {:.2}m deviation (acc={:.1}m, consecutive={})",
+                                distance, gps.accuracy, consecutive_gps_rejections
+                            );
+
+                            // FAILSAFE: Force update after too many rejections to prevent divergence
+                            if consecutive_gps_rejections >= MAX_GPS_REJECTIONS {
+                                eprintln!(
+                                    "[GPS] 🚨 DIVERGENCE DETECTED! Forcing update after {} rejections.",
+                                    consecutive_gps_rejections
+                                );
+                                // Force update with inflated uncertainty (2x accuracy)
+                                let nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy * 2.0, gps.timestamp);
+                                ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                                consecutive_gps_rejections = 0;
+                                total_gps_accepted += 1;
+
+                                // Track NIS (even for forced updates)
+                                if nis.is_finite() {
+                                    nis_sum += nis;
+                                    nis_count += 1;
+                                    nis_min = nis_min.min(nis);
+                                    nis_max = nis_max.max(nis);
+                                }
+                            }
+                        } else {
+                            // Accept GPS update
+                            consecutive_gps_rejections = 0;
+                            total_gps_accepted += 1;
+                            let nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
+                            ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+
+                            // Track NIS statistics for filter consistency monitoring
+                            if nis.is_finite() {
+                                nis_sum += nis;
+                                nis_count += 1;
+                                nis_min = nis_min.min(nis);
+                                nis_max = nis_max.max(nis);
+
+                                // Log NIS for tuning (every 10th update)
+                                if nis_count % 10 == 0 {
+                                    let nis_avg = nis_sum / (nis_count as f64);
+                                    eprintln!(
+                                        "[NIS] Current: {:.2}, Avg: {:.2}, Range: [{:.2}, {:.2}] (target: {:.1})",
+                                        nis, nis_avg, nis_min, nis_max, NIS_TARGET
+                                    );
+                                }
+                            }
+                        }
 
                         // ===== HEADING-AIDED GYRO BIAS UPDATE =====
                         // Uses GPS bearing rate vs integrated gyro to observe Z-axis bias
@@ -2187,9 +2268,40 @@ async fn main() -> Result<()> {
             let status_path = format!("{}/live_status.json", args.output_dir);
             let _ = live_status.save(&status_path);
 
+            // GPS gating status indicator
+            let gps_status = if consecutive_gps_rejections > 0 {
+                format!("⚠️  NO LOCK (rejecting {})", consecutive_gps_rejections)
+            } else {
+                "✅ LOCKED".to_string()
+            };
+            let gps_stats = if total_gps_accepted + total_gps_rejections > 0 {
+                let accept_rate = (total_gps_accepted as f64)
+                    / ((total_gps_accepted + total_gps_rejections) as f64) * 100.0;
+                format!(" | Accept: {:.1}%", accept_rate)
+            } else {
+                String::new()
+            };
+
+            // NIS (Normalized Innovation Squared) monitor with Q tuning hints
+            let nis_status = if nis_count > 0 {
+                let nis_avg = nis_sum / (nis_count as f64);
+                let nis_indicator = if nis_avg > 10.0 {
+                    "❌ OVERCONFIDENT (increase Q)"
+                } else if nis_avg < 0.5 {
+                    "⚠️  UNDERCONFIDENT (decrease Q)"
+                } else if nis_avg < 2.0 || nis_avg > 4.0 {
+                    "⚠️  MARGINAL"
+                } else {
+                    "✅ GOOD"
+                };
+                format!(" | NIS: {:.2} {}", nis_avg, nis_indicator)
+            } else {
+                String::new()
+            };
+
             eprintln!(
-                "[STATUS] Accel: {}, Gyro: {}, Mem: {:.1}MB",
-                accel_count, gyro_count, current_memory_mb
+                "[STATUS] Accel: {}, Gyro: {}, GPS: {}{}{}, Mem: {:.1}MB",
+                accel_count, gyro_count, gps_status, gps_stats, nis_status, current_memory_mb
             );
 
             last_status_update = now;

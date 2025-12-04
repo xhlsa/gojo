@@ -38,21 +38,6 @@ impl RerunLogger {
         self.log_scalar("sensors/gps/longitude", longitude);
     }
 
-    /// Log 3D vehicle orientation (quaternion) - placeholder for future Transform3D
-    pub fn log_orientation(&self, qw: f64, qx: f64, qy: f64, qz: f64) {
-        // Store quaternion components as scalars for now
-        self.log_scalar("world/vehicle/qw", qw);
-        self.log_scalar("world/vehicle/qx", qx);
-        self.log_scalar("world/vehicle/qy", qy);
-        self.log_scalar("world/vehicle/qz", qz);
-    }
-
-    /// Log 3D vehicle position (in local frame)
-    pub fn log_position(&self, x: f64, y: f64, z: f64) {
-        self.log_scalar("world/vehicle_position/x", x);
-        self.log_scalar("world/vehicle_position/y", y);
-        self.log_scalar("world/vehicle_position/z", z);
-    }
 
     /// Log raw accelerometer data (time-series)
     pub fn log_accel_raw(&self, x: f64, y: f64, z: f64) {
@@ -84,38 +69,6 @@ impl RerunLogger {
         self.log_scalar("filter/ekf/speed", speed);
     }
 
-    /// Log 13D filter state (experimental shadow mode)
-    pub fn log_13d_state(
-        &self,
-        pos_x: f64,
-        pos_y: f64,
-        pos_z: f64,
-        vel_x: f64,
-        vel_y: f64,
-        vel_z: f64,
-        qw: f64,
-        qx: f64,
-        qy: f64,
-        qz: f64,
-    ) {
-        // Position in 13D frame
-        self.log_scalar("filter/ekf_13d/position_x", pos_x);
-        self.log_scalar("filter/ekf_13d/position_y", pos_y);
-        self.log_scalar("filter/ekf_13d/position_z", pos_z);
-
-        // Velocity in 13D frame
-        let speed_13d = (vel_x * vel_x + vel_y * vel_y + vel_z * vel_z).sqrt();
-        self.log_scalar("filter/ekf_13d/velocity_x", vel_x);
-        self.log_scalar("filter/ekf_13d/velocity_y", vel_y);
-        self.log_scalar("filter/ekf_13d/velocity_z", vel_z);
-        self.log_scalar("filter/ekf_13d/speed", speed_13d);
-
-        // Quaternion orientation
-        self.log_scalar("filter/ekf_13d/orientation_qw", qw);
-        self.log_scalar("filter/ekf_13d/orientation_qx", qx);
-        self.log_scalar("filter/ekf_13d/orientation_qy", qy);
-        self.log_scalar("filter/ekf_13d/orientation_qz", qz);
-    }
 
     /// Log incident detection event
     pub fn log_incident(&self, incident_type: &str, magnitude: f64, latitude: f64, longitude: f64) {
@@ -125,11 +78,4 @@ impl RerunLogger {
         self.log_scalar("incidents/location_lon", longitude);
     }
 
-    /// Log comparison metric (8D vs 13D)
-    pub fn log_filter_comparison(&self, metric_name: &str, value_8d: f64, value_13d: f64) {
-        let path_8d = format!("comparison/{}/8d", metric_name);
-        let path_13d = format!("comparison/{}/13d", metric_name);
-        self.log_scalar(&path_8d, value_8d);
-        self.log_scalar(&path_13d, value_13d);
-    }
 }

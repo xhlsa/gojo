@@ -11,7 +11,7 @@ fn main() {
     println!("=== GPS Update Cross-Covariance Demo ===\n");
     
     // Simulated state: moving North at 10 m/s, but position estimate drifted East
-    let mut state = Array1::from_vec(vec![
+    let state = Array1::from_vec(vec![
         50.0, 0.0, 0.0,     // position: (50m East error, 0 North, 0 Up)
         0.0, 10.0, 0.0,     // velocity: (0 East, 10 North, 0 Up) - correct
         1.0, 0.0, 0.0, 0.0, // quaternion (identity)
@@ -45,7 +45,7 @@ fn main() {
     let mut p_scalar = p.clone();
     
     for i in 0..3 {
-        let innovation = gps_pos.0 - state_scalar[0]; // simplified
+        let _innovation = gps_pos.0 - state_scalar[0]; // simplified
         let s = p_scalar[[i, i]] + gps_noise;
         let gain = p_scalar[[i, i]] / s;
         state_scalar[i] += gain * (if i == 0 { -50.0 } else { 0.0 }); // innovation

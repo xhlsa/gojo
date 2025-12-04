@@ -352,7 +352,7 @@ fn local_to_global(lat_ref: f64, lon_ref: f64, north: f64, east: f64) -> (f64, f
 fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let log = load_log(path)?;
     // dt set to 0.02s (50 Hz) by default; adjust if your log differs
-    let mut ekf = Ekf15d::new(0.02, 8.0, 0.5, 0.0005);
+    let mut ekf = Ekf15d::new(0.02, 8.0, 3.0, 0.0005);
     // Override velocity process noise
     for i in 3..6 {
         ekf.process_noise[[i, i]] = args.q_vel;
@@ -392,6 +392,13 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut ground_truth_gps: Vec<(f64, f64, f64)> = Vec::new(); // (timestamp, lat, lon) for all GPS samples
     let mut trajectory: Vec<serde_json::Value> = Vec::new(); // Collect trajectory points for output
     let mut gps_gap_start: Option<f64> = None; // Track when GPS gap started
+
+    // NIS (Normalized Innovation Squared) tracking for filter consistency
+    let mut nis_sum: f64 = 0.0;
+    let mut nis_count: u32 = 0;
+    let mut nis_min: f64 = f64::INFINITY;
+    let mut nis_max: f64 = 0.0;
+    let mut nis_values: Vec<f64> = Vec::new(); // Store all NIS values for analysis
 
     for r in &log.readings {
         // Track GPS gap for adaptive process noise
@@ -542,11 +549,20 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     ekf.state[9] = half.sin();
                 }
 
-                ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
+                let nis = ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy, gps.timestamp);
                 // Fixed GPS velocity std
                 ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
                 // Clamp vertical velocity aggressively for land vehicle
                 ekf.zero_vertical_velocity(1e-4);
+
+                // Track NIS statistics for filter consistency monitoring
+                if nis.is_finite() {
+                    nis_sum += nis;
+                    nis_count += 1;
+                    nis_min = nis_min.min(nis);
+                    nis_max = nis_max.max(nis);
+                    nis_values.push(nis);
+                }
 
                 // Log first GPS fix when in init-only mode
                 if args.gps_init_only && gps_counter == 1 {
@@ -666,6 +682,37 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let max_ekf: f64 = ekf_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
     let max_gps: f64 = gps_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
 
+    // Calculate NIS statistics
+    let nis_avg = if nis_count > 0 {
+        nis_sum / (nis_count as f64)
+    } else {
+        0.0
+    };
+
+    // Calculate NIS median
+    let mut nis_sorted = nis_values.clone();
+    nis_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let nis_median = if nis_sorted.is_empty() {
+        0.0
+    } else if nis_sorted.len() % 2 == 0 {
+        (nis_sorted[nis_sorted.len() / 2 - 1] + nis_sorted[nis_sorted.len() / 2]) / 2.0
+    } else {
+        nis_sorted[nis_sorted.len() / 2]
+    };
+
+    // NIS consistency verdict
+    let nis_verdict = if nis_count == 0 {
+        "NO_DATA"
+    } else if nis_avg > 10.0 {
+        "OVERCONFIDENT"
+    } else if nis_avg < 0.5 {
+        "UNDERCONFIDENT"
+    } else if nis_avg >= 2.0 && nis_avg <= 4.0 {
+        "GOOD"
+    } else {
+        "MARGINAL"
+    };
+
     Ok(json!({
         "log": path.display().to_string(),
         "q_vel": args.q_vel,
@@ -693,6 +740,12 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "last_baro_pressure_hpa": last_baro.map(|(_, p)| p),
         "peak_memory_mb": peak_mem_mb,
         "final_memory_mb": get_memory_mb(),
+        "nis_avg": nis_avg,
+        "nis_median": nis_median,
+        "nis_min": if nis_min.is_finite() { nis_min } else { 0.0 },
+        "nis_max": nis_max,
+        "nis_count": nis_count,
+        "nis_verdict": nis_verdict,
         "trajectories": trajectory
     }))
 }
@@ -739,6 +792,37 @@ fn main() -> anyhow::Result<()> {
     } else {
         anyhow::bail!("Provide --log or --golden-dir");
     }
+
+    // Print NIS summary for quick tuning feedback
+    eprintln!("\n=== NIS (Normalized Innovation Squared) Summary ===");
+    for result in &results {
+        if let Some(log_name) = result.get("log").and_then(|v| v.as_str()) {
+            let nis_avg = result.get("nis_avg").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let nis_verdict = result.get("nis_verdict").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
+            let rmse = result.get("rmse").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let q_vel = result.get("q_vel").and_then(|v| v.as_f64()).unwrap_or(0.0);
+
+            let verdict_emoji = match nis_verdict {
+                "GOOD" => "✅",
+                "MARGINAL" => "⚠️ ",
+                "OVERCONFIDENT" => "❌",
+                "UNDERCONFIDENT" => "⚠️ ",
+                _ => "  ",
+            };
+
+            eprintln!(
+                "{} {} | NIS: {:.2} ({}) | RMSE: {:.2}m | Q_vel: {:.2}",
+                verdict_emoji,
+                log_name.split('/').last().unwrap_or(log_name),
+                nis_avg,
+                nis_verdict,
+                rmse,
+                q_vel
+            );
+        }
+    }
+    eprintln!("\nTarget NIS: 2.0-4.0 (ideal: ~3.0)");
+    eprintln!("Tuning: Increase Q if OVERCONFIDENT, Decrease Q if UNDERCONFIDENT\n");
 
     println!("{}", serde_json::to_string_pretty(&results)?);
     Ok(())
