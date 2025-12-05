@@ -1891,6 +1891,14 @@ async fn main() -> Result<()> {
             }
         }
 
+        // ===== STATIONARY DETECTION: Apply zero-velocity constraint to UKF even without GPS =====
+        // This prevents Z-axis drift during GPS denial while parked
+        let ukf_state = ukf_15d.get_state();
+        let ukf_speed = (ukf_state.velocity.0.powi(2) + ukf_state.velocity.1.powi(2)).sqrt();
+        if ukf_speed < 0.5 {
+            ukf_15d.zero_vertical_velocity(1e-4);
+        }
+
         // ===== GPS INTEGRATION: Check for new GPS fixes and update EKF =====
         {
             let latest_gps = sensor_state.latest_gps.read().await;

@@ -321,8 +321,11 @@ impl Ukf15d {
             self.state[5] *= 0.95;  // 5% decay during motion
         }
 
-        // Hard limit at ±5 m/s
-        self.state[5] = self.state[5].clamp(-5.0, 5.0);
+        // Exponential decay toward zero (10% per step)
+        self.state[5] *= 0.90;
+
+        // Hard limit at ±1 m/s (tighter for ground vehicles)
+        self.state[5] = self.state[5].clamp(-1.0, 1.0);
     }
 
     /// Force symmetry of covariance matrix
