@@ -81,6 +81,115 @@ pub struct Ekf15d {
     last_gps_pos: Option<(f64, f64, f64)>,
 }
 
+/// Pure physics propagation (no Jacobians, no covariance).
+///
+/// Shared motion model between EKF and UKF. Takes current state and propagates
+/// it forward using IMU measurements. This is the "source of truth" for motion dynamics.
+///
+/// # Arguments
+/// * `state` - 15D state vector [p_x, p_y, p_z, v_x, v_y, v_z, q_w, q_x, q_y, q_z, b_gx, b_gy, b_gz, b_ax, b_ay]
+/// * `accel_raw` - Raw acceleration measurement in body frame (m/s²)
+/// * `gyro_raw` - Raw angular velocity measurement in body frame (rad/s)
+/// * `dt` - Time step (seconds)
+///
+/// # Returns
+/// New 15D state vector after motion propagation (biases held constant)
+pub fn motion_model(
+    state: &Array1<f64>,
+    accel_raw: (f64, f64, f64),
+    gyro_raw: (f64, f64, f64),
+    dt: f64,
+) -> Array1<f64> {
+    // Extract state components
+    let mut pos = [state[0], state[1], state[2]];
+    let mut vel = [state[3], state[4], state[5]];
+    let mut quat = [state[6], state[7], state[8], state[9]];
+    let gyro_bias = [state[10], state[11], state[12]];
+    let accel_bias = [state[13], state[14], 0.0]; // Z-accel bias placeholder
+
+    // Correct measurements with bias estimates
+    let accel_corr = [
+        accel_raw.0 - accel_bias[0],
+        accel_raw.1 - accel_bias[1],
+        accel_raw.2 - accel_bias[2],
+    ];
+    let gyro_corr = [
+        gyro_raw.0 - gyro_bias[0],
+        gyro_raw.1 - gyro_bias[1],
+        gyro_raw.2 - gyro_bias[2],
+    ];
+
+    // Quaternion integration (exponential map with normalization)
+    let gyro_mag = (gyro_corr[0] * gyro_corr[0]
+        + gyro_corr[1] * gyro_corr[1]
+        + gyro_corr[2] * gyro_corr[2])
+        .sqrt();
+
+    if gyro_mag > 1e-6 {
+        let half_angle = 0.5 * gyro_mag * dt;
+        let scale = half_angle.sin() / gyro_mag;
+
+        let dq = [
+            half_angle.cos(),
+            gyro_corr[0] * scale,
+            gyro_corr[1] * scale,
+            gyro_corr[2] * scale,
+        ];
+
+        // Quaternion multiplication: q_new = dq * q
+        let qw = dq[0] * quat[0] - dq[1] * quat[1] - dq[2] * quat[2] - dq[3] * quat[3];
+        let qx = dq[0] * quat[1] + dq[1] * quat[0] + dq[2] * quat[3] - dq[3] * quat[2];
+        let qy = dq[0] * quat[2] - dq[1] * quat[3] + dq[2] * quat[0] + dq[3] * quat[1];
+        let qz = dq[0] * quat[3] + dq[1] * quat[2] - dq[2] * quat[1] + dq[3] * quat[0];
+
+        quat = [qw, qx, qy, qz];
+
+        // Normalize quaternion
+        let quat_mag =
+            (quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
+                .sqrt();
+        if quat_mag > 1e-6 {
+            quat[0] /= quat_mag;
+            quat[1] /= quat_mag;
+            quat[2] /= quat_mag;
+            quat[3] /= quat_mag;
+        }
+    }
+
+    // Rotate acceleration to world frame using quaternion
+    let accel_world = rotate_accel_to_world(&quat, &accel_corr);
+
+    // Update velocity: v += (a - g) * dt
+    vel[0] += accel_world[0] * dt;
+    vel[1] += accel_world[1] * dt;
+    vel[2] += (accel_world[2] - G) * dt;
+
+    // Update position: p += v * dt
+    pos[0] += vel[0] * dt;
+    pos[1] += vel[1] * dt;
+    pos[2] += vel[2] * dt;
+
+    // Return new state (biases held constant)
+    let mut new_state = Array1::<f64>::zeros(15);
+    new_state[0] = pos[0];
+    new_state[1] = pos[1];
+    new_state[2] = pos[2];
+    new_state[3] = vel[0];
+    new_state[4] = vel[1];
+    new_state[5] = vel[2];
+    new_state[6] = quat[0];
+    new_state[7] = quat[1];
+    new_state[8] = quat[2];
+    new_state[9] = quat[3];
+    new_state[10] = state[10]; // gyro bias (unchanged)
+    new_state[11] = state[11];
+    new_state[12] = state[12];
+    new_state[13] = state[13]; // accel bias (unchanged)
+    new_state[14] = state[14];
+
+    new_state
+}
+
 impl Ekf15d {
     /// Create a new 15D EKF
     pub fn new(dt: f64, gps_noise_std: f64, accel_noise_std: f64, gyro_noise_std: f64) -> Self {
@@ -251,94 +360,27 @@ impl Ekf15d {
             self.process_noise[[i, i]] = q_pos_dyn;
         }
 
-        // Get biases from state
-        let gyro_bias = [self.state[10], self.state[11], self.state[12]];
-        let accel_bias = [self.state[13], self.state[14], 0.0]; // Z-axis accel bias placeholder
+        // Call shared motion model (pure physics, no covariance)
+        let new_state = motion_model(&self.state, accel_raw, gyro_raw, self.dt);
 
-        // Correct measurements
+        // Extract updated quaternion for Jacobian computation
+        let quat = [new_state[6], new_state[7], new_state[8], new_state[9]];
+
+        // Update state from motion model
+        self.state = new_state;
+
+        // ===== ERROR-STATE JACOBIAN (Restored) =====
+        let dim = self.state.len();
+        let mut f = Array2::<f64>::eye(dim);
+
+        // Get biases for Jacobian computation
+        let accel_bias = [self.state[13], self.state[14], 0.0];
         let accel_corr = [
             accel_raw.0 - accel_bias[0],
             accel_raw.1 - accel_bias[1],
             accel_raw.2 - accel_bias[2],
         ];
-        let gyro_corr = [
-            gyro_raw.0 - gyro_bias[0],
-            gyro_raw.1 - gyro_bias[1],
-            gyro_raw.2 - gyro_bias[2],
-        ];
 
-        // Current state
-        let mut pos = [self.state[0], self.state[1], self.state[2]];
-        let mut vel = [self.state[3], self.state[4], self.state[5]];
-        let mut quat = [self.state[6], self.state[7], self.state[8], self.state[9]];
-
-        // Quaternion integration (simple exponential map)
-        let gyro_mag = (gyro_corr[0] * gyro_corr[0]
-            + gyro_corr[1] * gyro_corr[1]
-            + gyro_corr[2] * gyro_corr[2])
-            .sqrt();
-
-        if gyro_mag > 1e-6 {
-            let half_angle = 0.5 * gyro_mag * self.dt;
-            let scale = half_angle.sin() / gyro_mag;
-
-            let dq = [
-                half_angle.cos(),
-                gyro_corr[0] * scale,
-                gyro_corr[1] * scale,
-                gyro_corr[2] * scale,
-            ];
-
-            // Quaternion multiplication: q_new = dq * q
-            let qw = dq[0] * quat[0] - dq[1] * quat[1] - dq[2] * quat[2] - dq[3] * quat[3];
-            let qx = dq[0] * quat[1] + dq[1] * quat[0] + dq[2] * quat[3] - dq[3] * quat[2];
-            let qy = dq[0] * quat[2] - dq[1] * quat[3] + dq[2] * quat[0] + dq[3] * quat[1];
-            let qz = dq[0] * quat[3] + dq[1] * quat[2] - dq[2] * quat[1] + dq[3] * quat[0];
-
-            quat = [qw, qx, qy, qz];
-
-            // Normalize quaternion
-            let quat_mag =
-                (quat[0] * quat[0] + quat[1] * quat[1] + quat[2] * quat[2] + quat[3] * quat[3])
-                    .sqrt();
-            if quat_mag > 1e-6 {
-                quat[0] /= quat_mag;
-                quat[1] /= quat_mag;
-                quat[2] /= quat_mag;
-                quat[3] /= quat_mag;
-            }
-        }
-
-        // Rotate accel to world frame using quaternion
-        // World accel = R^T * accel_body - [0, 0, g]
-        let accel_world = rotate_accel_to_world(&quat, &accel_corr);
-
-        // Update velocity: v += (a - g) * dt
-        vel[0] += accel_world[0] * self.dt;
-        vel[1] += accel_world[1] * self.dt;
-        vel[2] += (accel_world[2] - G) * self.dt;
-
-        // Update position: p += v * dt
-        pos[0] += vel[0] * self.dt;
-        pos[1] += vel[1] * self.dt;
-        pos[2] += vel[2] * self.dt;
-
-        // Update state
-        self.state[0] = pos[0];
-        self.state[1] = pos[1];
-        self.state[2] = pos[2];
-        self.state[3] = vel[0];
-        self.state[4] = vel[1];
-        self.state[5] = vel[2];
-        self.state[6] = quat[0];
-        self.state[7] = quat[1];
-        self.state[8] = quat[2];
-        self.state[9] = quat[3];
-        // Biases held constant (updated by measurement corrections)
-
-        // ===== ERROR-STATE JACOBIAN (Restored) =====
-        let dim = self.state.len();
-        let mut f = Array2::<f64>::eye(dim);
         let r_mat = quat_to_rotation_matrix(&quat);
 
         // 1. Position depends on Velocity

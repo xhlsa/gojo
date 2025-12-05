@@ -169,6 +169,7 @@ mod types;
 use filters::complementary::ComplementaryFilter;
 use filters::ekf_15d::Ekf15d;
 use filters::es_ekf::EsEkf;
+use filters::ukf_15d::Ukf15d;
 use rerun_logger::RerunLogger;
 use smoothing::AccelSmoother;
 use types::{AccelData, GpsData, GyroData};
@@ -249,6 +250,8 @@ struct SensorReading {
     power_coefficient: f64,
     experimental_15d: Option<filters::ekf_15d::Ekf15dState>,
     fgo: Option<filters::fgo::FgoState>, // Factor Graph Optimization (shadow mode)
+    #[serde(default)]
+    ukf_shadow: Option<filters::ukf_15d::Ukf15dState>, // UKF shadow state (runs in parallel)
     #[serde(default)]
     gyro_bias_z_deg_per_s: Option<f64>, // Z-axis gyro bias estimate in °/s
     #[serde(default)]
@@ -1146,6 +1149,7 @@ async fn main() -> Result<()> {
     let mut ekf = EsEkf::new(0.05, 8.0, 3.0, args.enable_gyro, 0.0005);
     let mut comp_filter = ComplementaryFilter::new();
     let mut ekf_15d = Ekf15d::new(0.05, 8.0, 3.0, 0.0005); // dt, gps_noise, accel_noise, gyro_noise (with accel bias)
+    let mut ukf_15d = Ukf15d::new(0.05, 8.0, 3.0, 0.0005); // Shadow UKF for validation (runs in parallel)
     let mut incident_detector = incident::IncidentDetector::new();
     let mut incidents: Vec<incident::Incident> = Vec::new();
     let mut readings: Vec<SensorReading> = Vec::new();
@@ -1629,6 +1633,7 @@ async fn main() -> Result<()> {
                     experimental_15d: Some(ekf_15d.get_state()),
                     mag: sensor_state.latest_mag.read().await.clone(),
                     fgo: None, // Will be updated on GPS fix
+                    ukf_shadow: Some(ukf_15d.get_state()), // Log UKF state for comparison
                     gyro_bias_z_deg_per_s: Some(gyro_bias_z.to_degrees()),
                     heading_rate_update_count: heading_rate_est.update_count,
                     ekf_diagnostics: None, // Only populated on GPS updates
@@ -1791,6 +1796,9 @@ async fn main() -> Result<()> {
 
                     // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
                     ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+
+                    // Feed same data to shadow UKF (runs in parallel)
+                    ukf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
 
                     // Conditional Bias Update (ZUPT)
                     if last_accel_mag_raw > 9.5 && last_accel_mag_raw < 10.1 && gyro_mag < 0.1 {
@@ -2169,6 +2177,7 @@ async fn main() -> Result<()> {
                         power_coefficient: 0.0,
                         experimental_15d: Some(ekf_15d.get_state()),
                         fgo: Some(fgo.get_current_state()), // FGO shadow mode output
+                        ukf_shadow: Some(ukf_15d.get_state()), // UKF shadow state for comparison
                         gyro_bias_z_deg_per_s: {
                             let (_, _, bias_z) = ekf_15d.get_gyro_bias();
                             Some(bias_z.to_degrees())
@@ -2489,6 +2498,7 @@ async fn main() -> Result<()> {
                     power_coefficient: 0.0,
                     experimental_15d: None,
                     fgo: None,
+                    ukf_shadow: None, // UKF not used in this path
                     gyro_bias_z_deg_per_s: None,
                     heading_rate_update_count: 0,
                     ekf_diagnostics: None, // Only populated on GPS updates
