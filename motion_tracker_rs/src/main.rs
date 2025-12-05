@@ -2093,6 +2093,7 @@ async fn main() -> Result<()> {
                         ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                         // Land vehicle assumption: clamp vertical velocity tightly
                         ekf_15d.zero_vertical_velocity(1e-4);
+                        ukf_15d.zero_vertical_velocity(1e-4);
                     }
 
                     // Trigger FGO optimization (slow loop - GPS fixes ~1Hz)

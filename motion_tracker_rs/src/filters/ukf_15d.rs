@@ -302,6 +302,27 @@ impl Ukf15d {
             self.state[8] /= q_norm;
             self.state[9] /= q_norm;
         }
+
+        // 6. Gravity well: adaptive Z-velocity damping for ground vehicles
+        let accel_mag_xy = (accel_raw.0.powi(2) + accel_raw.1.powi(2)).sqrt();
+        // Extract rotation matrix components from quaternion to check tilt
+        let q0 = self.state[6];
+        let q1 = self.state[7];
+        let q2 = self.state[8];
+        let q3 = self.state[9];
+        let r20 = 2.0 * (q1 * q3 - q0 * q2);
+        let r21 = 2.0 * (q2 * q3 + q0 * q1);
+        let tilt_magnitude = (r20.powi(2) + r21.powi(2)).sqrt();
+
+        // Aggressive damping when stable, softer during dynamics
+        if accel_mag_xy < 2.0 && tilt_magnitude < 0.2 {
+            self.state[5] *= 0.80;  // 20% decay when stable
+        } else {
+            self.state[5] *= 0.95;  // 5% decay during motion
+        }
+
+        // Hard limit at ±5 m/s
+        self.state[5] = self.state[5].clamp(-5.0, 5.0);
     }
 
     /// Force symmetry of covariance matrix
@@ -418,11 +439,11 @@ impl Ukf15d {
         }
 
         // Add GPS measurement noise R (3x3)
-        // Altitude typically has 4x worse accuracy
+        // Altitude has 2x worse accuracy (reduced from 4x for stronger altitude correction)
         let mut r_gps = Array2::<f64>::zeros((3, 3));
         r_gps[[0, 0]] = gps_noise;
         r_gps[[1, 1]] = gps_noise;
-        r_gps[[2, 2]] = gps_noise * 4.0;
+        r_gps[[2, 2]] = gps_noise * 2.0;
 
         let p_zz_plus_r = &p_zz + &r_gps;
 
@@ -507,6 +528,19 @@ impl Ukf15d {
 
         // Return NIS for consistency monitoring
         nis
+    }
+
+    /// Zero-velocity update on Z-axis (vertical velocity constraint for ground vehicles)
+    ///
+    /// Clamps vertical velocity to 0 and tightens Z-velocity covariance to enforce
+    /// the ground-vehicle constraint. Prevents altitude drift during GPS denial.
+    pub fn zero_vertical_velocity(&mut self, noise_std: f64) {
+        // Directly clamp Z-velocity to 0
+        self.state[5] = 0.0;
+
+        // Tighten Z-velocity covariance (P[5,5])
+        let var = noise_std * noise_std;
+        self.covariance[[5, 5]] = var.max(1e-9);
     }
 
     /// Update UKF state with GPS velocity measurement
