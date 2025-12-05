@@ -2,6 +2,16 @@
 # Minimal version - just run the binary, no cleanup
 set -e
 
+cleanup_on_exit() {
+    local exit_code=$?
+    termux-wake-unlock
+    exit $exit_code
+}
+
+trap cleanup_on_exit EXIT SIGINT SIGTERM
+
+termux-wake-lock
+
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 OUTPUT_DIR="$SCRIPT_DIR/motion_tracker_sessions"
 mkdir -p "$OUTPUT_DIR"

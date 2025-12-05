@@ -41,6 +41,8 @@ cleanup_on_exit() {
     echo "[$(date '+%H:%M:%S')] Performing final cleanup..." >&2
     cleanup_sensors
     cleanup_gps
+    echo "[$(date '+%H:%M:%S')] Releasing wakelock..." >&2
+    termux-wake-unlock
     exit $exit_code
 }
 
@@ -49,6 +51,9 @@ trap cleanup_on_exit EXIT SIGINT SIGTERM
 # ============================================================================
 # PRE-RUN CLEANUP
 # ============================================================================
+echo "[$(date '+%H:%M:%S')] Acquiring wakelock..." >&2
+termux-wake-lock
+
 cleanup_sensors
 cleanup_gps
 
