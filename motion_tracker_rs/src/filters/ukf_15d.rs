@@ -56,6 +56,9 @@ pub struct Ukf15d {
     weights_mean: Array1<f64>,
     weights_cov: Array1<f64>,
 
+    /// Origin for local frame (lat, lon)
+    origin: Option<(f64, f64)>,
+
     /// Update counters
     gps_updates: u64,
     accel_updates: u64,
@@ -145,6 +148,7 @@ impl Ukf15d {
             lambda,
             weights_mean,
             weights_cov,
+            origin: None,
             gps_updates: 0,
             accel_updates: 0,
             gyro_updates: 0,
@@ -347,4 +351,268 @@ impl Ukf15d {
         self.state[13] = accel_bias.0;
         self.state[14] = accel_bias.1;
     }
+
+    /// Set local origin for GPS conversion and reset position
+    pub fn set_origin(&mut self, lat: f64, lon: f64, _alt: f64) {
+        // Store origin (lat, lon) for future lat/lon conversions
+        self.origin = Some((lat, lon));
+        // Reset position to local frame origin
+        self.state[0] = 0.0;
+        self.state[1] = 0.0;
+        self.state[2] = 0.0;
+    }
+
+    /// Update UKF state with GPS position measurement using unscented transform
+    pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64, _timestamp: f64) -> f64 {
+        // Calculate speed for dynamic noise floor
+        let vx = self.state[3];
+        let vy = self.state[4];
+        let vz = self.state[5];
+        let speed = (vx * vx + vy * vy + vz * vz).sqrt();
+
+        // Dynamic Floor: Trust Inertia at low speed, GPS at high speed
+        let accuracy_floor = if speed < 3.0 {
+            10.0
+        } else if speed < 15.0 {
+            10.0 - (speed - 3.0) * (7.0 / 12.0)
+        } else {
+            3.0
+        };
+
+        // Enforce GPS accuracy floor
+        let safe_accuracy = accuracy.max(accuracy_floor);
+        let gps_noise = safe_accuracy * safe_accuracy;
+
+        // Convert lat/lon to local meters if origin is set
+        let (mut pos_x, mut pos_y, pos_z) = gps_pos;
+        if let Some((origin_lat, origin_lon)) = self.origin {
+            let (x, y) = latlon_to_meters(pos_x, pos_y, origin_lat, origin_lon);
+            pos_x = x;
+            pos_y = y;
+        }
+
+        // 1. Generate sigma points
+        let sigmas = self.generate_sigma_points();
+
+        // 2. Transform sigma points to measurement space (extract position states 0,1,2)
+        let mut z_sigmas = Vec::with_capacity(SIGMA_COUNT);
+        for sigma in &sigmas {
+            // Measurement is just position: [x, y, z]
+            z_sigmas.push(Array1::<f64>::from_vec(vec![sigma[0], sigma[1], sigma[2]]));
+        }
+
+        // 3. Compute predicted measurement mean and covariance using unscented transform
+        let mut z_pred = Array1::<f64>::zeros(3);
+        for (i, z_sigma) in z_sigmas.iter().enumerate() {
+            z_pred = &z_pred + &(z_sigma * self.weights_mean[i]);
+        }
+
+        // Measurement covariance (predicted): Pzz = Σ w_cov[i] * (z_sigma[i] - z_pred)^T * (z_sigma[i] - z_pred)
+        let mut p_zz = Array2::<f64>::zeros((3, 3));
+        for (i, z_sigma) in z_sigmas.iter().enumerate() {
+            let residual = z_sigma - &z_pred;
+            let outer = residual.view().into_shape((3, 1))
+                .map(|r| r.dot(&r.t()))
+                .unwrap_or_else(|_| Array2::zeros((3, 3)));
+            p_zz = &p_zz + &(outer * self.weights_cov[i]);
+        }
+
+        // Add GPS measurement noise R (3x3)
+        // Altitude typically has 4x worse accuracy
+        let mut r_gps = Array2::<f64>::zeros((3, 3));
+        r_gps[[0, 0]] = gps_noise;
+        r_gps[[1, 1]] = gps_noise;
+        r_gps[[2, 2]] = gps_noise * 4.0;
+
+        let p_zz_plus_r = &p_zz + &r_gps;
+
+        // 4. Compute cross-covariance Pxy = Σ w_cov[i] * (sigma[i] - x_pred) * (z_sigma[i] - z_pred)^T
+        let mut p_xy = Array2::<f64>::zeros((STATE_DIM, 3));
+        for (i, sigma) in sigmas.iter().enumerate() {
+            let x_residual = sigma - &self.state;
+            let z_residual = &z_sigmas[i] - &z_pred;
+            let outer = x_residual.view().into_shape((STATE_DIM, 1))
+                .map(|xr| xr.dot(&z_residual.view().into_shape((1, 3)).unwrap()))
+                .unwrap_or_else(|_| Array2::zeros((STATE_DIM, 3)));
+            p_xy = &p_xy + &(outer * self.weights_cov[i]);
+        }
+
+        // 5. Compute Kalman gain K = Pxy * (Pzz + R)^-1
+        use nalgebra::Matrix3;
+        let p_zz_r_mat = Matrix3::new(
+            p_zz_plus_r[[0, 0]], p_zz_plus_r[[0, 1]], p_zz_plus_r[[0, 2]],
+            p_zz_plus_r[[1, 0]], p_zz_plus_r[[1, 1]], p_zz_plus_r[[1, 2]],
+            p_zz_plus_r[[2, 0]], p_zz_plus_r[[2, 1]], p_zz_plus_r[[2, 2]],
+        );
+
+        let Some(p_zz_r_inv_na) = p_zz_r_mat.try_inverse() else {
+            return f64::INFINITY; // Singular innovation covariance
+        };
+
+        let mut p_zz_r_inv = Array2::<f64>::zeros((3, 3));
+        for i in 0..3 {
+            for j in 0..3 {
+                p_zz_r_inv[[i, j]] = p_zz_r_inv_na[(i, j)];
+            }
+        }
+
+        let k = p_xy.dot(&p_zz_r_inv);
+
+        // 6. Compute innovation and update state
+        let innovation = Array1::<f64>::from_vec(vec![
+            pos_x - z_pred[0],
+            pos_y - z_pred[1],
+            pos_z - z_pred[2],
+        ]);
+
+        // Calculate NIS for filter consistency monitoring
+        let nis = {
+            let temp = p_zz_r_inv.dot(&innovation);
+            innovation.dot(&temp)
+        };
+
+        let dx = k.dot(&innovation);
+        for i in 0..STATE_DIM {
+            self.state[i] += dx[i];
+        }
+
+        // Re-normalize quaternion after update
+        let q_norm = (self.state[6].powi(2)
+            + self.state[7].powi(2)
+            + self.state[8].powi(2)
+            + self.state[9].powi(2))
+            .sqrt();
+        if q_norm > 1e-6 {
+            self.state[6] /= q_norm;
+            self.state[7] /= q_norm;
+            self.state[8] /= q_norm;
+            self.state[9] /= q_norm;
+        }
+
+        // 7. Update covariance: P = P - K * Pzz * K^T (Joseph form for stability)
+        let k_p_zz = k.dot(&p_zz);
+        self.covariance = &self.covariance - &k_p_zz.dot(&k.t());
+
+        // Force symmetry and positive definiteness
+        let p_t = self.covariance.t();
+        self.covariance = (&self.covariance + &p_t) * 0.5;
+
+        for i in 0..STATE_DIM {
+            if self.covariance[[i, i]] < 1e-9 {
+                self.covariance[[i, i]] = 1e-9;
+            }
+        }
+
+        self.gps_updates += 1;
+
+        // Return NIS for consistency monitoring
+        nis
+    }
+
+    /// Update UKF state with GPS velocity measurement
+    pub fn update_gps_velocity(&mut self, speed: f64, bearing_rad: f64, speed_std: f64) {
+        // Convert speed/bearing to ENU components (bearing: 0 = North, clockwise)
+        let vx_meas = speed * bearing_rad.sin(); // East
+        let vy_meas = speed * bearing_rad.cos(); // North
+        let vz_meas = 0.0;
+
+        let meas_vel = Array1::<f64>::from_vec(vec![vx_meas, vy_meas, vz_meas]);
+
+        // 1. Generate sigma points
+        let sigmas = self.generate_sigma_points();
+
+        // 2. Transform sigma points to measurement space (extract velocity states 3,4,5)
+        let mut z_sigmas = Vec::with_capacity(SIGMA_COUNT);
+        for sigma in &sigmas {
+            z_sigmas.push(Array1::<f64>::from_vec(vec![sigma[3], sigma[4], sigma[5]]));
+        }
+
+        // 3. Compute predicted velocity mean and covariance
+        let mut z_pred = Array1::<f64>::zeros(3);
+        for (i, z_sigma) in z_sigmas.iter().enumerate() {
+            z_pred = &z_pred + &(z_sigma * self.weights_mean[i]);
+        }
+
+        // Measurement covariance (predicted)
+        let mut p_zz = Array2::<f64>::zeros((3, 3));
+        for (i, z_sigma) in z_sigmas.iter().enumerate() {
+            let residual = z_sigma - &z_pred;
+            let outer = residual.view().into_shape((3, 1))
+                .map(|r| r.dot(&r.t()))
+                .unwrap_or_else(|_| Array2::zeros((3, 3)));
+            p_zz = &p_zz + &(outer * self.weights_cov[i]);
+        }
+
+        // Add GPS velocity measurement noise R
+        let mut r_gps = Array2::<f64>::zeros((3, 3));
+        let var = (speed_std * speed_std).max(0.0001);
+        r_gps[[0, 0]] = var;
+        r_gps[[1, 1]] = var;
+        r_gps[[2, 2]] = var * 2.0; // slight damp on vertical
+
+        let p_zz_plus_r = &p_zz + &r_gps;
+
+        // 4. Compute cross-covariance Pxy
+        let mut p_xy = Array2::<f64>::zeros((STATE_DIM, 3));
+        for (i, sigma) in sigmas.iter().enumerate() {
+            let x_residual = sigma - &self.state;
+            let z_residual = &z_sigmas[i] - &z_pred;
+            let outer = x_residual.view().into_shape((STATE_DIM, 1))
+                .map(|xr| xr.dot(&z_residual.view().into_shape((1, 3)).unwrap()))
+                .unwrap_or_else(|_| Array2::zeros((STATE_DIM, 3)));
+            p_xy = &p_xy + &(outer * self.weights_cov[i]);
+        }
+
+        // 5. Compute Kalman gain
+        use nalgebra::Matrix3;
+        let p_zz_r_mat = Matrix3::new(
+            p_zz_plus_r[[0, 0]], p_zz_plus_r[[0, 1]], p_zz_plus_r[[0, 2]],
+            p_zz_plus_r[[1, 0]], p_zz_plus_r[[1, 1]], p_zz_plus_r[[1, 2]],
+            p_zz_plus_r[[2, 0]], p_zz_plus_r[[2, 1]], p_zz_plus_r[[2, 2]],
+        );
+
+        if let Some(p_zz_r_inv_na) = p_zz_r_mat.try_inverse() {
+            let mut p_zz_r_inv = Array2::<f64>::zeros((3, 3));
+            for i in 0..3 {
+                for j in 0..3 {
+                    p_zz_r_inv[[i, j]] = p_zz_r_inv_na[(i, j)];
+                }
+            }
+
+            let k = p_xy.dot(&p_zz_r_inv);
+
+            // 6. Compute innovation
+            let innovation = &meas_vel - &z_pred;
+
+            // Clamp extreme innovations
+            let mut innovation_clamped = innovation.clone();
+            for i in 0..3 {
+                innovation_clamped[i] = innovation_clamped[i].clamp(-50.0, 50.0);
+            }
+
+            // 7. Update state
+            let dx = k.dot(&innovation_clamped);
+            for i in 0..STATE_DIM {
+                self.state[i] += dx[i];
+            }
+
+            // 8. Update covariance
+            let k_p_zz = k.dot(&p_zz);
+            self.covariance = &self.covariance - &k_p_zz.dot(&k.t());
+
+            // Force symmetry
+            let p_t = self.covariance.t();
+            self.covariance = (&self.covariance + &p_t) * 0.5;
+        }
+    }
+}
+
+/// Convert lat/lon to local meters using equirectangular approximation
+fn latlon_to_meters(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
+    const R: f64 = 6_371_000.0;
+    let d_lat = (lat - origin_lat).to_radians();
+    let d_lon = (lon - origin_lon).to_radians();
+    let x = R * d_lon * origin_lat.to_radians().cos();
+    let y = R * d_lat;
+    (x, y)
 }

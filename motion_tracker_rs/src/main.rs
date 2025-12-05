@@ -1976,6 +1976,7 @@ async fn main() -> Result<()> {
                         // FIRST FIX: Initialize origin and EKF state, DO NOT update
                         // This prevents "Null Island" teleport (0,0,0) → (lat,lon) causing massive innovation
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
+                        ukf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
                         origin_latlon = Some((gps.latitude, gps.longitude));
 
                         // Initialize velocity from GPS (prevents 0 → speed causing acceleration spike)
@@ -2017,8 +2018,10 @@ async fn main() -> Result<()> {
                                 );
                                 // Force update with inflated uncertainty (2x accuracy)
                                 gps_nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy * 2.0, gps.timestamp);
+                                ukf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy * 2.0, gps.timestamp);
                                 gps_was_snapped = distance > 30.0; // Detect snap recovery
                                 ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                                ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                                 consecutive_gps_rejections = 0;
                                 total_gps_accepted += 1;
                                 gps_was_rejected = false; // Now accepted via force
@@ -2038,7 +2041,9 @@ async fn main() -> Result<()> {
                             gps_innovation = distance;
                             gps_prediction_error = distance;
                             gps_nis = ekf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
+                            ukf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
                             ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                            ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
 
                             // Track NIS statistics for filter consistency monitoring
                             if gps_nis.is_finite() {
@@ -2085,6 +2090,7 @@ async fn main() -> Result<()> {
                     } else {
                         // GPS Velocity Update (fixed R)
                         ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                        ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                         // Land vehicle assumption: clamp vertical velocity tightly
                         ekf_15d.zero_vertical_velocity(1e-4);
                     }
