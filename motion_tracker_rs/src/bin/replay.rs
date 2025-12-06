@@ -355,7 +355,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut ekf = Ekf15d::new(0.02, 8.0, 3.0, 0.0005);
     // Override velocity process noise
     for i in 3..6 {
-        ekf.process_noise[[i, i]] = args.q_vel;
+        ekf.process_noise[(i, i)] = args.q_vel;
     }
 
     // Open CSV for debug logging

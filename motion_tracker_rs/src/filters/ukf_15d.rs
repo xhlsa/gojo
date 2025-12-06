@@ -258,18 +258,10 @@ impl Ukf15d {
         let sigmas = self.generate_sigma_points();
 
         // 2. Propagate through motion model (shared with EKF)
-        // Convert to ndarray temporarily for motion_model compatibility
+        // Pure nalgebra - no conversions needed!
         let mut predicted_sigmas = [StateVec15::zeros(); SIGMA_COUNT_15];
         for (idx, sigma) in sigmas.iter().enumerate() {
-            // Convert StateVec15 to ndarray::Array1
-            let sigma_arr: std::vec::Vec<f64> = sigma.as_slice().to_vec();
-            let sigma_ndarray = ndarray::Array1::from_vec(sigma_arr);
-
-            let predicted = super::ekf_15d::motion_model(&sigma_ndarray, accel_raw, gyro_raw, self.dt);
-
-            // Convert back to StateVec15
-            let predicted_slice = predicted.as_slice().unwrap();
-            predicted_sigmas[idx] = StateVec15::from_column_slice(predicted_slice);
+            predicted_sigmas[idx] = super::ekf_15d::motion_model(&sigma, accel_raw, gyro_raw, self.dt);
         }
 
         // 3. Recombine (unscented transform)

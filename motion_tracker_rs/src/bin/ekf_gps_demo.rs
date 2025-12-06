@@ -1,5 +1,10 @@
+#![allow(dead_code)]
+
 /// Diagnostic: Compare scalar vs full GPS position update
-/// 
+///
+/// DEPRECATED: This demo uses ndarray and is for educational purposes only.
+/// For production use, see motion_tracker_rs/src/filters/ekf_15d.rs which uses nalgebra.
+///
 /// Run this to see how cross-covariance affects trajectory tracking.
 /// The key insight: when GPS corrects position, it should ALSO adjust
 /// velocity estimates through the P_pv cross-covariance block.
