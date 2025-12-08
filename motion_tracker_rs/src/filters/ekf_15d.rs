@@ -79,6 +79,9 @@ pub struct Ekf15d {
     /// Last accepted GPS fix (time, position) for snap velocity inference
     last_gps_time: Option<f64>,
     last_gps_pos: Option<(f64, f64, f64)>,
+
+    /// Track if filter has been initialized from first GPS fix (First Fix Snap strategy)
+    is_initialized: bool,
 }
 
 /// Pure physics propagation (no Jacobians, no covariance).
@@ -261,6 +264,7 @@ impl Ekf15d {
             gyro_updates: 0,
             last_gps_time: None,
             last_gps_pos: None,
+            is_initialized: false,
         }
     }
 
@@ -332,8 +336,8 @@ impl Ekf15d {
             
             // Inflate P to admit we have no idea what happened during the blackout
             // (This prepares the filter to accept the next GPS point gracefully)
-            // Using 1.0 as a base process noise scalar per frame (conservative)
-            let noise_growth = 1.0 * scalar;
+            // Using 0.1 as a base process noise scalar per frame (tuned to prevent explosion)
+            let noise_growth = 0.1 * scalar;
 
             self.covariance[(0, 0)] += noise_growth;
             self.covariance[(1, 1)] += noise_growth;
@@ -355,7 +359,9 @@ impl Ekf15d {
             1.5
         };
         let accel_var_dyn = accel_std * accel_std;
-        let q_pos_dyn = (1000.0 * 0.25 * self.dt.powi(4) * accel_var_dyn).max(1e-5);
+        // Increased from 1000.0 to 5000.0 to allow more uncertainty growth during prediction
+        // This prevents overconfidence and brings NIS into target range (2.0-4.0)
+        let q_pos_dyn = (5000.0 * 0.25 * self.dt.powi(4) * accel_var_dyn).max(1e-5);
         for i in 0..3 {
             self.process_noise[(i, i)] = q_pos_dyn;
         }
@@ -765,6 +771,11 @@ impl Ekf15d {
     /// NIS (Normalized Innovation Squared) for filter consistency monitoring.
     /// Ideal average: ~3.0 for 3D position measurement.
     pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64, timestamp: f64) -> f64 {
+        // Skip updates until filter has been initialized from first GPS fix
+        if !self.is_initialized {
+            return f64::INFINITY;
+        }
+
         // Calculate speed for dynamic noise floor
         let vx = self.state[3];
         let vy = self.state[4];
@@ -857,6 +868,29 @@ impl Ekf15d {
                 self.state[4] = inferred_v[1];
                 self.state[5] = inferred_v[2];
 
+                // Compute NIS before resetting covariance (using prior uncertainty)
+                // This tracks how surprising the divergence was
+                let mut h_snap = JacobianGpsPos::zeros();
+                h_snap[(0, 0)] = 1.0;
+                h_snap[(1, 1)] = 1.0;
+                h_snap[(2, 2)] = 1.0;
+
+                let mut r_snap = GpsPosNoise::zeros();
+                r_snap[(0, 0)] = gps_noise;
+                r_snap[(1, 1)] = gps_noise;
+                r_snap[(2, 2)] = gps_noise * 4.0;
+
+                let p_snap = self.covariance;
+                let h_t_snap = h_snap.transpose();
+                let s_snap = h_snap * p_snap * h_t_snap + r_snap;
+
+                let nis_snap = if let Some(s_inv_snap) = s_snap.try_inverse() {
+                    let temp = s_inv_snap * innovation;
+                    innovation.dot(&temp)
+                } else {
+                    f64::INFINITY // Singular S during snap
+                };
+
                 // Reset covariance to soft trust on position and high uncertainty on velocity
                 let mut p_reset = StateMat15::identity();
                 let pos_var = (safe_accuracy * 1.0).powi(2); // tighter trust on snap position
@@ -877,7 +911,7 @@ impl Ekf15d {
                 self.gps_updates += 1;
                 self.last_gps_time = Some(timestamp);
                 self.last_gps_pos = Some((pos_x, pos_y, pos_z));
-                return 0.0;
+                return nis_snap;
             } else {
                 // GPS is low-quality and far away: skip
                 return f64::INFINITY;
@@ -1061,6 +1095,68 @@ impl Ekf15d {
         self.state[0] = 0.0;
         self.state[1] = 0.0;
         self.state[2] = 0.0;
+    }
+
+    /// Initialize filter from first GPS fix (First Fix Snap strategy).
+    ///
+    /// Snaps position to GPS fix and initializes covariance based on GPS accuracy.
+    /// This eliminates velocity spikes and covariance explosions on startup.
+    /// Must be called after set_origin().
+    pub fn initialize_from_gps(&mut self, _lat: f64, _lon: f64, _alt: f64, accuracy: f64) {
+        // Position already set to origin by set_origin()
+        // (state[0], state[1], state[2] = 0.0 in local frame)
+
+        // Velocity = 0 (assume stationary start)
+        self.state[3] = 0.0;
+        self.state[4] = 0.0;
+        self.state[5] = 0.0;
+
+        // Quaternion = identity (level platform)
+        self.state[6] = 1.0;
+        self.state[7] = 0.0;
+        self.state[8] = 0.0;
+        self.state[9] = 0.0;
+
+        // Biases = 0 (will be estimated during operation)
+        for i in 10..15 {
+            self.state[i] = 0.0;
+        }
+
+        // Initialize covariance based on GPS accuracy with conservative inflation
+        // GPS accuracy tends to be optimistic, inflate by 4× for realistic uncertainty
+        let gps_var = (accuracy * accuracy * 4.0).max(36.0);  // Min 6m std dev (36m²)
+
+        // Position: Inflated GPS accuracy
+        self.covariance[(0, 0)] = gps_var;
+        self.covariance[(1, 1)] = gps_var;
+        self.covariance[(2, 2)] = gps_var * 4.0;  // Altitude uncertainty worse
+
+        // Velocity: assume stationary (0.1 m/s uncertainty = 0.01 m²/s²)
+        for i in 3..6 {
+            self.covariance[(i, i)] = 0.01;
+        }
+
+        // Quaternion: moderate uncertainty (don't know heading yet)
+        for i in 6..10 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        // Gyro bias: same as constructor (will be learned)
+        for i in 10..13 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        // Accel bias: same as constructor (will be learned)
+        for i in 13..15 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        self.is_initialized = true;
+    }
+
+    /// Check if filter has been initialized from first GPS fix.
+    pub fn is_initialized(&self) -> bool {
+        self.is_initialized
     }
 
     /// Accelerometer update: correct bias assuming STATIONARY (ZUPT)
@@ -1800,6 +1896,72 @@ impl Ekf15d {
         }
         self.covariance[(6, 6)] = 1e-6;
         self.covariance[(7, 7)] = 1e-6;
+    }
+
+    /// Correct yaw (heading) from GPS velocity vector to handle phone rotation
+    ///
+    /// When the phone rotates relative to the vehicle, gyro updates the quaternion
+    /// incorrectly. This method uses GPS velocity vector to realign the yaw component
+    /// when moving at sufficient speed.
+    ///
+    /// # Arguments
+    /// * `gps_speed` - GPS speed in m/s
+    /// * `gps_bearing_rad` - GPS bearing in radians (ENU: 0 = North, clockwise)
+    /// * `min_speed` - Minimum speed threshold for correction (typical: 5.0 m/s)
+    /// * `blend_factor` - Correction strength 0.0-1.0 (typical: 0.3 for soft correction)
+    ///
+    /// # Returns
+    /// true if correction was applied
+    pub fn correct_yaw_from_gps_velocity(
+        &mut self,
+        gps_speed: f64,
+        gps_bearing_rad: f64,
+        min_speed: f64,
+        blend_factor: f64,
+    ) -> bool {
+        // Only correct when moving fast enough for GPS bearing to be reliable
+        if gps_speed < min_speed {
+            return false;
+        }
+
+        // Extract current yaw from quaternion (ENU: yaw = 0 points North)
+        let q = nalgebra::UnitQuaternion::from_quaternion(nalgebra::Quaternion::new(
+            self.state[6],
+            self.state[7],
+            self.state[8],
+            self.state[9],
+        ));
+        let (roll, pitch, yaw_current) = q.euler_angles();
+
+        // GPS bearing is already in ENU (0 = North, clockwise)
+        // Convert to match euler_angles convention (counter-clockwise from East)
+        let yaw_gps = std::f64::consts::FRAC_PI_2 - gps_bearing_rad;
+
+        // Compute yaw error with wrap-around handling
+        let mut yaw_error = yaw_gps - yaw_current;
+
+        // Normalize to [-π, π]
+        while yaw_error > std::f64::consts::PI {
+            yaw_error -= 2.0 * std::f64::consts::PI;
+        }
+        while yaw_error < -std::f64::consts::PI {
+            yaw_error += 2.0 * std::f64::consts::PI;
+        }
+
+        // Apply soft correction (blend GPS heading with current heading)
+        let yaw_corrected = yaw_current + blend_factor * yaw_error;
+
+        // Rebuild quaternion with corrected yaw, preserving roll/pitch
+        let new_q = nalgebra::UnitQuaternion::from_euler_angles(roll, pitch, yaw_corrected);
+        self.state[6] = new_q.w;
+        self.state[7] = new_q.i;
+        self.state[8] = new_q.j;
+        self.state[9] = new_q.k;
+
+        // Inflate yaw covariance slightly to reflect correction uncertainty
+        self.covariance[(9, 9)] = self.covariance[(9, 9)].max(0.01);
+
+        true
     }
 }
 

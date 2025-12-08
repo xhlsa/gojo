@@ -1981,18 +1981,22 @@ async fn main() -> Result<()> {
                     let mut gps_was_snapped = false;
 
                     if is_first_gps_fix {
-                        // FIRST FIX: Initialize origin and EKF state, DO NOT update
+                        // FIRST FIX: Initialize origin and EKF state using "First Fix Snap" strategy
                         // This prevents "Null Island" teleport (0,0,0) → (lat,lon) causing massive innovation
                         ekf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
                         ukf_15d.set_origin(gps.latitude, gps.longitude, 0.0);
+
+                        // Initialize filters from first GPS fix (snap position, tighten covariance)
+                        ekf_15d.initialize_from_gps(gps.latitude, gps.longitude, 0.0, gps.accuracy);
+                        ukf_15d.initialize_from_gps(gps.latitude, gps.longitude, 0.0, gps.accuracy);
+
                         origin_latlon = Some((gps.latitude, gps.longitude));
 
-                        // Initialize velocity from GPS (prevents 0 → speed causing acceleration spike)
-                        ekf_15d.force_zero_velocity(); // Start from rest
-
-                        println!("[COLD START] GPS Locked. Origin: ({:.6}, {:.6}). EKF initialized at REST.",
+                        eprintln!("[INIT] EKF initialized from first GPS fix (accuracy: {:.1}m)", gps.accuracy);
+                        eprintln!("[INIT] UKF initialized from first GPS fix (accuracy: {:.1}m)", gps.accuracy);
+                        println!("[COLD START] GPS Locked. Origin: ({:.6}, {:.6}). Filters initialized with First Fix Snap.",
                                  gps.latitude, gps.longitude);
-                        println!("[COLD START] Skipping first GPS update to prevent initialization shock.");
+                        println!("[COLD START] Skipping first GPS update to allow IMU stabilization.");
                     } else {
                         // SUBSEQUENT FIXES: Normal updates with prediction-based outlier rejection
                         let dt_since_last = last_accel_ts

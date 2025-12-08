@@ -61,6 +61,9 @@ pub struct Ukf15d {
     gps_updates: u64,
     accel_updates: u64,
     gyro_updates: u64,
+
+    /// Track if filter has been initialized from first GPS fix (First Fix Snap strategy)
+    is_initialized: bool,
 }
 
 impl Ukf15d {
@@ -150,6 +153,7 @@ impl Ukf15d {
             gps_updates: 0,
             accel_updates: 0,
             gyro_updates: 0,
+            is_initialized: false,
         }
     }
 
@@ -367,8 +371,74 @@ impl Ukf15d {
         self.state[2] = 0.0;
     }
 
+    /// Initialize filter from first GPS fix (First Fix Snap strategy).
+    ///
+    /// Snaps position to GPS fix and initializes covariance based on GPS accuracy.
+    /// This eliminates velocity spikes and covariance explosions on startup.
+    /// Must be called after set_origin().
+    pub fn initialize_from_gps(&mut self, _lat: f64, _lon: f64, _alt: f64, accuracy: f64) {
+        // Position already set to origin by set_origin()
+        // (state[0], state[1], state[2] = 0.0 in local frame)
+
+        // Velocity = 0 (assume stationary start)
+        self.state[3] = 0.0;
+        self.state[4] = 0.0;
+        self.state[5] = 0.0;
+
+        // Quaternion = identity (level platform)
+        self.state[6] = 1.0;
+        self.state[7] = 0.0;
+        self.state[8] = 0.0;
+        self.state[9] = 0.0;
+
+        // Biases = 0 (will be estimated during operation)
+        for i in 10..15 {
+            self.state[i] = 0.0;
+        }
+
+        // Tighten covariance based on GPS accuracy
+        let gps_var = (accuracy * accuracy).max(9.0);  // Min 3m std dev (9m²)
+
+        // Position: GPS accuracy
+        self.covariance[(0, 0)] = gps_var;
+        self.covariance[(1, 1)] = gps_var;
+        self.covariance[(2, 2)] = gps_var * 4.0;  // Altitude uncertainty worse
+
+        // Velocity: assume stationary (0.1 m/s uncertainty = 0.01 m²/s²)
+        for i in 3..6 {
+            self.covariance[(i, i)] = 0.01;
+        }
+
+        // Quaternion: moderate uncertainty (don't know heading yet)
+        for i in 6..10 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        // Gyro bias: same as constructor (will be learned)
+        for i in 10..13 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        // Accel bias: same as constructor (will be learned)
+        for i in 13..15 {
+            self.covariance[(i, i)] = 0.1;
+        }
+
+        self.is_initialized = true;
+    }
+
+    /// Check if filter has been initialized from first GPS fix.
+    pub fn is_initialized(&self) -> bool {
+        self.is_initialized
+    }
+
     /// Update UKF state with GPS position measurement using unscented transform
     pub fn update_gps(&mut self, gps_pos: (f64, f64, f64), accuracy: f64, _timestamp: f64) -> f64 {
+        // Skip updates until filter has been initialized from first GPS fix
+        if !self.is_initialized {
+            return f64::INFINITY;
+        }
+
         // Calculate speed for dynamic noise floor
         let vx = self.state[3];
         let vy = self.state[4];

@@ -399,6 +399,7 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut nis_min: f64 = f64::INFINITY;
     let mut nis_max: f64 = 0.0;
     let mut nis_values: Vec<f64> = Vec::new(); // Store all NIS values for analysis
+    let mut last_reading_ts: Option<f64> = None;
 
     for r in &log.readings {
         // Track GPS gap for adaptive process noise
@@ -407,9 +408,21 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             .unwrap_or(0.0);
         let in_gps_gap = current_gap > 3.0;
 
-        if let Some(acc) = r.accel.as_ref() {
-            ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
+        // Update dt from actual timestamp differences
+        if let Some(last_ts) = last_reading_ts {
+            let dt = (r.timestamp - last_ts).max(0.001).min(0.5); // Clamp to 1ms-500ms
+            ekf.dt = dt;
+        }
+        last_reading_ts = Some(r.timestamp);
 
+        // CRITICAL: Combine accel and gyro into single predict() call
+        // Splitting them breaks rotation matrix integration and causes massive drift
+        let accel = r.accel.as_ref().map(|a| (a.x, a.y, a.z)).unwrap_or((0.0, 0.0, 0.0));
+        let gyro = r.gyro.as_ref().map(|g| (g.x, g.y, g.z)).unwrap_or((0.0, 0.0, 0.0));
+
+        ekf.predict(accel, gyro);
+
+        if let Some(acc) = r.accel.as_ref() {
             // Feed accel to roughness estimator for road surface diagnostics
             roughness_estimator.update(acc.x, acc.y, acc.z);
             // Gap-mode speed ceiling during GPS outages (per prediction clamp)
@@ -463,8 +476,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             }
         }
 
+        // Gyro stationary bias update (gyro already processed in combined predict() above)
         if let Some(g) = r.gyro.as_ref() {
-            ekf.predict((0.0, 0.0, 0.0), (g.x, g.y, g.z));
             ekf.update_stationary_gyro((g.x, g.y, g.z));
         }
         // Gap detection once per reading
@@ -519,6 +532,8 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             if replay_origin.is_none() {
                 replay_origin = Some((gps.latitude, gps.longitude));
                 ekf.set_origin(gps.latitude, gps.longitude, 0.0);
+                // Initialize EKF from first GPS fix (enables NIS tracking)
+                ekf.initialize_from_gps(gps.latitude, gps.longitude, 0.0, gps.accuracy);
             }
 
             // GPS init-only mode: only use first GPS fix, ignore all subsequent GPS updates
@@ -539,19 +554,25 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     max_innov_norm = innov_norm;
                 }
 
-                // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
-                if gps.speed > 5.0 {
-                    let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
-                    let half = target_yaw * 0.5;
-                    ekf.state[6] = half.cos();
-                    ekf.state[7] = 0.0;
-                    ekf.state[8] = 0.0;
-                    ekf.state[9] = half.sin();
-                }
+                // Yaw forcing disabled - let filter learn orientation naturally from IMU
+                // Forcing quaternion corrupts rotation matrix and causes massive position drift
+                // if gps.speed > 5.0 {
+                //     let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
+                //     let half = target_yaw * 0.5;
+                //     ekf.state[6] = half.cos();
+                //     ekf.state[7] = 0.0;
+                //     ekf.state[8] = 0.0;
+                //     ekf.state[9] = half.sin();
+                // }
 
                 let nis = ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy, gps.timestamp);
                 // Fixed GPS velocity std
                 ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
+
+                // Correct yaw from GPS velocity to handle phone rotation during driving
+                // Blend factor 0.7 = aggressive correction for quick realignment
+                ekf.correct_yaw_from_gps_velocity(gps.speed, gps.bearing.to_radians(), 5.0, 0.7);
+
                 // Clamp vertical velocity aggressively for land vehicle
                 ekf.zero_vertical_velocity(1e-4);
 
