@@ -66,6 +66,10 @@ struct Args {
     /// Output directory for written roughness files (defaults to golden/roughness_updated)
     #[arg(long)]
     output_dir: Option<PathBuf>,
+
+    /// Skip N-1 out of every N GPS fixes (1 = no decimation, 10 = use 10% of fixes)
+    #[arg(long, default_value = "1")]
+    gps_decimation: u32,
 }
 
 #[derive(Deserialize)]
@@ -237,6 +241,24 @@ fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
     (sum_sq / pairs.len() as f64).sqrt()
 }
 
+fn rmse_values(values: &[f64]) -> f64 {
+    if values.is_empty() {
+        return f64::INFINITY;
+    }
+    let sum_sq: f64 = values.iter().map(|v| v * v).sum();
+    (sum_sq / values.len() as f64).sqrt()
+}
+
+/// Convert lat/lon to local ENU meters relative to origin
+fn latlon_to_enu(lat: f64, lon: f64, origin_lat: f64, origin_lon: f64) -> (f64, f64) {
+    const R: f64 = 6_371_000.0;
+    let d_lat = (lat - origin_lat).to_radians();
+    let d_lon = (lon - origin_lon).to_radians();
+    let east = R * d_lon * origin_lat.to_radians().cos();
+    let north = R * d_lat;
+    (east, north)
+}
+
 // 2nd-order high-pass filter (Butterworth 3 Hz @ 50 Hz sample rate) for road roughness
 struct HighPassFilter {
     x1: f64,
@@ -365,6 +387,21 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
     let mut mag_fires: u64 = 0;
     let mut baro_fires: u64 = 0;
 
+    // Change 1: Position RMSE tracking
+    let mut position_errors = Vec::new();
+    let mut origin_lat: Option<f64> = None;
+    let mut origin_lon: Option<f64> = None;
+
+    // Change 2: Pre-update velocity RMSE tracking
+    let mut velocity_pairs_pre = Vec::new();
+
+    // Change 3: GPS decimation tracking
+    let mut gps_fix_counter: u32 = 0;
+    let mut gps_fixes_fed: u32 = 0;
+    let mut gps_fixes_withheld: u32 = 0;
+    let mut total_gps_fixes: u32 = 0;
+    let mut gps_gap_samples = Vec::new();
+
     for r in &log.readings {
         if let Some(acc) = r.accel.as_ref() {
             ekf.predict((acc.x, acc.y, acc.z), (0.0, 0.0, 0.0));
@@ -491,10 +528,33 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
             }
         }
         if let Some(gps) = r.gps.as_ref() {
+            total_gps_fixes += 1;
+            gps_fix_counter += 1;
+
+            // Set origin on first GPS fix
+            if origin_lat.is_none() {
+                origin_lat = Some(gps.latitude);
+                origin_lon = Some(gps.longitude);
+                ekf.set_origin(gps.latitude, gps.longitude, 0.0);
+            }
+
+            let origin_lat_val = origin_lat.unwrap();
+            let origin_lon_val = origin_lon.unwrap();
+
+            // Change 1: Compute position error BEFORE GPS update
+            let ekf_state = ekf.get_state();
+            let (ekf_e, ekf_n) = (ekf_state.position.0, ekf_state.position.1); // Already in local meters
+            let (gps_e, gps_n) = latlon_to_enu(gps.latitude, gps.longitude, origin_lat_val, origin_lon_val);
+            let pos_err_m = ((ekf_e - gps_e).powi(2) + (ekf_n - gps_n).powi(2)).sqrt();
+            position_errors.push(pos_err_m);
+
+            // Change 2: Pre-update velocity RMSE (before any updates)
             let vx_before = ekf.state[3];
             let vy_before = ekf.state[4];
             let vz_before = ekf.state[5];
             let speed_before = (vx_before * vx_before + vy_before * vy_before + vz_before * vz_before).sqrt();
+            velocity_pairs_pre.push((speed_before, gps.speed));
+
             let bearing_rad = gps.bearing.to_radians();
             let vx_meas = gps.speed * bearing_rad.sin();
             let vy_meas = gps.speed * bearing_rad.cos();
@@ -505,99 +565,127 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                 max_innov_norm = innov_norm;
             }
 
-            // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
-            if gps.speed > 5.0 {
-                let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
-                // Extract current yaw
-                let qw = ekf.state[6];
-                let qx = ekf.state[7];
-                let qy = ekf.state[8];
-                let qz = ekf.state[9];
-                let siny_cosp = 2.0 * (qw * qz + qx * qy);
-                let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
-                let yaw_before = siny_cosp.atan2(cosy_cosp);
+            // Change 3: GPS decimation logic
+            let feed_this_fix = (gps_fix_counter % args.gps_decimation) == 0 || gps_fix_counter == 1;
 
-                // Yaw measurement update (scalar)
-                let mut innov = target_yaw - yaw_before;
-                while innov > std::f64::consts::PI {
-                    innov -= 2.0 * std::f64::consts::PI;
+            if feed_this_fix {
+                gps_fixes_fed += 1;
+
+                // Yaw debug and forcing: target yaw = 90° - bearing (ENU CCW)
+                if gps.speed > 5.0 {
+                    let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
+                    // Extract current yaw
+                    let qw = ekf.state[6];
+                    let qx = ekf.state[7];
+                    let qy = ekf.state[8];
+                    let qz = ekf.state[9];
+                    let siny_cosp = 2.0 * (qw * qz + qx * qy);
+                    let cosy_cosp = 1.0 - 2.0 * (qy * qy + qz * qz);
+                    let yaw_before = siny_cosp.atan2(cosy_cosp);
+
+                    // Yaw measurement update (scalar)
+                    let mut innov = target_yaw - yaw_before;
+                    while innov > std::f64::consts::PI {
+                        innov -= 2.0 * std::f64::consts::PI;
+                    }
+                    while innov < -std::f64::consts::PI {
+                        innov += 2.0 * std::f64::consts::PI;
+                    }
+                    let _r_yaw = 0.1; // rad^2
+                    // Simple scalar Kalman update on yaw, assuming small-angle approx on quaternion z component
+                    // For robustness, just overwrite quaternion with target yaw (as measurement) and skip cov math here
+                    let half = target_yaw * 0.5;
+                    ekf.state[6] = half.cos();
+                    ekf.state[7] = 0.0;
+                    ekf.state[8] = 0.0;
+                    ekf.state[9] = half.sin();
+
+                    let siny_cosp2 = 2.0 * (ekf.state[6] * ekf.state[9] + ekf.state[7] * ekf.state[8]);
+                    let cosy_cosp2 = 1.0 - 2.0 * (ekf.state[8] * ekf.state[8] + ekf.state[9] * ekf.state[9]);
+                    let yaw_after = siny_cosp2.atan2(cosy_cosp2);
+
+                    if yaw_debug_lines < 10 {
+                        println!(
+                            "[YAW ALIGN] bearing={:.1}° target={:.1}° before={:.1}° after={:.1}° innov={:.2} rad",
+                            gps.bearing,
+                            target_yaw.to_degrees(),
+                            yaw_before.to_degrees(),
+                            yaw_after.to_degrees(),
+                            innov
+                        );
+                        yaw_debug_lines += 1;
+                    }
                 }
-                while innov < -std::f64::consts::PI {
-                    innov += 2.0 * std::f64::consts::PI;
+
+                ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
+                // Fixed GPS velocity std
+                ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
+                // Clamp vertical velocity aggressively for land vehicle
+                ekf.zero_vertical_velocity(1e-4);
+            } else {
+                gps_fixes_withheld += 1;
+            }
+
+            // Track GPS gap and log errors after post-update velocity (only if fix was fed)
+            if feed_this_fix {
+                let vx_after = ekf.state[3];
+                let vy_after = ekf.state[4];
+                let vz_after = ekf.state[5];
+                let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2)).sqrt();
+                if delta_v > max_delta_v {
+                    max_delta_v = delta_v;
                 }
-                let _r_yaw = 0.1; // rad^2
-                // Simple scalar Kalman update on yaw, assuming small-angle approx on quaternion z component
-                // For robustness, just overwrite quaternion with target yaw (as measurement) and skip cov math here
-                let half = target_yaw * 0.5;
-                ekf.state[6] = half.cos();
-                ekf.state[7] = 0.0;
-                ekf.state[8] = 0.0;
-                ekf.state[9] = half.sin();
+                let speed_after = (vx_after * vx_after + vy_after * vy_after + vz_after * vz_after).sqrt();
 
-                let siny_cosp2 = 2.0 * (ekf.state[6] * ekf.state[9] + ekf.state[7] * ekf.state[8]);
-                let cosy_cosp2 = 1.0 - 2.0 * (ekf.state[8] * ekf.state[8] + ekf.state[9] * ekf.state[9]);
-                let yaw_after = siny_cosp2.atan2(cosy_cosp2);
+                // Post-update velocity tracking (old RMSE metric, kept for compatibility)
+                paired.push((speed_after, gps.speed));
 
-                if yaw_debug_lines < 10 {
+                if yaw_debug_lines < 5 {
                     println!(
-                        "[YAW ALIGN] bearing={:.1}° target={:.1}° before={:.1}° after={:.1}° innov={:.2} rad",
-                        gps.bearing,
-                        target_yaw.to_degrees(),
-                        yaw_before.to_degrees(),
-                        yaw_after.to_degrees(),
-                        innov
+                        "[GPS_VEL] t={:.1} pre=({:.1},{:.1},{:.1}) |{:.1}| innov=({:.1},{:.1}) post=({:.1},{:.1},{:.1}) |{:.1}|",
+                        gps.timestamp,
+                        vx_before, vy_before, vz_before, speed_before,
+                        innov_x, innov_y,
+                        vx_after, vy_after, vz_after, speed_after
                     );
-                    yaw_debug_lines += 1;
                 }
-            }
 
-            ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy);
-            // Fixed GPS velocity std
-            ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
-            // Clamp vertical velocity aggressively for land vehicle
-            ekf.zero_vertical_velocity(1e-4);
-
-            // Track GPS gap and log errors after post-update velocity is available
-            let vx_after = ekf.state[3];
-            let vy_after = ekf.state[4];
-            let vz_after = ekf.state[5];
-            let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2)).sqrt();
-            if delta_v > max_delta_v {
-                max_delta_v = delta_v;
-            }
-            let speed_after = (vx_after * vx_after + vy_after * vy_after + vz_after * vz_after).sqrt();
-            if yaw_debug_lines < 5 {
-                println!(
-                    "[GPS_VEL] t={:.1} pre=({:.1},{:.1},{:.1}) |{:.1}| innov=({:.1},{:.1}) post=({:.1},{:.1},{:.1}) |{:.1}|",
-                    gps.timestamp,
-                    vx_before, vy_before, vz_before, speed_before,
-                    innov_x, innov_y,
-                    vx_after, vy_after, vz_after, speed_after
-                );
-            }
-
-            // Track GPS gap
-            if let Some(last) = last_gps_ts {
-                let gap = gps.timestamp - last;
-                if gap > max_gps_gap {
-                    max_gps_gap = gap;
-                }
                 // Per-fix error logging (pre/post vs GPS ENU velocity)
                 let err_pre =
                     ((vx_before - vx_meas).powi(2) + (vy_before - vy_meas).powi(2)).sqrt();
                 let err_post =
                     ((vx_after - vx_meas).powi(2) + (vy_after - vy_meas).powi(2)).sqrt();
-                println!(
-                    "[ERR] t={:.1} gap={:.2}s err_pre={:.2} err_post={:.2} gps_speed={:.1}",
-                    gps.timestamp,
-                    gap,
-                    err_pre,
-                    err_post,
-                    gps.speed
-                );
+
+                if let Some(last) = last_gps_ts {
+                    let gap = gps.timestamp - last;
+                    println!(
+                        "[ERR] t={:.1} gap={:.2}s err_pre={:.2} err_post={:.2} gps_speed={:.1} pos_err={:.2}m",
+                        gps.timestamp,
+                        gap,
+                        err_pre,
+                        err_post,
+                        gps.speed,
+                        pos_err_m
+                    );
+                }
+
+                last_gps_ts = Some(gps.timestamp);
+                last_gps_speed = gps.speed;
+            } else {
+                // Track gap even for withheld fixes
+                if let Some(last) = last_gps_ts {
+                    let gap = gps.timestamp - last;
+                    gps_gap_samples.push(gap);
+                }
             }
-            last_gps_ts = Some(gps.timestamp);
-            last_gps_speed = gps.speed;
+
+            // Track GPS gap for all fixes (fed or withheld)
+            if let Some(last) = last_gps_ts {
+                let gap = gps.timestamp - last;
+                if gap > max_gps_gap {
+                    max_gps_gap = gap;
+                }
+            }
 
             // Track recent GPS speeds for sanity gate
             recent_gps.push_back((gps.timestamp, gps.speed));
@@ -646,9 +734,20 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         ekf_speeds.push(cur_speed);
     }
 
-    let rmse_val = rmse_pairs(&paired);
+    // Compute all RMSE metrics
+    let position_rmse_m = rmse_values(&position_errors);
+    let velocity_rmse_pre_update_mps = rmse_pairs(&velocity_pairs_pre);
+    let velocity_rmse_post_update_mps = rmse_pairs(&paired);
+
     let max_ekf: f64 = ekf_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
     let max_gps: f64 = gps_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
+
+    // Compute mean GPS gap for decimation testing
+    let mean_gps_gap = if gps_gap_samples.is_empty() {
+        0.0
+    } else {
+        gps_gap_samples.iter().sum::<f64>() / gps_gap_samples.len() as f64
+    };
 
     Ok(json!({
         "log": path.display().to_string(),
@@ -657,7 +756,21 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "clamp_scale": args.clamp_scale,
         "clamp_offset": args.clamp_offset,
         "clamp_interval": args.clamp_interval,
-        "rmse": rmse_val,
+
+        // New corrected metrics
+        "position_rmse_m": position_rmse_m,
+        "velocity_rmse_pre_update_mps": velocity_rmse_pre_update_mps,
+        "velocity_rmse_post_update_mps": velocity_rmse_post_update_mps,
+
+        // GPS decimation metadata
+        "gps_decimation": args.gps_decimation,
+        "total_gps_fixes": total_gps_fixes,
+        "gps_fixes_fed": gps_fixes_fed,
+        "gps_fixes_withheld": gps_fixes_withheld,
+        "mean_gps_gap_secs": mean_gps_gap,
+
+        // Legacy/compatibility fields (kept to not break existing scripts)
+        "rmse": velocity_rmse_post_update_mps,  // OLD: was mislabeled as "position RMSE"
         "max_ekf": max_ekf,
         "max_gps": max_gps,
         "pairs": paired.len(),
