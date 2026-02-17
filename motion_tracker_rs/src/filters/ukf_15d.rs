@@ -231,7 +231,8 @@ impl Ukf15d {
         // SECURITY CLAMP: same as EKF
         if self.dt > 0.5 {
             let scalar = self.dt / 0.02;
-            let noise_growth = 1.0 * scalar;
+            // Fix #8: Match EKF behavior for consistent shadow-mode comparison
+            let noise_growth = 0.1 * scalar;
 
             self.covariance[(0, 0)] += noise_growth;
             self.covariance[(1, 1)] += noise_growth;
@@ -253,7 +254,8 @@ impl Ukf15d {
             1.5
         };
         let accel_var_dyn = accel_std * accel_std;
-        let q_pos_dyn = (1000.0 * 0.25 * self.dt.powi(4) * accel_var_dyn).max(1e-5);
+        // Fix #2: Match EKF process noise for valid shadow-mode comparison
+        let q_pos_dyn = (5000.0 * 0.25 * self.dt.powi(4) * accel_var_dyn).max(1e-5);
         for i in 0..3 {
             self.process_noise[(i, i)] = q_pos_dyn;
         }

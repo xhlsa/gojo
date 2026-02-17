@@ -1468,12 +1468,9 @@ async fn main() -> Result<()> {
                     }
                 }
 
-                // Feed raw accel to 15D filter (EKF handles gravity via quaternion)
-                // Use filtered_vec (low-pass but NOT gravity-corrected) - 15D subtracts its own bias estimate
-                ekf_15d.predict(
-                    (filtered_vec.x, filtered_vec.y, filtered_vec.z),
-                    (0.0, 0.0, 0.0),
-                );
+                // DON'T predict here - wait for gyro to arrive so we have synchronized accel+gyro
+                // Prediction happens in gyro loop (line ~1808) when both sensors are available
+                // This prevents double-prediction which causes 2x drift accumulation
 
                 // Magnetometer yaw assist during GPS gaps (>3s)
                 let gps_gap = if let Some(ts) = last_gps_fix_ts {
@@ -1713,8 +1710,16 @@ async fn main() -> Result<()> {
                     && raw_accel_mag < zupt_accel_threshold_high;
                 let surface_smooth = avg_roughness < 0.5;
 
+                // BUG FIX #2: Add gyro magnitude check for true ZUPT conditions
+                // Prevent gravity calibration corruption during vehicle motion before GPS locks
+                let gyro_mag = (last_gyro_raw.0 * last_gyro_raw.0
+                    + last_gyro_raw.1 * last_gyro_raw.1
+                    + last_gyro_raw.2 * last_gyro_raw.2)
+                    .sqrt();
+                let is_truly_stationary = is_still && surface_smooth && ekf_speed < 0.1 && gyro_mag < 0.1;
+
                 // ===== DYNAMIC GRAVITY CALIBRATION: Accumulate samples during stillness =====
-                if is_still && surface_smooth && ekf_speed < 0.1 {
+                if is_truly_stationary {
                     // Accumulate filtered accel reading (before gravity subtraction) for gravity refinement
                     dyn_calib.accumulate(filtered_vec.x, filtered_vec.y, filtered_vec.z);
 
@@ -1794,11 +1799,28 @@ async fn main() -> Result<()> {
                 if let Some(last) = readings.last_mut() {
                     last.gyro = Some(gyro.clone());
 
-                    // Feed gyro to 15D filter (raw gyro with bias subtraction - 15D estimates gyro bias)
-                    ekf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+                    // Extract buffered accel from last reading to combine with gyro in predict()
+                    // EKF-15D handles gravity internally via quaternion, so use RAW accel (no gravity subtraction)
+                    let accel_tuple = if let Some(ref accel_data) = last.accel {
+                        (accel_data.x, accel_data.y, accel_data.z)
+                    } else {
+                        (0.0, 0.0, 9.81)  // Fallback to gravity vector
+                    };
+
+                    // Calculate dynamic dt from actual sensor timestamps (Fix #1: HIGH priority)
+                    // This ensures process noise scaling matches real sensor timing
+                    if let Some(prev_ts) = last_gyro_ts {
+                        let dt = (gyro.timestamp - prev_ts).max(0.001).min(0.5);
+                        ekf_15d.dt = dt;
+                        ukf_15d.dt = dt;
+                    }
+
+                    // Feed accel+gyro to 15D filter (RAW gyro - EKF estimates bias internally)
+                    // CRITICAL: Must use RAW gyro (gyro.x, gyro.y, gyro.z) NOT corrected values
+                    ekf_15d.predict(accel_tuple, (gyro.x, gyro.y, gyro.z));
 
                     // Feed same data to shadow UKF (runs in parallel)
-                    ukf_15d.predict((0.0, 0.0, 0.0), (corrected_gx, corrected_gy, corrected_gz));
+                    ukf_15d.predict(accel_tuple, (gyro.x, gyro.y, gyro.z));
 
                     // Conditional Bias Update (ZUPT)
                     if last_accel_mag_raw > 9.5 && last_accel_mag_raw < 10.1 && gyro_mag < 0.1 {
@@ -2045,6 +2067,10 @@ async fn main() -> Result<()> {
                                     nis_min = nis_min.min(gps_nis);
                                     nis_max = nis_max.max(gps_nis);
                                 }
+                            } else {
+                                // BUG FIX #1: Skip ALL GPS processing for truly rejected samples
+                                // This prevents partial updates (velocity constraints without position)
+                                continue;
                             }
                         } else {
                             // Accept GPS update
@@ -2056,6 +2082,17 @@ async fn main() -> Result<()> {
                             ukf_15d.update_gps((gps_proj_lat, gps_proj_lon, 0.0), gps.accuracy, gps.timestamp);
                             ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
                             ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+
+                            // Fix #5: Correct yaw from GPS velocity (consistent with replay mode)
+                            // Only apply during sustained motion to avoid noise at low speeds
+                            if gps.speed > 5.0 && gps.accuracy < 15.0 {
+                                ekf_15d.correct_yaw_from_gps_velocity(
+                                    gps.speed,
+                                    gps.bearing.to_radians(),
+                                    5.0,  // min_speed threshold
+                                    0.3   // blend_factor (softer than replay's 0.7 for real-time stability)
+                                );
+                            }
 
                             // Track NIS statistics for filter consistency monitoring
                             if gps_nis.is_finite() {
@@ -2100,9 +2137,8 @@ async fn main() -> Result<()> {
                         // Reset heading rate estimator when near stationary
                         heading_rate_est.reset();
                     } else {
-                        // GPS Velocity Update (fixed R)
-                        ekf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
-                        ukf_15d.update_gps_velocity(gps.speed, gps.bearing.to_radians(), GPS_VEL_STD);
+                        // Fix #6: GPS velocity already updated in acceptance block (lines 2071-2072)
+                        // Only apply vertical velocity constraint here to avoid double-update
                         // Land vehicle assumption: clamp vertical velocity tightly
                         ekf_15d.zero_vertical_velocity(1e-4);
                         ukf_15d.zero_vertical_velocity(1e-4);

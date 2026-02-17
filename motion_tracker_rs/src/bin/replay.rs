@@ -6,10 +6,9 @@ use clap::Parser;
 use flate2::read::GzDecoder;
 use flate2::write::GzEncoder;
 use flate2::Compression;
-use motion_tracker_rs::filters::ekf_15d::Ekf15d;
+use motion_tracker_rs::sensor_fusion::{FusionConfig, SensorFusion};
 use serde::Deserialize;
 use serde_json::Value;
-use motion_tracker_rs::types;
 use serde_json::json;
 use std::collections::VecDeque;
 
@@ -177,7 +176,6 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
     let mut first_accel_idx: Option<usize> = None;
 
     for (idx, r) in readings.iter_mut().enumerate() {
-        // Compute roughness from accel if present, otherwise carry forward last value.
         if let Some(gps) = r.get("gps").and_then(|g| g.as_object()) {
             if let Some(spd) = gps.get("speed").and_then(|v| v.as_f64()) {
                 _last_gps_speed = spd;
@@ -195,15 +193,12 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
                 current_rough = est.update(ax, ay, az);
             }
         }
-
-        // Assign the latest roughness to every reading (propagate to GPS rows).
         let value_to_store = current_rough;
         r.as_object_mut()
             .expect("reading should be object")
             .insert("roughness".to_string(), serde_json::Value::from(value_to_store));
     }
 
-    // Backfill only the rows before the first accelerometer sample so early GPS points get color.
     if let Some(accel_idx) = first_accel_idx {
         if let Some(first_val) = readings
             .get(accel_idx)
@@ -237,14 +232,6 @@ fn recompute_and_write_roughness(path: &Path, output_dir: Option<&Path>) -> anyh
     Ok(())
 }
 
-fn rmse_pairs(pairs: &[(f64, f64)]) -> f64 {
-    if pairs.is_empty() {
-        return f64::INFINITY;
-    }
-    let sum_sq: f64 = pairs.iter().map(|(a, b)| (a - b).powi(2)).sum();
-    (sum_sq / pairs.len() as f64).sqrt()
-}
-
 // 2nd-order high-pass filter (Butterworth 3 Hz @ 50 Hz sample rate) for road roughness
 struct HighPassFilter {
     x1: f64,
@@ -264,7 +251,6 @@ impl HighPassFilter {
     }
 
     fn filter(&mut self, x: f64) -> f64 {
-        // Coefficients from scipy.signal.butter(2, 3, 'high', fs=50)
         const B: [f64; 3] = [0.8371, -1.6742, 0.8371];
         const A: [f64; 3] = [1.0, -1.6475, 0.7009];
 
@@ -303,22 +289,17 @@ impl RoughnessEstimator {
     }
 
     fn update(&mut self, ax: f64, ay: f64, az: f64) -> f64 {
-        // High-pass each axis to isolate vibration content
         let hx = self.hp_x.filter(ax);
         let hy = self.hp_y.filter(ay);
         let hz = self.hp_z.filter(az);
 
-        // Accumulate squared magnitude into a sliding window
         let vib_sq = hx * hx + hy * hy + hz * hz;
         self.window.push_back(vib_sq);
         if self.window.len() > self.window_size {
             self.window.pop_front();
         }
 
-        // RMS of the high-passed magnitude
         let rms = (self.window.iter().sum::<f64>() / self.window.len().max(1) as f64).sqrt();
-
-        // Smooth for stability
         self.ewma = self.alpha * rms + (1.0 - self.alpha) * self.ewma;
         self.ewma
     }
@@ -339,6 +320,14 @@ fn get_memory_mb() -> f64 {
     0.0
 }
 
+fn latlon_to_enu(lat: f64, lon: f64, ref_lat: f64, ref_lon: f64) -> (f64, f64) {
+    let dlat = (lat - ref_lat).to_radians();
+    let dlon = (lon - ref_lon).to_radians();
+    let east = dlon * 6371000.0 * ref_lat.to_radians().cos();
+    let north = dlat * 6371000.0;
+    (east, north)
+}
+
 fn local_to_global(lat_ref: f64, lon_ref: f64, north: f64, east: f64) -> (f64, f64) {
     const R: f64 = 6371000.0;
     let d_lat = north / R;
@@ -349,201 +338,236 @@ fn local_to_global(lat_ref: f64, lon_ref: f64, north: f64, east: f64) -> (f64, f
     )
 }
 
-fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
-    let log = load_log(path)?;
-    // dt set to 0.02s (50 Hz) by default; adjust if your log differs
-    let mut ekf = Ekf15d::new(0.02, 8.0, 3.0, 0.0005);
-    // Override velocity process noise
-    for i in 3..6 {
-        ekf.process_noise[(i, i)] = args.q_vel;
+fn rmse_vec(errors_sq: &[f64]) -> f64 {
+    if errors_sq.is_empty() {
+        return f64::INFINITY;
+    }
+    (errors_sq.iter().sum::<f64>() / errors_sq.len() as f64).sqrt()
+}
+
+// ---------------------------------------------------------------------------
+// Calibration helper: derive gravity & gyro bias from the first N stationary
+// samples at the start of the session log.
+// ---------------------------------------------------------------------------
+fn calibrate_from_warmup(readings: &[Reading]) -> ((f64, f64, f64), (f64, f64, f64)) {
+    let mut ax_sum = 0.0;
+    let mut ay_sum = 0.0;
+    let mut az_sum = 0.0;
+    let mut a_count = 0usize;
+    let mut gx_sum = 0.0;
+    let mut gy_sum = 0.0;
+    let mut gz_sum = 0.0;
+    let mut g_count = 0usize;
+
+    // Collect the first ~50 stationary accel/gyro samples for calibration.
+    // Two-pass approach:
+    //   1. Find the first reading with accel data
+    //   2. Collect up to 50 samples, stopping if accel magnitude deviates
+    //      from gravity (indicating movement) or GPS shows speed > 1
+    let mut found_imu = false;
+    for r in readings.iter() {
+        if r.accel.is_some() {
+            found_imu = true;
+        }
+        if !found_imu {
+            continue; // skip GPS-only readings at the start
+        }
+        if let Some(gps) = r.gps.as_ref() {
+            if gps.speed > 1.0 && a_count > 0 {
+                break;
+            }
+        }
+        if let Some(a) = r.accel.as_ref() {
+            let mag = (a.x * a.x + a.y * a.y + a.z * a.z).sqrt();
+            // Only use samples near gravity magnitude (stationary)
+            if mag < 9.0 || mag > 10.5 {
+                if a_count > 5 {
+                    break; // movement detected, stop collecting
+                }
+                continue; // skip this sample
+            }
+            ax_sum += a.x;
+            ay_sum += a.y;
+            az_sum += a.z;
+            a_count += 1;
+        }
+        if let Some(g) = r.gyro.as_ref() {
+            gx_sum += g.x;
+            gy_sum += g.y;
+            gz_sum += g.z;
+            g_count += 1;
+        }
+        if a_count >= 50 && g_count >= 50 {
+            break;
+        }
     }
 
-    // Open CSV for debug logging
-    let mut csv_file = File::create("replay_log.csv")?;
-    writeln!(csv_file, "timestamp,raw_lat,raw_lon,raw_accel_x,raw_accel_y,ekf_lat,ekf_lon,ekf_vel_x,ekf_vel_y")?;
+    let gravity = if a_count > 0 {
+        (ax_sum / a_count as f64, ay_sum / a_count as f64, az_sum / a_count as f64)
+    } else {
+        (0.0, 0.0, 9.81)
+    };
+    let gyro_bias = if g_count > 0 {
+        (gx_sum / g_count as f64, gy_sum / g_count as f64, gz_sum / g_count as f64)
+    } else {
+        (0.0, 0.0, 0.0)
+    };
+    (gravity, gyro_bias)
+}
+
+// ---------------------------------------------------------------------------
+// Main replay loop — now uses SensorFusion
+// ---------------------------------------------------------------------------
+fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
+    let log = load_log(path)?;
+
+    // Build FusionConfig from CLI args + defaults
+    let config = FusionConfig {
+        q_vel: args.q_vel,
+        gps_vel_std: args.gps_vel_std,
+        normal_clamp_scale: args.clamp_scale,
+        normal_clamp_offset: args.clamp_offset,
+        enable_mag: args.enable_mag,
+        enable_baro: args.enable_baro,
+        ..FusionConfig::default()
+    };
+
+    let mut fusion = SensorFusion::new(config);
+
+    // Calibrate from warmup samples
+    let (gravity, gyro_bias) = calibrate_from_warmup(&log.readings);
+    fusion.set_biases(gravity, gyro_bias);
+
+    // Replay-local tracking
     let mut replay_origin: Option<(f64, f64)> = None;
+    let mut ref_latlon: Option<(f64, f64)> = None;
+    let mut gps_counter = 0u32;
+    let mut total_gps_fixes = 0u32;
+    let mut gps_fixes_fed = 0u32;
 
-    let mut ekf_speeds = Vec::new();
-    let mut gps_speeds = Vec::new();
-    let mut paired = Vec::new();
-    let mut recent_gps: VecDeque<(f64, f64)> = VecDeque::new(); // (timestamp, speed)
-    let window_sec = 10.0;
-    let mut last_speed_clamp_ts: f64 = -1.0;
-    let mut last_nhc_ts: f64 = -1.0;
-    let mut max_innov_norm = 0.0;
-    let mut max_delta_v = 0.0;
-    let mut _yaw_debug_lines = 0;
-    let mut max_speed_ts = 0.0;
-    let mut max_speed_val = 0.0;
-    let mut clamp_count = 0u64;
-    let mut roughness_estimator = RoughnessEstimator::new(50, 0.1); // 1s window @50Hz, light EWMA
-    let mut last_gps_ts: Option<f64> = None;
-    let mut last_gps_speed: f64 = 0.0;
-    let mut last_gps_bearing: f64 = 0.0;
-    let mut _latest_mag: Option<MagData> = None;
-    let mut max_gps_gap = 0.0;
-    let mut in_gap_mode: bool = false;
-    let mut last_baro: Option<(f64, f64)> = None; // (timestamp, pressure_hpa)
-    let mut peak_mem_mb = get_memory_mb();
-    let mut sample_counter = 0u32;
-    let mut mag_fires: u64 = 0;
-    let mut baro_fires: u64 = 0;
-    let mut gps_counter = 0u32; // Decimation counter for GPS denial simulation
-    let mut ground_truth_gps: Vec<(f64, f64, f64)> = Vec::new(); // (timestamp, lat, lon) for all GPS samples
-    let mut trajectory: Vec<serde_json::Value> = Vec::new(); // Collect trajectory points for output
-    let mut gps_gap_start: Option<f64> = None; // Track when GPS gap started
+    // RMSE accumulators
+    let mut position_errors_sq: Vec<f64> = Vec::new();
+    let mut velocity_errors_pre_sq: Vec<f64> = Vec::new();
+    let mut velocity_errors_post_sq: Vec<f64> = Vec::new();
 
-    // NIS (Normalized Innovation Squared) tracking for filter consistency
+    // Predicted position RMSE: only includes GPS fixes where IMU prediction ran
+    let mut predicted_position_errors_sq: Vec<f64> = Vec::new();
+    let mut had_predict_since_last_gps = false;
+
+    // NIS tracking (read from EKF after each fed GPS update)
     let mut nis_sum: f64 = 0.0;
     let mut nis_count: u32 = 0;
     let mut nis_min: f64 = f64::INFINITY;
     let mut nis_max: f64 = 0.0;
-    let mut nis_values: Vec<f64> = Vec::new(); // Store all NIS values for analysis
-    let mut last_reading_ts: Option<f64> = None;
+    let mut nis_values: Vec<f64> = Vec::new();
+
+    // Speed / gap tracking
+    let mut max_innov_norm = 0.0;
+    let mut max_delta_v = 0.0;
+    let mut max_gps_gap = 0.0;
+    let mut last_fed_gps_ts: Option<f64> = None;
+    let mut max_speed_ts = 0.0;
+    let mut max_speed_val = 0.0;
+    let mut gps_speeds: Vec<f64> = Vec::new();
+    let mut ekf_speeds: Vec<f64> = Vec::new();
+    let mut paired: Vec<(f64, f64)> = Vec::new();
+    let mut peak_mem_mb = get_memory_mb();
+    let mut sample_counter = 0u32;
+
+    // Trajectory output
+    let mut trajectory: Vec<serde_json::Value> = Vec::new();
 
     for r in &log.readings {
-        // Track GPS gap for adaptive process noise
-        let current_gap = last_gps_ts
-            .map(|ts| (r.timestamp - ts).max(0.0))
-            .unwrap_or(0.0);
-        let in_gps_gap = current_gap > 3.0;
-
-        // Update dt from actual timestamp differences
-        if let Some(last_ts) = last_reading_ts {
-            let dt = (r.timestamp - last_ts).max(0.001).min(0.5); // Clamp to 1ms-500ms
-            ekf.dt = dt;
-        }
-        last_reading_ts = Some(r.timestamp);
-
-        // CRITICAL: Combine accel and gyro into single predict() call
-        // Splitting them breaks rotation matrix integration and causes massive drift
-        let accel = r.accel.as_ref().map(|a| (a.x, a.y, a.z)).unwrap_or((0.0, 0.0, 0.0));
-        let gyro = r.gyro.as_ref().map(|g| (g.x, g.y, g.z)).unwrap_or((0.0, 0.0, 0.0));
-
-        ekf.predict(accel, gyro);
-
+        // --- Feed accel through SensorFusion ---
         if let Some(acc) = r.accel.as_ref() {
-            // Feed accel to roughness estimator for road surface diagnostics
-            roughness_estimator.update(acc.x, acc.y, acc.z);
-            // Gap-mode speed ceiling during GPS outages (per prediction clamp)
-            if let Some(ts) = last_gps_ts {
-                let gap = (r.timestamp - ts).max(0.0);
-                if gap > 5.0 || (in_gap_mode && gap > 0.5) {
-                    in_gap_mode = true;
-                }
-                if in_gap_mode {
-                    let limit = if last_gps_speed < 1.0 {
-                        2.0
-                    } else if last_gps_speed < 5.0 {
-                        last_gps_speed * 2.0 + 2.0
-                    } else {
-                        1.1 * last_gps_speed + 2.0
-                    }
-                    .max(2.0);
-                    let ekf_speed = ekf.get_speed();
-                    if ekf_speed > limit {
-                        /* println!(
-                            "[GAP CLAMP] t={:.1}s gap={:.1}s speed {:.1} -> limit {:.1}",
-                            r.timestamp, gap, ekf_speed, limit
-                        ); */
-                        ekf.clamp_speed(limit);
-                    }
-                }
-            } else {
-                in_gap_mode = false;
-            }
-            // Apply NHC at reduced rate (1s) with tight constraint when GPS-aligned
-            if last_nhc_ts < 0.0 || (r.timestamp - last_nhc_ts) >= 1.0 {
-                let nhc_gap = last_gps_ts
-                    .map(|ts| (r.timestamp - ts).max(0.0))
-                    .unwrap_or(999.0);
-                let current_speed = ekf.get_speed();
+            let accel_data = motion_tracker_rs::types::AccelData {
+                timestamp: acc.timestamp,
+                x: acc.x,
+                y: acc.y,
+                z: acc.z,
+            };
+            let _events = fusion.feed_accel(&accel_data);
 
-                // Gate on GPS freshness (< 3s) and vehicle motion (> 2.5 m/s)
-                if nhc_gap < 3.0 && current_speed > 2.5 {
-                    let nhc_r = 0.1;  // Tight constraint when GPS-aligned
-                    let mounting_offset = 0.0;  // Assume phone aligned for replay (no calibration in offline mode)
-                    ekf.update_body_velocity_with_offset(current_speed, mounting_offset, nhc_r);
-                }
-                last_nhc_ts = r.timestamp;
-            }
-        }
-        sample_counter = sample_counter.wrapping_add(1);
-        if sample_counter % 50 == 0 {
-            let cur_mem = get_memory_mb();
-            if cur_mem > peak_mem_mb {
-                peak_mem_mb = cur_mem;
-            }
+            // tick() after each accel (ZUPT + gravity refinement)
+            let _tick_events = fusion.tick();
         }
 
-        // Gyro stationary bias update (gyro already processed in combined predict() above)
+        // --- Feed gyro through SensorFusion ---
         if let Some(g) = r.gyro.as_ref() {
-            ekf.update_stationary_gyro((g.x, g.y, g.z));
+            let gyro_data = motion_tracker_rs::types::GyroData {
+                timestamp: g.timestamp,
+                x: g.x,
+                y: g.y,
+                z: g.z,
+            };
+            let _events = fusion.feed_gyro(&gyro_data);
+            had_predict_since_last_gps = true;
         }
-        // Gap detection once per reading
-        let in_gps_gap = last_gps_ts
-            .map(|ts| (r.timestamp - ts).max(0.0) > 3.0)
-            .unwrap_or(true);
 
-        if args.enable_mag && in_gps_gap {
-            if let Some(m) = r.mag.as_ref() {
-                _latest_mag = Some(m.clone());
-                // Mag yaw assist during GPS gaps when moving
-                if let Some(last) = last_gps_ts {
-                    let gap = (r.timestamp - last).max(0.0);
-                    if gap > 3.0 && ekf.get_speed() > 2.0 && last_gps_speed > 2.0 {
-                        // Tilt compensation based on EKF attitude (roll/pitch from quaternion)
-                        if let Some(_yaw_correction) = ekf.update_mag_heading(
-                            &crate::types::MagData {
-                                timestamp: m.timestamp,
-                                x: m.x,
-                                y: m.y,
-                                z: m.z,
-                            },
-                            0.157, // ~9° declination (Tucson)
-                        ) {
-                            mag_fires += 1;
-                            _yaw_debug_lines += 1;
-                        }
-                    }
-                }
+        // --- Feed mag through SensorFusion ---
+        if let Some(m) = r.mag.as_ref() {
+            let mag_data = motion_tracker_rs::types::MagData {
+                timestamp: m.timestamp,
+                x: m.x,
+                y: m.y,
+                z: m.z,
+            };
+            fusion.feed_mag(&mag_data);
+        }
+
+        // --- Feed baro through SensorFusion ---
+        if let Some(b) = r.baro.as_ref() {
+            if let Some(pressure) = b.get("pressure_hpa").and_then(|p| p.as_f64()) {
+                let baro_data = motion_tracker_rs::types::BaroData {
+                    timestamp: r.timestamp,
+                    pressure_hpa: pressure,
+                };
+                fusion.feed_baro(&baro_data);
             }
         }
 
-        // Handle barometer for altitude fusion diagnostics
-        if args.enable_baro {
-            if let Some(b) = r.baro.as_ref() {
-                if let Some(pressure) = b.get("pressure_hpa").and_then(|p| p.as_f64()) {
-                    last_baro = Some((r.timestamp, pressure));
-                    baro_fires += 1;
-                }
-            }
-        }
-
+        // --- GPS: decimation + metrics (stays in replay) ---
         if let Some(gps) = r.gps.as_ref() {
-            // Always track ground truth GPS (regardless of decimation)
-            ground_truth_gps.push((r.timestamp, gps.latitude, gps.longitude));
-
-            // Decimation gate: only apply GPS updates at decimated rate
+            total_gps_fixes += 1;
             gps_counter += 1;
-            let gps_decimated = args.gps_decimation == 1 || (gps_counter % args.gps_decimation == 0);
 
-            // Set origin if not set (only on first GPS fix)
+            // Set origin reference on first GPS
             if replay_origin.is_none() {
                 replay_origin = Some((gps.latitude, gps.longitude));
-                ekf.set_origin(gps.latitude, gps.longitude, 0.0);
-                // Initialize EKF from first GPS fix (enables NIS tracking)
-                ekf.initialize_from_gps(gps.latitude, gps.longitude, 0.0, gps.accuracy);
+                ref_latlon = Some((gps.latitude, gps.longitude));
             }
 
-            // GPS init-only mode: only use first GPS fix, ignore all subsequent GPS updates
+            // Pre-update metrics (ALL GPS fixes, BEFORE any fusion.feed_gps)
+            if let Some((rlat, rlon)) = ref_latlon {
+                let (gps_e, gps_n) = latlon_to_enu(gps.latitude, gps.longitude, rlat, rlon);
+                let snap = fusion.get_snapshot();
+                let ekf_e = snap.position.0; // East
+                let ekf_n = snap.position.1; // North
+                let pos_err_sq = (ekf_e - gps_e).powi(2) + (ekf_n - gps_n).powi(2);
+                position_errors_sq.push(pos_err_sq);
+
+                let vel_err_pre = snap.speed - gps.speed;
+                velocity_errors_pre_sq.push(vel_err_pre.powi(2));
+
+                // Only include in predicted RMSE if IMU prediction ran since last GPS
+                if had_predict_since_last_gps {
+                    predicted_position_errors_sq.push(pos_err_sq);
+                }
+            }
+
+            // Decimation gate
+            let gps_decimated = args.gps_decimation == 1
+                || (gps_counter % args.gps_decimation == 0)
+                || gps_counter == 1; // always feed first fix
             let gps_init_only_skip = args.gps_init_only && gps_counter > 1;
 
-            // Only update EKF if GPS passes decimation gate (and not in init-only skip mode)
             if gps_decimated && !gps_init_only_skip {
-                let vx_before = ekf.state[3];
-                let vy_before = ekf.state[4];
-                let vz_before = ekf.state[5];
+                gps_fixes_fed += 1;
+
+                // Capture pre-update velocity for innovation tracking
+                let vx_before = fusion.ekf.state[3];
+                let vy_before = fusion.ekf.state[4];
+                let vz_before = fusion.ekf.state[5];
                 let bearing_rad = gps.bearing.to_radians();
                 let vx_meas = gps.speed * bearing_rad.sin();
                 let vy_meas = gps.speed * bearing_rad.cos();
@@ -554,185 +578,107 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
                     max_innov_norm = innov_norm;
                 }
 
-                // Yaw forcing disabled - let filter learn orientation naturally from IMU
-                // Forcing quaternion corrupts rotation matrix and causes massive position drift
-                // if gps.speed > 5.0 {
-                //     let target_yaw = std::f64::consts::FRAC_PI_2 - bearing_rad;
-                //     let half = target_yaw * 0.5;
-                //     ekf.state[6] = half.cos();
-                //     ekf.state[7] = 0.0;
-                //     ekf.state[8] = 0.0;
-                //     ekf.state[9] = half.sin();
-                // }
+                // Feed GPS through SensorFusion
+                let gps_data = motion_tracker_rs::types::GpsData {
+                    timestamp: gps.timestamp,
+                    latitude: gps.latitude,
+                    longitude: gps.longitude,
+                    speed: gps.speed,
+                    bearing: gps.bearing,
+                    accuracy: gps.accuracy,
+                };
+                let _events = fusion.feed_gps(&gps_data, gps.timestamp);
 
-                let nis = ekf.update_gps((gps.latitude, gps.longitude, 0.0), gps.accuracy, gps.timestamp);
-                // Fixed GPS velocity std
-                ekf.update_gps_velocity(gps.speed, gps.bearing.to_radians(), args.gps_vel_std);
+                // NIS: the EKF computes NIS internally during update_gps.
+                // We need it from the return value. Since feed_gps doesn't
+                // expose it directly, we'll compute a proxy from innovation.
+                // For consistency with the old code, read from the EKF's
+                // last NIS by checking paired speed differences.
+                // Actually, let's track via the velocity delta (delta_v) which
+                // is the observable metric the old code already used.
 
-                // Correct yaw from GPS velocity to handle phone rotation during driving
-                // Blend factor 0.7 = aggressive correction for quick realignment
-                ekf.correct_yaw_from_gps_velocity(gps.speed, gps.bearing.to_radians(), 5.0, 0.7);
+                // Post-update velocity error (FED fixes only)
+                let ekf_speed_post = fusion.get_speed();
+                let vel_err_post = ekf_speed_post - gps.speed;
+                velocity_errors_post_sq.push(vel_err_post.powi(2));
 
-                // Clamp vertical velocity aggressively for land vehicle
-                ekf.zero_vertical_velocity(1e-4);
-
-                // Track NIS statistics for filter consistency monitoring
-                if nis.is_finite() {
-                    nis_sum += nis;
-                    nis_count += 1;
-                    nis_min = nis_min.min(nis);
-                    nis_max = nis_max.max(nis);
-                    nis_values.push(nis);
-                }
-
-                // Log first GPS fix when in init-only mode
-                if args.gps_init_only && gps_counter == 1 {
-                    eprintln!("[GPS-INIT-ONLY] First GPS fix applied at t={:.1}s, lat={:.6}, lon={:.6}",
-                              r.timestamp, gps.latitude, gps.longitude);
-                    eprintln!("[GPS-INIT-ONLY] Entering pure dead reckoning mode - all subsequent GPS fixes ignored");
-                }
-
-                // Track GPS gap and log errors after post-update velocity is available
-                let vx_after = ekf.state[3];
-                let vy_after = ekf.state[4];
-                let vz_after = ekf.state[5];
-                let delta_v = ((vx_after - vx_before).powi(2) + (vy_after - vy_before).powi(2) + (vz_after - vz_before).powi(2)).sqrt();
+                // Track delta_v
+                let vx_after = fusion.ekf.state[3];
+                let vy_after = fusion.ekf.state[4];
+                let vz_after = fusion.ekf.state[5];
+                let delta_v = ((vx_after - vx_before).powi(2)
+                    + (vy_after - vy_before).powi(2)
+                    + (vz_after - vz_before).powi(2))
+                .sqrt();
                 if delta_v > max_delta_v {
                     max_delta_v = delta_v;
                 }
 
-                // Track GPS gap (only for decimated updates)
-                if let Some(last) = last_gps_ts {
+                // Track GPS gap between fed fixes
+                if let Some(last) = last_fed_gps_ts {
                     let gap = gps.timestamp - last;
                     if gap > max_gps_gap {
                         max_gps_gap = gap;
                     }
                 }
-                last_gps_ts = Some(gps.timestamp);
-                last_gps_speed = gps.speed;
-                last_gps_bearing = gps.bearing;
-
-                // Track recent GPS speeds for sanity gate
-                recent_gps.push_back((gps.timestamp, gps.speed));
-                while let Some((ts, _)) = recent_gps.front() {
-                    if gps.timestamp - *ts > window_sec {
-                        recent_gps.pop_front();
-                    } else {
-                        break;
-                    }
-                }
+                last_fed_gps_ts = Some(gps.timestamp);
+                had_predict_since_last_gps = false;
 
                 gps_speeds.push(gps.speed);
-                paired.push((ekf.get_speed(), gps.speed));
+                paired.push((fusion.get_speed(), gps.speed));
             }
         }
 
-        // Velocity sanity gate based on recent GPS envelope
-        // During short GPS gaps: clamp to prevent wild overshoots
-        // During long GPS gaps: enforce constant velocity (last_gps_speed) to prevent drift
-        if let Some(max_gps) = recent_gps.iter().map(|(_, s)| *s).max_by(|a, b| a.partial_cmp(b).unwrap()) {
-            if max_gps > 3.0 {
-                let ekf_speed = ekf.get_speed();
-                let gap_for_clamp = last_gps_ts.map(|ts| (r.timestamp - ts).max(0.0)).unwrap_or(f64::INFINITY);
-
-                if gap_for_clamp < 5.0 {
-                    // Short gap: clamp to prevent overshoot
-                    let scale = 1.5;
-                    let offset = 5.0;
-                    let limit = scale * max_gps + offset;
-                    let min_interval = 0.25;
-                    if ekf_speed > limit && ekf_speed > 1e-3 && (r.timestamp - last_speed_clamp_ts) > min_interval {
-                        ekf.clamp_speed(limit);
-                        last_speed_clamp_ts = r.timestamp;
-                        clamp_count += 1;
-                    }
-                }
-                // Note: During long GPS gaps, velocity drifts due to unmodeled accelerations (road grade, air resistance).
-                // This is expected behavior for GPS-denied scenarios. The filter recovers quickly when GPS returns.
-                // With 10x decimation: RMSE grows to ~4.6m (vs 1.2m baseline), a 4x degradation.
-                // With 20x decimation: RMSE grows to ~5.7m, a 5x degradation.
-                // This is realistic and acceptable performance under GPS denial.
-            }
-        }
-        let cur_speed = ekf.get_speed();
+        // Track speed
+        let cur_speed = fusion.get_speed();
         if cur_speed > max_speed_val {
             max_speed_val = cur_speed;
             max_speed_ts = r.timestamp;
         }
         ekf_speeds.push(cur_speed);
-        
-        // Write to CSV
-        let state = ekf.get_state();
-        let (ekf_lat, ekf_lon) = if let Some((olat, olon)) = replay_origin {
-            local_to_global(olat, olon, state.position.1, state.position.0) // ENU: x=East, y=North
-        } else {
-            (0.0, 0.0)
-        };
-        
-        let (raw_lat, raw_lon) = if let Some(g) = &r.gps {
-            (format!("{}", g.latitude), format!("{}", g.longitude))
-        } else {
-            ("".to_string(), "".to_string())
-        };
-        let (ax, ay) = if let Some(a) = &r.accel {
-            (a.x, a.y)
-        } else {
-            (0.0, 0.0)
-        };
-        
-        writeln!(csv_file, "{},{},{},{},{},{},{},{},{}",
-            r.timestamp,
-            raw_lat, raw_lon,
-            ax, ay,
-            ekf_lat, ekf_lon,
-            state.velocity.0, state.velocity.1
-        )?;
 
-        // Collect trajectory point
-        let yaw = ekf.get_heading().to_degrees();
+        // Memory tracking
+        sample_counter = sample_counter.wrapping_add(1);
+        if sample_counter % 50 == 0 {
+            let cur_mem = get_memory_mb();
+            if cur_mem > peak_mem_mb {
+                peak_mem_mb = cur_mem;
+            }
+        }
+
+        // Trajectory point
+        let snap = fusion.get_snapshot();
         trajectory.push(json!({
             "timestamp": r.timestamp,
-            "ekf_x": state.position.0,
-            "ekf_y": state.position.1,
+            "ekf_x": snap.position.0,
+            "ekf_y": snap.position.1,
             "ekf_velocity": cur_speed,
-            "ekf_heading_deg": yaw,
+            "ekf_heading_deg": snap.heading_deg,
         }));
     }
 
-    let rmse_val = rmse_pairs(&paired);
+    // --- Compute final metrics ---
+    let position_rmse_m = rmse_vec(&position_errors_sq);
+    let predicted_position_rmse_m = rmse_vec(&predicted_position_errors_sq);
+    let predicted_position_fixes = predicted_position_errors_sq.len();
+    let velocity_rmse_pre_update_mps = rmse_vec(&velocity_errors_pre_sq);
+    let velocity_rmse_post_update_mps = rmse_vec(&velocity_errors_post_sq);
+    let rmse_val = if paired.is_empty() {
+        f64::INFINITY
+    } else {
+        let sum_sq: f64 = paired.iter().map(|(a, b)| (a - b).powi(2)).sum();
+        (sum_sq / paired.len() as f64).sqrt()
+    };
     let max_ekf: f64 = ekf_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
     let max_gps: f64 = gps_speeds.iter().copied().fold(0.0_f64, |m, v| m.max(v));
 
-    // Calculate NIS statistics
-    let nis_avg = if nis_count > 0 {
-        nis_sum / (nis_count as f64)
-    } else {
-        0.0
-    };
-
-    // Calculate NIS median
-    let mut nis_sorted = nis_values.clone();
-    nis_sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
-    let nis_median = if nis_sorted.is_empty() {
-        0.0
-    } else if nis_sorted.len() % 2 == 0 {
-        (nis_sorted[nis_sorted.len() / 2 - 1] + nis_sorted[nis_sorted.len() / 2]) / 2.0
-    } else {
-        nis_sorted[nis_sorted.len() / 2]
-    };
-
-    // NIS consistency verdict
-    let nis_verdict = if nis_count == 0 {
-        "NO_DATA"
-    } else if nis_avg > 10.0 {
-        "OVERCONFIDENT"
-    } else if nis_avg < 0.5 {
-        "UNDERCONFIDENT"
-    } else if nis_avg >= 2.0 && nis_avg <= 4.0 {
-        "GOOD"
-    } else {
-        "MARGINAL"
-    };
+    // NIS: We don't have direct NIS from SensorFusion (it's returned by
+    // update_gps inside feed_gps). For now, use delta_v as proxy and mark
+    // NIS as not tracked. In a future iteration, SensorFusion should expose NIS.
+    let nis_avg = 0.0;
+    let nis_median = 0.0;
+    let nis_verdict = "NOT_TRACKED";
+    let _ = (nis_sum, nis_count, nis_min, nis_max, nis_values); // suppress warnings
 
     Ok(json!({
         "log": path.display().to_string(),
@@ -742,8 +688,15 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "clamp_offset": args.clamp_offset,
         "clamp_interval": args.clamp_interval,
         "gps_decimation": args.gps_decimation,
-        "ground_truth_gps_count": ground_truth_gps.len(),
+        "total_gps_fixes": total_gps_fixes,
+        "gps_fixes_fed": gps_fixes_fed,
+        "ground_truth_gps_count": total_gps_fixes,
         "decimated_gps_count": gps_speeds.len(),
+        "position_rmse_m": position_rmse_m,
+        "predicted_position_rmse_m": predicted_position_rmse_m,
+        "predicted_position_fixes": predicted_position_fixes,
+        "velocity_rmse_pre_update_mps": velocity_rmse_pre_update_mps,
+        "velocity_rmse_post_update_mps": velocity_rmse_post_update_mps,
         "rmse": rmse_val,
         "max_ekf": max_ekf,
         "max_gps": max_gps,
@@ -753,20 +706,17 @@ fn run_once(path: &Path, args: &Args) -> anyhow::Result<serde_json::Value> {
         "max_innovation_norm": max_innov_norm,
         "max_delta_v": max_delta_v,
         "max_speed_ts": max_speed_ts,
-        "clamp_count": clamp_count,
         "max_gps_gap": max_gps_gap,
-        "mag_fires": mag_fires,
-        "yaw_debug_lines": _yaw_debug_lines,
-        "baro_fires": baro_fires,
-        "last_baro_pressure_hpa": last_baro.map(|(_, p)| p),
         "peak_memory_mb": peak_mem_mb,
         "final_memory_mb": get_memory_mb(),
         "nis_avg": nis_avg,
         "nis_median": nis_median,
-        "nis_min": if nis_min.is_finite() { nis_min } else { 0.0 },
-        "nis_max": nis_max,
-        "nis_count": nis_count,
+        "nis_min": 0.0,
+        "nis_max": 0.0,
+        "nis_count": 0,
         "nis_verdict": nis_verdict,
+        "predict_count": fusion.predict_count,
+        "zupt_count": fusion.zupt_count,
         "trajectories": trajectory
     }))
 }
@@ -814,36 +764,21 @@ fn main() -> anyhow::Result<()> {
         anyhow::bail!("Provide --log or --golden-dir");
     }
 
-    // Print NIS summary for quick tuning feedback
-    eprintln!("\n=== NIS (Normalized Innovation Squared) Summary ===");
+    // Print summary to stderr
+    eprintln!("\n=== Replay Summary ===");
     for result in &results {
         if let Some(log_name) = result.get("log").and_then(|v| v.as_str()) {
-            let nis_avg = result.get("nis_avg").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let nis_verdict = result.get("nis_verdict").and_then(|v| v.as_str()).unwrap_or("UNKNOWN");
-            let rmse = result.get("rmse").and_then(|v| v.as_f64()).unwrap_or(0.0);
-            let q_vel = result.get("q_vel").and_then(|v| v.as_f64()).unwrap_or(0.0);
-
-            let verdict_emoji = match nis_verdict {
-                "GOOD" => "✅",
-                "MARGINAL" => "⚠️ ",
-                "OVERCONFIDENT" => "❌",
-                "UNDERCONFIDENT" => "⚠️ ",
-                _ => "  ",
-            };
-
+            let pos_rmse = result.get("position_rmse_m").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let vel_pre = result.get("velocity_rmse_pre_update_mps").and_then(|v| v.as_f64()).unwrap_or(0.0);
             eprintln!(
-                "{} {} | NIS: {:.2} ({}) | RMSE: {:.2}m | Q_vel: {:.2}",
-                verdict_emoji,
+                "  {} | pos_rmse={:.2}m vel_pre_rmse={:.2}m/s dec={}",
                 log_name.split('/').last().unwrap_or(log_name),
-                nis_avg,
-                nis_verdict,
-                rmse,
-                q_vel
+                pos_rmse,
+                vel_pre,
+                result.get("gps_decimation").and_then(|v| v.as_u64()).unwrap_or(0),
             );
         }
     }
-    eprintln!("\nTarget NIS: 2.0-4.0 (ideal: ~3.0)");
-    eprintln!("Tuning: Increase Q if OVERCONFIDENT, Decrease Q if UNDERCONFIDENT\n");
 
     println!("{}", serde_json::to_string_pretty(&results)?);
     Ok(())
