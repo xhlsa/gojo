@@ -16,12 +16,18 @@
     <uses-feature android:name="android.hardware.location.gps"        android:required="true" />
 
     <application
+        android:name="com.gojo.core.GojoApp"
         android:allowBackup="false"
         android:label="Gojo"
         android:theme="@style/Theme.Material3.DayNight.NoActionBar">
 
+        <!--
+            CalibrationActivity is the launcher entry point.
+            It finishes itself and starts MainActivity after a successful
+            3-second stationary calibration pass.
+        -->
         <activity
-            android:name=".MainActivity"
+            android:name="com.gojo.core.CalibrationActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
@@ -29,12 +35,16 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".MainActivity"
+            android:exported="false" />
+
         <service
             android:name="com.gojo.core.SensorService"
             android:foregroundServiceType="location"
             android:exported="false" />
 
-        <!-- Legacy logging service — unused by the new EKF flow. -->
+        <!-- Legacy logging service — unused by the EKF flow. -->
         <service
             android:name=".LoggingService"
             android:foregroundServiceType="location"

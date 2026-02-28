@@ -25,18 +25,17 @@ import org.osmdroid.views.overlay.Marker
 import org.osmdroid.views.overlay.Polyline
 
 /**
- * Step 4 — Live map view (OSMDroid, no API key required).
+ * Live map view.
  *
  * Binds to [SensorService] which owns the [SensorThread] and the EKF handle.
  * Every 200 ms the UI thread reads [SensorThread.cachedState] and:
- *   - Updates the HUD (lat, lon, speed, heading, cov_trace, stationary flag)
+ *   - Updates the HUD (lat, lon, speed, heading, cov_trace, stationary, REC flag)
  *   - Appends the EKF position to the green polyline (capped at 2 000 points)
  *   - Appends the raw GPS position to the red polyline (deduplicated, capped)
  *   - Moves the blue marker to the current EKF position
  *   - Pans the camera to follow; zooms to 17 on the first fix only
  *
- * The tile layer is inverted via a single ColorMatrix so the map renders dark
- * (classic night-mode look). The green EKF track pops well against the dark base.
+ * OSMDroid — OpenStreetMap tiles, no API key required.
  */
 class MainActivity : AppCompatActivity() {
 
@@ -66,7 +65,6 @@ class MainActivity : AppCompatActivity() {
     private val ekfPoints = ArrayList<GeoPoint>(2048)
     private val gpsPoints = ArrayList<GeoPoint>(2048)
 
-    // Avoid appending a duplicate GPS point on every 200 ms tick.
     private var lastRawLat = Double.NaN
     private var lastRawLon = Double.NaN
 
@@ -85,7 +83,6 @@ class MainActivity : AppCompatActivity() {
     // ── Lifecycle ─────────────────────────────────────────────────────────────
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Must be set before MapView is inflated (OSMDroid tile usage policy).
         Configuration.getInstance().userAgentValue = "Gojo/1.0"
 
         super.onCreate(savedInstanceState)
@@ -94,13 +91,12 @@ class MainActivity : AppCompatActivity() {
         statusText      = findViewById(R.id.status_text)
         statusText.text = "Waiting for GPS…"
 
-        // ── Map setup ──────────────────────────────────────────────────────
         mapView = findViewById(R.id.map_view)
         mapView.setTileSource(TileSourceFactory.MAPNIK)
         mapView.setMultiTouchControls(true)
-        mapView.controller.setZoom(3.0) // start zoomed out until first fix
+        mapView.controller.setZoom(3.0)
 
-        // Invert tile colours → dark map. Single 4×5 ColorMatrix, no hacks.
+        // Invert tile colours → dark map. Single 4×5 ColorMatrix.
         mapView.overlayManager.tilesOverlay.setColorFilter(
             ColorMatrixColorFilter(ColorMatrix(floatArrayOf(
                 -1f,  0f,  0f, 0f, 255f,
@@ -110,7 +106,6 @@ class MainActivity : AppCompatActivity() {
             )))
         )
 
-        // ── Overlays — added once and mutated in place ─────────────────────
         gpsPolyline = Polyline(mapView).apply {
             outlinePaint.color       = Color.RED
             outlinePaint.strokeWidth = 4f
@@ -123,7 +118,6 @@ class MainActivity : AppCompatActivity() {
             setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
             title = "EKF position"
         }
-        // GPS polyline below EKF polyline; marker on top.
         mapView.overlays.addAll(listOf(gpsPolyline, ekfPolyline, ekfMarker))
 
         requestPermissionsIfNeeded()
@@ -171,14 +165,15 @@ class MainActivity : AppCompatActivity() {
         val lat   = state[0]; val lon   = state[1]
         val speed = state[3]; val hdg   = state[4]
         val cov   = state[7]; val stat  = state[10]
+        val rec   = if (thread.isLogging) "  ● REC" else ""
 
         statusText.text = buildString {
-            appendLine("lat  %.6f   lon  %.6f".format(lat, lon))
+            appendLine("lat  %.6f   lon  %.6f$rec".format(lat, lon))
             appendLine("spd  %.1f m/s    hdg  %.1f°".format(speed, hdg))
             append    ("cov  %.3f   stationary  %s".format(cov, if (stat > 0.5) "YES" else "NO"))
         }
 
-        if (lat == 0.0 && lon == 0.0) return // EKF not yet initialised
+        if (lat == 0.0 && lon == 0.0) return
 
         // ── EKF track (cap at 2 000 points) ───────────────────────────────
         val ekfPos = GeoPoint(lat, lon)

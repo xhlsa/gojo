@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout
+    xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#0D0D1A"
+    android:gravity="center"
+    android:orientation="vertical"
+    android:padding="48dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="GOJO"
+        android:textColor="#E94560"
+        android:textSize="52sp"
+        android:fontFamily="monospace"
+        android:letterSpacing="0.25"
+        android:layout_marginBottom="56dp" />
+
+    <TextView
+        android:id="@+id/calibration_status"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="Hold phone still\ncalibrating…"
+        android:textColor="#CCCCCC"
+        android:textSize="18sp"
+        android:fontFamily="monospace"
+        android:gravity="center"
+        android:lineSpacingExtra="8dp" />
+
+</LinearLayout>

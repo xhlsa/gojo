@@ -11,10 +11,11 @@ package com.gojo.core
  * The handle is a raw pointer to a Rust GojoState struct — never share
  * it across threads without external synchronisation.
  *
- * Typical lifecycle (Step 3 will expand this):
+ * Lifecycle — owned by [SensorThread]:
  *   val handle = GojoJni.init()
- *   // ... feed sensor data ...
- *   GojoJni.destroy(handle)
+ *   GojoJni.setCalibration(handle, ...)   // optional, from CalibrationActivity
+ *   // ... feed sensor data via SensorThread ...
+ *   GojoJni.destroy(handle)               // called in SensorThread.shutdown()
  */
 object GojoJni {
 

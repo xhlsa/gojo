@@ -19,6 +19,13 @@ __pycache__/
 *.egg-info/
 dist/
 
+# Android Studio / Gradle
+local.properties
+.gradle/
+android/.gradle/
+android/build/
+android/app/build/
+
 # IDE/Editor
 .vscode/
 .idea/
